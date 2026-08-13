@@ -89,6 +89,10 @@ export interface SVGMapRendererOptions {
 	obstacleFileNameAlt: (suffix: string) => string;
 	/** Callback when obstacle is clicked (e.g. show popup). Receives obstacle data bound to element. */
 	onObstacleClick?: (event: MouseEvent, obstacleData: unknown) => void;
+	/** Callback when a room label is clicked. Makes room labels selectable. */
+	onRoomLabelClick?: (segmentId: number, event: MouseEvent) => void;
+	/** Segment ids that are currently selected; drawn with a highlight box. */
+	selectedSegmentIds?: ReadonlySet<number>;
 	/** Image hrefs for robot, charger, go-to pin. */
 	robotImageHref: string;
 	chargerImageHref: string;
@@ -279,13 +283,24 @@ export class SVGMapRenderer implements IMapRenderer {
 		const g = this.opts.groups.roomNameGroup;
 		g.selectAll("g.room-label").remove();
 		if (!labels.length) return;
+		const onRoomLabelClick = this.opts.onRoomLabelClick;
+		const selectedSegmentIds = this.opts.selectedSegmentIds;
 		const sel = g.selectAll("g.room-label").data(labels);
 		sel.exit().remove();
 		const enter = sel.enter()
 			.append("g")
-			.attr("class", "room-label")
-			.style("pointer-events", "none");
+			.attr("class", onRoomLabelClick ? "room-label selectable" : "room-label")
+			.style("pointer-events", onRoomLabelClick ? "auto" : "none");
 
+		if (onRoomLabelClick) {
+			enter.on("click", function (event: MouseEvent, d: DrawRoomLabelInput) {
+				event.stopPropagation();
+				onRoomLabelClick(d.segmentId, event);
+			});
+		}
+
+		// Selection highlight, drawn first so it stays behind bubble and text.
+		enter.append("rect").attr("class", "room-label-selection");
 		enter.append("circle").attr("class", "room-label-bubble");
 		enter.append("image").attr("class", "room-label-icon");
 		enter.append("text")
@@ -304,6 +319,7 @@ export class SVGMapRenderer implements IMapRenderer {
 		const merged = enter.merge(sel as d3.Selection<SVGGElement, DrawRoomLabelInput, SVGGElement, unknown>)
 			.attr("data-x", (d) => String(d.x))
 			.attr("data-y", (d) => String(d.y))
+			.attr("data-segment-id", (d) => String(d.segmentId))
 			.attr("transform", (d) => `translate(${d.x}, ${d.y})`);
 
 		merged.each(function (d: DrawRoomLabelInput) {
@@ -359,6 +375,27 @@ export class SVGMapRenderer implements IMapRenderer {
 				.attr("text-anchor", "middle")
 				.attr("dominant-baseline", "middle")
 				.style("fill", "white");
+
+			// Highlight box around bubble + text; sized from the rendered text width.
+			const textNode = label.select<SVGTextElement>("text.room-name").node();
+			let textWidth = 0;
+			try {
+				textWidth = textNode?.getComputedTextLength() ?? 0;
+			} catch {
+				textWidth = d.text.length * 7;
+			}
+			const left = hasBubble ? bubbleCenterX - bubbleRadius : -textWidth / 2;
+			const right = hasBubble ? textX + textWidth : textWidth / 2;
+			label.select<SVGRectElement>("rect.room-label-selection")
+				.style("display", selectedSegmentIds?.has(d.segmentId) ? null : "none")
+				.attr("x", left - 4)
+				.attr("y", -10)
+				.attr("width", Math.max(right - left, 0) + 8)
+				.attr("height", 20)
+				.attr("rx", 6)
+				.style("fill", "rgba(45, 156, 219, 0.35)")
+				.style("stroke", "#2d9cdb")
+				.style("stroke-width", "1.5px");
 		});
 	}
 
