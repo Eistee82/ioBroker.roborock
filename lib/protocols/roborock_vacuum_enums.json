@@ -1,0 +1,360 @@
+{
+  "_meta": {
+    "description": "Vacuum mode and data-point enums extracted from the Roborock app's Hermes home_card plugin bundle. Names are the app's own identifiers; numeric values are literal constants read from the decompiled bytecode. Only entries the app itself defines are listed - this is not a complete device-side range.",
+    "sources": [
+      "assets/plugin/home_card/robot.vacuum.cleaner/robot.vacuum.cleaner.zip -> index.android.bundle (Hermes bytecode v96, 1156616 bytes, app com.roborock.smart 4.72.02-100920); project.json version 2066, apiLevel 10028",
+      "robot.vacuum.cleaner_v2050.zip (Roborock cloud plugin endpoint) -> index.android.bundle.map; project.json version 2050, apiLevel 10028. This source map carries the plugin's ORIGINAL TypeScript/JavaScript sources in sourcesContent - 616 files, project root /Users/weiwei/rockrobo/worksource/cardVacuu."
+    ],
+    "method": "v2066: hermes-dec (hbc_decompiler.py) -> register-level pseudo JS, constants read from the module initialiser of the listed Metro module id. v2050: original source read straight out of index.android.bundle.map.",
+    "confidence": "proven - every value below is a literal constant in the bundle or a literal in the original source",
+    "sourceOfEntry": "Entries carry a 'src' field naming the original file (v2050) or a 'moduleId' (v2066 bytecode). Where the two versions differ the entry says so.",
+    "extractedAt": "2026-08-13",
+    "report": "_appanalysis/12-plugins-cloud.md, supersedes parts of _appanalysis/11-hermes-plugins.md"
+  },
+  "fanPower": {
+    "field": "fan_power",
+    "moduleId": 601,
+    "values": {
+      "102": { "name": "CleanModeNormal", "labelKeyGuess": null },
+      "105": { "name": "CleanModeZero", "note": "vacuuming off; the app treats fan_power != 105 as 'is vacuuming'" },
+      "106": { "name": "CustomCleanMode", "note": "per-room custom mode marker" },
+      "108": { "name": "CleanModeMaxPlus", "labelKeyGuess": "clean_mode_max_plus" },
+      "109": { "name": "CleanModeZeroTwo" },
+      "110": { "name": "SmartCleanMode", "note": "SmartPlan; only active when water==209 and mop==306 as well" }
+    },
+    "notInBundle": [101, 103, 104, 107],
+    "notInBundleNote": "101/103/104 are well established in the community as Quiet/Turbo/Max but are NOT defined in this bundle - do not cite it as evidence for them."
+  },
+  "waterBoxMode": {
+    "field": "water_box_mode",
+    "moduleId": 601,
+    "values": {
+      "200": { "name": "WaterModeZero", "note": "water off; the app treats water_box_status != 200 as 'is mopping'" },
+      "201": { "name": "WaterModeNormal" },
+      "202": { "name": "WaterModeMiddle" },
+      "204": { "name": "CustomWaterMode", "note": "per-room custom mode marker" },
+      "207": { "name": "WaterModeUserCustom" },
+      "209": { "name": "SmartWaterMode", "note": "SmartPlan" }
+    },
+    "notInBundle": [203, 205, 206, 208]
+  },
+  "mopMode": {
+    "field": "mop_mode",
+    "moduleId": 601,
+    "values": {
+      "300": { "name": "CleanRouteDailyMode" },
+      "301": { "name": "CleanRouteSubtlyMode" },
+      "302": { "name": "CustomMopMode", "note": "per-room custom mode marker" },
+      "303": { "name": "CleanRouteDeepSlowMode" },
+      "304": { "name": "CleanRouteFastMode", "labelKeyGuess": "clean_route_fast_mode_title" },
+      "305": { "name": "CleanRouteDeepSlowPearlMode" },
+      "306": { "name": "SmartMopMode", "note": "SmartPlan" }
+    },
+    "notInBundle": []
+  },
+  "modeCombinations": {
+    "moduleId": 614,
+    "smartPlan": { "fan_power": 110, "water_box_mode": 209, "mop_mode": 306 },
+    "customPerRoom": { "fan_power": 106, "water_box_mode": 204, "mop_mode": 302 },
+    "note": "The app reports SmartPlan only when all three match, and 'customized' when any of the three matches its custom value."
+  },
+  "sweeperDpType": {
+    "description": "Data-point ids the vacuum home_card uses. Keys are the app's names, values the DPS numbers as strings (the app stores them as strings).",
+    "moduleId": 622,
+    "values": {
+      "121": "Status",
+      "122": "Battery",
+      "135": "OfflineReason",
+      "138": "CleanTaskType",
+      "139": "BackType",
+      "141": "CleanProgress",
+      "201": "StartCleanTask",
+      "202": "BackDockTask",
+      "204": "Pause",
+      "205": "Resume",
+      "206": "Stop"
+    }
+  },
+  "dpStatus": {
+    "field": "state",
+    "dps": 121,
+    "moduleId": 622,
+    "values": {
+      "2": "Sleep",
+      "3": "Wait_Command",
+      "5": "Cleaning",
+      "6": "Backing_Charge",
+      "7": "Remote_Controlling",
+      "8": "Charging",
+      "10": "Pause",
+      "11": "Part_Cleaning",
+      "12": "Error",
+      "14": "Upgrading",
+      "22": "Collecting_Dust",
+      "26": "Returing_Dock",
+      "29": "Constructing_Map",
+      "100": "Full_Charged",
+      "101": "Locating",
+      "102": "Cleaning_Only",
+      "103": "Mopping_Only",
+      "104": "Cleaning_Mopping",
+      "105": "In_Transition",
+      "108": "Waiting_Charge"
+    },
+    "note": "Typo 'Returing_Dock' is the app's own. This list is the plugin's subset; the native Java layer maps further codes (15,16,17,18,23,28,32,33,34,36,37,38,39,40) - see _appanalysis/05-api-katalog.md section 5.1."
+  },
+  "dpCleanTaskType": {
+    "dps": 138,
+    "moduleId": 622,
+    "values": {
+      "0": "Idel",
+      "1": "Global_Clean",
+      "2": "Segment_Clean",
+      "3": "Zone_Clean",
+      "4": "Construct_Map",
+      "5": "Part_Clean",
+      "6": "Part_Clean"
+    },
+    "note": "'Idel' is the app's own spelling. 5 and 6 both map to Part_Clean."
+  },
+  "dpBackType": {
+    "dps": 139,
+    "field": "back_type",
+    "moduleId": 622,
+    "src": "Src/DP/Model/DPDefinition.ts, Src/DP/Model/SweeperStatusManager.ts",
+    "values": {
+      "0": "Idel",
+      "1": "Back_Wash_Mop",
+      "2": "Back_Setup_Mop",
+      "3": "Back_Uninstall_Mop",
+      "4": "Back_Collect_Dust",
+      "5": "Back_Charge"
+    },
+    "note": "0/3/4 come from the DPBackType enum. 1/2/5 are proven by BackDockStateMap in SweeperStatusManager.ts, which maps back_type 1..5 onto the labels backdock_substate_washing_mop, backdock_substate_setup_mop, backdock_substate_teardown_mop, backdock_substate_collecting_dust and home_new_control_start_charge. The DPBackType enum itself lists 1/2/5 only as source comments.",
+    "supersedes": "11-hermes-plugins.md 2.4 listed 0/3/4 only."
+  },
+  "dpStartCleanTask": { "dps": 201, "moduleId": 622, "values": { "1": "Global_Clean" } },
+  "dpBackDockTask": { "dps": 202, "moduleId": 622, "values": { "5": "Back_Charge" } },
+  "dpBoolean": { "moduleId": 622, "values": { "0": "False", "1": "True" } },
+  "offlineReason": {
+    "dps": 135,
+    "moduleId": 548,
+    "values": {
+      "1": { "translationKey": "status_close_by_user" },
+      "34": { "translationKey": "status_close_sleep" },
+      "51": { "translationKey": "status_close_low_power" },
+      "103": { "translationKey": "status_close_restart_by_update" }
+    },
+    "src": "Src/Main/Main.tsx (offLineReasonArray)",
+    "note": "This is the RPC-path encoding, used by the native (get_status) card. Translation keys resolve through roborock_strings.json. Texts: 1 = 'Manual Shutdown', 34 = 'Hibernate Shutdown', 51 = 'Low Battery Shutdown', 103 = 'Upgrading and Restarting'.",
+    "supersedes": "11-hermes-plugins.md 2.6 called 2/3/4 'aliases tolerated by the app'. They are not aliases - see offlineReasonOdm."
+  },
+  "offlineReasonOdm": {
+    "dps": 135,
+    "src": "Src/DP/Main/Main.tsx (offlineReasonArray)",
+    "description": "The SECOND, incompatible encoding of DPS 135. The data-point (ODM) card indexes a four-element array with offlineReasonType - 1, so the device sends 1..4, not 1/34/51/103.",
+    "values": {
+      "1": { "translationKey": "offline_reason_1", "en": "Powered Off Manually" },
+      "2": { "translationKey": "offline_reason_2", "en": "Sleep & Powered Off" },
+      "3": { "translationKey": "offline_reason_3", "en": "Low Battery & Powered Off" },
+      "4": { "translationKey": "offline_reason_4", "en": "Updating & Restarting" }
+    },
+    "confidence": "proven",
+    "note": "The same app ships both encodings for different device families. roborock.mower uses this same 1..4 form (OFFLINE_STATUS, dpKey 138) - see roborock_other_device_enums.json. Which one applies depends on whether the device speaks the RPC or the data-point protocol."
+  },
+  "robotStateCodeMap": {
+    "field": "state",
+    "channel": "RPC get_prop([\"get_status\"]) -> result[0].state",
+    "src": "Src/Common/RobotStatusManager.js (RobotStateCodeMap)",
+    "description": "The state codes the RPC path maps to a display text. This is a DIFFERENT namespace from dpStatus (DPS 121): here 101/102/103 mean offline/unknown/map-saving, whereas on DPS 121 they mean Locating/Cleaning_Only/Mopping_Only. Do not merge the two tables.",
+    "confidence": "proven",
+    "values": {
+      "0": { "name": "UNKNOWN", "translationKey": "status_linking", "en": "Getting Info" },
+      "1": { "name": "INITIAL", "translationKey": "status_loading", "en": "Loading" },
+      "2": { "name": "SLEEPING", "translationKey": "status_sleeping", "en": "Sleeping" },
+      "3": { "name": "WAITING", "translationKey": "status_waiting", "en": "Ready" },
+      "5": { "name": "CLEAN", "translationKey": "status_cleaning", "en": "Cleaning" },
+      "6": { "name": "BACK_TO_DOCK", "translationKey": "status_backing", "en": "Returning to Dock" },
+      "7": { "name": "REMOTE", "translationKey": "status_remoting", "en": "Remote Control" },
+      "8": { "name": "CHARGING", "translationKey": "status_charging", "en": "Charging" },
+      "9": { "name": "CHARGE_ERROR", "translationKey": "status_error", "en": "Error" },
+      "10": { "name": "PAUSE", "translationKey": "status_pause", "en": "Pause" },
+      "11": { "name": "SPOT_CLEAN", "translationKey": "status_poting", "en": "Spot Clean" },
+      "12": { "name": "MALFUNCTIONING", "translationKey": "status_error", "en": "Error" },
+      "14": { "name": "UPDATING", "translationKey": "status_upgrading", "en": "Updating" },
+      "15": { "name": "RUB_TO_DOCK", "translationKey": "status_backing", "en": "Returning to Dock", "note": "The app rewrites 15 to 6 and reads exit_dock: exit_dock == 1 shows robot_state_exiting_dock ('Departing from the dock')." },
+      "16": { "name": "GOTO_TARGET", "translationKey": "status_gotoing", "en": "Pin n Go" },
+      "17": { "name": "ZONED_CLEAN", "translationKey": "status_zone_cleaning", "en": "Zone cleaning" },
+      "18": { "name": "SEGMENT_CLEAN", "translationKey": "status_seg_cleaning", "en": "Room Cleaning" },
+      "22": { "name": "COLLECTING_DUST", "translationKey": "status_collecting", "en": "Emptying" },
+      "23": { "name": "WASHING_DUSTER", "translationKey": "status_duster_washing", "en": "Washing the mop", "note": "garnet platform" },
+      "25": { "name": "WASHING_DUSTER", "translationKey": "status_duster_washing", "en": "Washing the mop", "note": "topaz platform" },
+      "26": { "name": "BACK_TO_DOCK_WASHING_DUSTER", "translationKey": "status_backing_wash", "en": "Going to wash the mop", "note": "back_type refines this into the backdock_substate_* texts" },
+      "28": { "name": "VOICE_CHATTING", "translationKey": "status_on_phone", "en": "In call…" },
+      "29": { "name": "QUICK_BUILDING_MAP", "translationKey": "status_map_building", "en": "Mapping" },
+      "30": { "name": "EGG_ATTACK", "translationKey": "status_egg_attacking", "en": "scanning" },
+      "32": { "name": "PATROL", "translationKey": "status_patrol", "en": "On cruise" },
+      "33": { "name": "SETUP_MOP", "translationKey": "robot_state_setuping_mop", "en": "Reinstalling mop cloth mounts" },
+      "34": { "name": "TEARDOWN_MOP", "translationKey": "robot_state_teardowning_mop", "en": "Detaching mop cloth mounts" },
+      "36": { "name": "EXHIBITIONMODE", "translationKey": "exhibition_mode", "en": "Demo Mode" },
+      "37": { "name": "DANCE", "translationKey": "robot_state_dance", "en": "Boogie Mode" },
+      "38": { "name": "TIDY_UP_HOUSEWORK", "translationKey": "mechanical_arm_tidy_up_housework_state", "en": "Sorting" },
+      "39": { "name": "REMOTE_PICKUP", "translationKey": "mechanical_arm_fetch", "en": "Remote Control to Pick Up" },
+      "40": { "name": "EMERGENCY_STOP", "translationKey": "state_emergency_stop", "en": "Emergency Stopped" },
+      "100": { "name": "FULL_CHARGE", "translationKey": "status_charged", "en": "Charged", "note": "Synthesised by the app: state == 8 && battery == 100 becomes 100. Not necessarily sent by the device." },
+      "101": { "name": "OFF_LINE", "translationKey": "status_offline", "en": "Offline" },
+      "102": { "name": "UNKNOWN", "translationKey": "status_offline", "en": "Offline" },
+      "103": { "name": "LOCKED", "translationKey": "status_map_saving", "en": "Saving Map" }
+    }
+  },
+  "getStatusFields": {
+    "src": "Src/Common/RobotStatusManager.js (getStatus)",
+    "description": "The fields the plugin reads out of get_prop([\"get_status\"]).result[0].",
+    "confidence": "proven",
+    "fields": [
+      "state", "battery", "exit_dock", "back_type", "in_fresh_state", "is_locating",
+      "in_cleaning", "in_returning", "charge_status", "clean_time", "extra_time",
+      "clean_percent", "replenish_mode", "wash_status", "wash_phase", "common_status",
+      "clean_tidyup_status", "assist_clean_status",
+      "cleaning_info.segment_id", "cleaning_info.target_segment_id",
+      "cleaning_info.fan_power", "cleaning_info.water_box_status", "cleaning_info.mop_mode"
+    ],
+    "note": "wash_phase is only read by v2066; v2050 does not know it. The live mode values (fan_power / water_box_status / mop_mode) live inside cleaning_info, not at the top level."
+  },
+  "inCleaning": {
+    "field": "in_cleaning",
+    "src": "Src/Common/RobotStatusManager.js (CleanResumeFlagCodeMap)",
+    "description": "Resume marker: which kind of task can be continued.",
+    "confidence": "proven for the running code path",
+    "values": {
+      "0": "None",
+      "1": "Global_Clean",
+      "2": "Zone_Clean",
+      "3": "Segment_Clean",
+      "4": "Quick_Build_Map"
+    },
+    "warning": "The source contradicts itself: the CleanResumeFlag declaration comments claim 2 = Segment and 3 = Zone, while the CleanResumeFlagCodeMap actually executed maps 2 -> Zone_Clean and 3 -> Segment_Clean. The values above are what the app really does. Verify against a device before relying on 2 vs 3."
+  },
+  "washStatus": {
+    "field": "wash_status",
+    "src": "Src/Common/RobotStatusManager.js (handleStateName), v2066 bytecode for value 12",
+    "description": "Bit field, evaluated only while state is 23 or 25 (WASHING_DUSTER): low byte = phase state (0 means idle), high byte (>> 8) = mode.",
+    "confidence": "proven",
+    "layout": { "state": "wash_status & 0xFF", "mode": "wash_status >> 8" },
+    "modeValues": {
+      "6": { "translationKey": "washing_mode_updown_water_selfcleaning", "en": "self-cleaning" },
+      "7": { "translationKey": "washing_mode_updown_water_drain", "en": "Fill&drain element draining" },
+      "9": { "translationKey": "left_water_is_draining", "en": "The robot is draining" },
+      "12": { "translationKey": "washing_mode_sewage_box_draining", "en": "sewage box draining", "onlyIn": "v2066" }
+    },
+    "note": "Only these four modes get a text; every other mode falls back to status_duster_washing. The low byte's own value range is not enumerated anywhere in the plugin."
+  },
+  "washPhase": {
+    "field": "wash_phase",
+    "onlyIn": "v2066 (the APK bundle) - v2050 does not read this field at all",
+    "src": "v2066 bytecode, WashPhase object literal",
+    "confidence": "proven",
+    "values": { "11": "RUNNING", "17": "PUMPING" },
+    "usage": "isWorkingOnDock() and hasTask() treat wash_phase == PUMPING as 'not really working / no task'; wash_phase == PUMPING also sets the text wash_towel_phase_pumping.",
+    "note": "Only these two values are named. Answers part of the open wash_phase question from 11-hermes-plugins.md section 10."
+  },
+  "commonStatus": {
+    "field": "common_status",
+    "src": "Src/Common/RobotStatusManager.js (handleStateName)",
+    "description": "Bit field on the status object.",
+    "confidence": "proven for bit 2 and bits 3-4; the rest is commented out in the source",
+    "bits": {
+      "2": { "meaning": "voice control active", "translationKey": "robotstatus_voice_control_active" },
+      "3-4": { "expression": "(common_status >> 3) & 0x3", "values": { "1": "patrol", "2": "seeking pet (robot_state_seeking_pet)" } },
+      "6-9": { "expression": "(common_status >> 6) & 0xF", "values": { "1": "arm undocking", "4": "arm grabbing", "5": "arm placing" }, "confidence": "commented out in the source - plausible, not active" },
+      "13": { "meaning": "assist cleaning", "confidence": "commented out in the source - plausible, not active" }
+    }
+  },
+  "tidyUpStatus": {
+    "fields": ["clean_tidyup_status", "assist_clean_status"],
+    "src": "Src/Common/RobotStatusManager.js (handleTidyupStateName, handleMoveObjectStateName)",
+    "description": "Both fields share one layout: low byte = activity (1 = running), bits 8-15 = object type from obstacleNames.",
+    "confidence": "proven",
+    "layout": { "active": "value & 0xFF (1 = active)", "objectType": "(value >> 8) & 0xFF" },
+    "recognisedObjectTypes": [2, 34, 51],
+    "note": "Only object types 2, 34 and 51 get a name; anything else falls back to state_doing_tidyup_object / state_doing_move_object."
+  },
+  "obstacleNames": {
+    "src": "Src/Common/Constant/Common.js (obstacleNames)",
+    "description": "Map object / obstacle type ids to translation keys. Useful for rendering obstacles on the map.",
+    "confidence": "proven",
+    "values": {
+      "0": "map_object_name_xian",
+      "1": "map_object_name_baba",
+      "2": "map_object_name_shoe",
+      "3": "map_object_name_dizuo",
+      "4": "map_object_name_dizuo",
+      "5": "map_object_name_chapai",
+      "9": "map_object_name_tizhongcheng",
+      "10": "map_object_name_zhiwu",
+      "18": "map_obstacles_title18",
+      "25": "map_object_name_poqi",
+      "26": "map_object_name_henggan",
+      "27": "map_object_name_henggan",
+      "34": "map_object_name_zhiwu",
+      "42": "map_obstacles_title",
+      "48": "map_object_name_loosewire",
+      "49": "map_object_name_cat",
+      "50": "map_object_name_dog",
+      "51": "map_object_name_curledfabric",
+      "54": "map_object_name_floormirror",
+      "65": "map_object_name_greenplant",
+      "67": "map_object_name_thinhanger",
+      "69": "map_object_name_plasticbag",
+      "70": "map_object_name_paperbag"
+    },
+    "note": "Translation keys resolve through roborock_strings.json. Known English texts from the card's own bundle: 2 = 'Footwear', 34 = 'Fabric', 51 = 'Fabric/paper balls'."
+  },
+  "smartScene": {
+    "src": "Src/Main/View/SmartCommandHelper.ts, Src/Native/NativeSDK.js",
+    "description": "Cloud-side 'smart scene' (quick command) objects. Each scene's action item carries a nested RPC call.",
+    "confidence": "proven as the content of a cloud scene object; NOT proven as a call the app itself sends to a device. The string exists only in the source map (a mockSceneList constant and an example comment, both captured from real server responses on a G10 dev account) and is absent from the shipped bytecode of all six bundles. At runtime the app only calls NativeSDK.executeSmartScene(duid, sceneId) and the cloud runs the stored RPC.",
+    "rpcMethod": "do_scenes_app_start",
+    "examplePayload": {
+      "id": 1,
+      "method": "do_scenes_app_start",
+      "params": [{ "fan_power": 102, "water_box_mode": 202, "mop_mode": 300, "mop_template_id": 300, "repeat": 0, "source": 101 }]
+    },
+    "finishDpIds": [130],
+    "templateId": { "0": "NewCommand", "1": "GlobalClean", "2": "DiningAreaClean", "101": "CleanAndMop", "102": "DeepClean", "103": "PowerfulClean", "104": "SlowMop" },
+    "customTag": { "1001": "Custom", "1002": "Clean", "1003": "Mop", "1004": "CleanAndMopMode", "1005": "Smart" },
+    "note": "do_scenes_app_start is a method name that appears in NO earlier analysis. source = 101 marks the scene channel, next to the widget's 820 and the device list's 2. mop_template_id and repeat are new parameters. v2066 additionally reads seq_type from the same params object (value range unknown; the string CleanThenMop appears alongside it, so 'vacuum then mop' ordering is plausible but unproven)."
+  },
+  "newFeatureStrBit": {
+    "moduleId": 564,
+    "description": "Bit indices into the device's newFeatureInfoStr hex string.",
+    "values": { "67": "Matter", "74": "OptimizeBattery" },
+    "decoding": {
+      "algorithm": "nibbleIndex = -floor(bit/4); shift = bit % 4; hexChar = nibbleIndex !== 0 ? newFeatureInfoStr.slice(nibbleIndex-1, nibbleIndex) : newFeatureInfoStr.slice(-1); supported = ((parseInt('0x'+(hexChar||'0')) >> shift) & 1) !== 0",
+      "note": "The string is read from the right: bit 0..3 live in the last hex char, bit 4..7 in the one before it, and so on."
+    }
+  },
+  "deviceControlPaths": {
+    "description": "How the home_card plugin actually issues commands.",
+    "viaDataPoints": {
+      "moduleId": 624,
+      "start": { "dps": 201, "value": 1 },
+      "backDock": { "dps": 202, "value": 5 },
+      "pause": { "dps": 204, "value": 0 },
+      "resume": { "dps": 205, "value": 0 },
+      "stop": { "dps": 206, "value": 0 },
+      "src": "Src/DP/Model/SweeperDpsManager.ts (start/backDock/pause/resume/stop) and Src/DP/Model/DPSender.ts",
+      "note": "The plugin writes DPBoolean.False (0) for pause/resume/stop, whereas the native home-screen widget writes 1 (see 05-api-katalog.md section 2.1). The original source confirms the 0 is deliberate (DPBoolean.False, not a decoding artefact) and that DPSender passes the value through unchanged into publishDps({ '<dps>': <value> }). Which value the device actually needs is still unresolved - only a capture on real hardware settles it."
+    },
+    "viaRpc": {
+      "moduleId": 614,
+      "getStatus": { "method": "get_prop", "params": ["get_status"] },
+      "getRoomNameMappingInfo": { "method": "get_room_mapping", "params": [] },
+      "charge": { "method": "app_charge", "params": [] },
+      "pause": { "method": "app_pause", "params": [] },
+      "resume": { "method": "app_resume", "params": [] },
+      "stop": { "method": "app_stop", "params": [] },
+      "note": "The plugin sends empty parameter arrays; the native widget sends [{\"source\":820}] and the device list [{\"source\":2}]."
+    }
+  }
+}

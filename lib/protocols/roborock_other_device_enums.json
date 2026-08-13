@@ -1,0 +1,330 @@
+{
+  "_meta": {
+    "description": "Data-point catalogues and value enums for the Roborock device categories the adapter does NOT support today: roborock.wetdryvac (wet/dry stick vacuum), roborock.wm (washing machine) and roborock.mower (robot lawn mower). Extracted from the category home-card plugin bundles fetched from the Roborock cloud plugin endpoint. Names are the app's own identifiers; numeric values are literal constants read from the decompiled Hermes bytecode.",
+    "sources": [
+      "roborock.wetdryvac_v1024.zip -> index.android.bundle (Hermes v96, 975512 bytes); project.json: apiLevel 10028, category roborock.wetdryvac, version 1024",
+      "roborock.wm_v1034.zip -> index.android.bundle (Hermes v96, 1209320 bytes); project.json: apiLevel 10028, category roborock.wm, version 1034",
+      "roborock.mower_v46.zip -> index.android.bundle (Hermes v96, 2806924 bytes); plugin_info: apiLevel 10044, pluginLevel 3002, version 46"
+    ],
+    "method": "hermes-dec (hbc_decompiler.py) -> register-level pseudo JS; constants read with _appanalysis/plugins/_tools/objlit.js and pbenum.js",
+    "confidence": "proven unless a 'confidence' field says otherwise - every value is a literal constant assigned to the named export in the bundle",
+    "extractedAt": "2026-08-13",
+    "report": "_appanalysis/12-plugins-cloud.md",
+    "warning": "DPS numbers are per device family. The same number means different things for the vacuum, the wet/dry vac, the washing machine and the mower. Never share a DPS table across categories."
+  },
+
+  "reservedDpType": {
+    "description": "DPS ids reserved across the DP-based device families. Present verbatim in both the wetdryvac and the wm bundle; the vacuum home_card does not define them.",
+    "confidence": "proven",
+    "values": {
+      "10000": "QueryDP",
+      "10001": "CheckIsFCC",
+      "10002": "AutoDryTimer (wetdryvac only)",
+      "10003": "SetSoundPackage (wetdryvac only)",
+      "10004": "SoundPackageInfo (wetdryvac only)",
+      "10005": "GeneralInfo",
+      "10006": "PrivacyInfo",
+      "10007": "UpdateInfo",
+      "10008": "WashHistory (wm only)",
+      "10101": "RPCRequest",
+      "10102": "RPCResponse"
+    },
+    "rpcEnvelope": {
+      "description": "Payload written to DPS 10101. The plugin builds it as JSON.stringify({id, method}); id = Math.floor(Math.random() * 1000000).",
+      "shape": { "id": "<random int 0..999999>", "method": "<string>" }
+    },
+    "rpcMethods": { "user_upload_log": "UploadLog" }
+  },
+
+  "wetdryvac": {
+    "category": "roborock.wetdryvac",
+    "dpType": {
+      "description": "DryWetVacDPType. Keys are DPS numbers (the app stores them as strings).",
+      "values": {
+        "200": "Start",
+        "201": "Status",
+        "202": "SelfCleanMode",
+        "203": "SelfCleanLevel",
+        "204": "WarmLevel",
+        "205": "CleanMode",
+        "206": "Suction",
+        "207": "WaterLevel",
+        "208": "BrushSpeed",
+        "209": "Power",
+        "210": "CountDownTime",
+        "212": "AutoSelfClean",
+        "213": "AutoDry",
+        "214": "MeshLeft",
+        "215": "BrushLeft",
+        "216": "Error",
+        "218": "MeshReset",
+        "219": "BrushReset",
+        "221": "Volumn",
+        "222": "StandLockAutoRun",
+        "223": "AutoSelfCleanMode",
+        "224": "AutoDryMode",
+        "225": "SilentDryDuration",
+        "226": "SilentModeSwitch",
+        "227": "SilentModeStartTime",
+        "228": "SilentModeEndTime",
+        "229": "RecentCleanTime",
+        "230": "TotalCleanTime",
+        "235": "FeatureInfo / Preset",
+        "236": "ResetRobot",
+        "237": "DryRemainTimeMin",
+        "238": "Cleanser",
+        "239": "AutoSmartSelfClean",
+        "240": "Light",
+        "241": "CleanAssistPower",
+        "242": "WaterTemperatureLevel",
+        "243": "DockType"
+      },
+      "note": "235 is assigned twice in the bundle: first as FeatureInfo, then re-used as Preset. That is in the bytecode, not a reading error."
+    },
+    "dpStartStatus": { "dps": 200, "values": { "0": "Stop", "1": "Start", "2": "Pause" } },
+    "dpStatus": {
+      "dps": 201,
+      "values": {
+        "1": "Cleaning",
+        "2": "Standby",
+        "3": "Charging",
+        "4": "SelfCleanHydrating",
+        "5": "SelfCleanCleaning",
+        "6": "SelfCleanDeepCleaning",
+        "7": "SelfCleanRinsing",
+        "8": "SelfCleanDehydrating",
+        "9": "Drying",
+        "10": "Ventilating",
+        "12": "Preset",
+        "13": "SelfCleanPaused",
+        "14": "ComponentRemoved"
+      },
+      "note": "0 and 11 are not defined by the plugin."
+    },
+    "dpSelfCleanMode": { "dps": 202, "values": { "1": "SelfClean", "2": "SelfCleanAndDry", "3": "Dry", "4": "Ventilation" } },
+    "dpSelfCleanLevel": { "dps": 203, "values": { "1": "Normal", "2": "Deep" } },
+    "dpWarmLevel": { "dps": 204, "values": { "1": "Normal", "2": "Deep" } },
+    "dpCleanMode": {
+      "dps": 205,
+      "confidence": "plausible - the enum name matches the DPS name, but the bundle never links them in code",
+      "values": { "1": "Auto", "2": "Max", "3": "Dehydration", "4": "PowerSaving" }
+    },
+    "dpMode": {
+      "dps": null,
+      "confidence": "proven as an enum, unassigned as a DPS",
+      "values": { "1": "Wash", "2": "WashAndDry", "3": "Dry" },
+      "note": "Second candidate for DPS 205. The plugin defines both DPMode and DPCleanMode and wires neither of them to a DPS in code."
+    },
+    "dpSuction": { "dps": 206, "values": { "1": "L1", "2": "L2", "3": "L3", "4": "L4", "5": "L5", "6": "L6" } },
+    "dpWaterLevel": { "dps": 207, "values": { "1": "L1", "2": "L2", "3": "L3", "4": "L4" } },
+    "dpBrushSpeed": { "dps": 208, "values": { "1": "L1", "2": "L2" } },
+    "dpCleanser": { "dps": 238, "values": { "0": "None", "1": "Normal", "2": "Deep", "3": "Max" } },
+    "dpDockType": { "dps": 243, "values": { "0": "Unknown", "1": "Normal", "2": "Turbo" } },
+    "dpBoolean": { "values": { "0": "False", "1": "True" } },
+    "uiStatus": {
+      "confidence": "proven, but app-internal",
+      "description": "Presentation-layer status the card derives from DPS 201 plus online state. NOT a device value.",
+      "values": {
+        "0": "Offline", "1": "Error", "2": "Updating", "3": "Cleaning", "4": "Standby",
+        "5": "Paused", "6": "Charging", "7": "ChargeFull", "8": "SelfCleaning", "9": "Drying",
+        "10": "Preset", "11": "SelfCleanPaused", "12": "ComponentRemoved", "13": "HotWaterSelfCleaning"
+      }
+    }
+  },
+
+  "washingMachine": {
+    "category": "roborock.wm",
+    "dpType": {
+      "description": "WasherDPType. Keys are DPS numbers (stored as strings by the app).",
+      "values": {
+        "200": "Start",
+        "201": "Pause",
+        "202": "ShutDown",
+        "203": "Status",
+        "204": "Mode",
+        "205": "Program",
+        "206": "ChildLock",
+        "207": "Temperature",
+        "208": "Rinse",
+        "209": "Spin",
+        "210": "DryingMode",
+        "211": "AutoDetergent",
+        "212": "AutoSoftener",
+        "213": "DetergentType",
+        "214": "SoftenerType",
+        "217": "Preset",
+        "218": "TimeLeft",
+        "219": "DoorLock",
+        "220": "Error",
+        "221": "SaveCloudProgram",
+        "222": "LoadCloudProgram",
+        "223": "Sound",
+        "224": "SelfCleanTimes",
+        "225": "CacheWashingPreference",
+        "226": "IsDetergentEmpty",
+        "227": "IsSoftenerEmpty",
+        "228": "UVCLight",
+        "232": "isRemoteControlAuthorized",
+        "233": "Soak",
+        "234": "TotalTime",
+        "235": "SmartHosting",
+        "236": "SmartHostingTime",
+        "237": "FeatureBits",
+        "238": "SmartHostingWaitedTime",
+        "239": "CustomProgramCleaningTime",
+        "257": "SteamVolume",
+        "261": "SteamCareTime",
+        "262": "DeviceBound",
+        "263": "ClothPutIn",
+        "264": "ClothReadyToDryCountDown",
+        "265": "StartDryerError",
+        "266": "WifiLinkageReset"
+      }
+    },
+    "dpStatus": {
+      "dps": 203,
+      "values": {
+        "1": "Standy", "2": "Checking", "3": "Soaking", "4": "Washing", "5": "Rinsing",
+        "6": "Dewatering", "7": "Drying", "8": "Cooling", "9": "Appointment", "10": "Complete",
+        "11": "Updating", "12": "SmartHosting", "13": "SmartHostingWaiting", "14": "SteamCaring",
+        "15": "Descaling", "16": "ClothReady", "17": "WaitingForDrying", "18": "PreHeating",
+        "19": "PreHeatCompLete", "20": "InCaring"
+      },
+      "note": "'Standy' and 'PreHeatCompLete' are the app's own spellings."
+    },
+    "dpMode": { "dps": 204, "values": { "1": "Wash", "2": "WashAndDry", "3": "Dry", "4": "Treatment" } },
+    "dpProgram": {
+      "dps": 205,
+      "values": {
+        "1": "Mixed", "2": "Quick", "3": "Sterilization", "4": "Wool", "5": "Air", "6": "CloudProgram",
+        "7": "HomeTextile", "8": "Down", "9": "Silk", "10": "RinseAndDehydrate", "11": "Dehydrate",
+        "12": "SelfClean", "13": "Baby", "14": "MitesRemoval", "15": "Sports", "16": "Night",
+        "17": "New", "18": "Shirt", "19": "ChemicalFiber", "20": "Underwear", "21": "Soft",
+        "22": "Strong", "23": "CottonOrLinen", "24": "Season", "25": "Warm", "26": "Bra",
+        "27": "Underpants", "28": "Boiling", "29": "Soaking", "30": "Socks", "31": "Towel",
+        "32": "MitesRemoval2", "33": "Eco", "34": "TwentyDegrees", "35": "TShirt", "36": "Dirt",
+        "37": "SmallThings", "39": "Mixing", "40": "BathTowel", "41": "Jeans", "42": "Outdoors",
+        "43": "TimedDrying", "44": "OutdoorJackets", "45": "Yoga", "46": "QuiltDrying", "47": "Flax",
+        "48": "Suit", "49": "SportShoes", "50": "RackDrying", "51": "SummerQuilt", "52": "WindBreaker",
+        "53": "SteamCare", "54": "Descaling", "55": "DeepSelfClean", "56": "PetCare", "57": "SmallThingsDrying"
+      },
+      "note": "38 is not defined by the plugin."
+    },
+    "dpTemperature": { "dps": 207, "values": { "1": "L1", "2": "L2", "3": "L3", "4": "L4", "5": "L5", "6": "L6" } },
+    "dpRinse": { "dps": 208, "values": { "0": "L0", "1": "L1", "2": "L2", "3": "L3", "4": "L4", "5": "L5" } },
+    "dpSpin": { "dps": 209, "values": { "1": "L1", "2": "L2", "3": "L3", "4": "L4", "5": "L5", "6": "L6", "7": "L7" } },
+    "dpDryingMode": { "dps": 210, "values": { "0": "None", "1": "Quick", "2": "Iron", "3": "Store" } },
+    "dpDetergentType": { "dps": 213, "values": { "0": "T0", "1": "T1", "2": "T2", "3": "T3" } },
+    "dpSoftenerType": { "dps": 214, "values": { "0": "T0", "1": "T1", "2": "T2", "3": "T3" } },
+    "dpSoak": { "dps": 233, "values": { "0": "L0", "1": "L1", "2": "L2", "3": "L3", "4": "L4" } },
+    "dpBoolean": { "values": { "0": "False", "1": "True" } }
+  },
+
+  "mower": {
+    "category": "roborock.mower",
+    "transport": {
+      "description": "The mower does NOT use JSON RPC or plain numeric DPS values. Its payloads are protobuf. The IoT data point is rock.iot.DpPoint { dp_key: DpKey, dp_value: DpValue }; DpValue is a oneof over typed wrapper messages (MowStateDpValue, ChargeStateDpValue, ...) plus int64_value and byte_value for scalars. The plugin bundle carries the full protobufjs runtime and 364 message types under rock.common.*, rock.iot.*, rock.bit.*, rock.blackbox.*.",
+      "confidence": "proven"
+    },
+    "dpKey": {
+      "description": "rock.iot.DpKey - the enum that selects which data point a DpPoint carries.",
+      "values": {
+        "120": "ERROR_CODE",
+        "121": "BATTERY",
+        "122": "MOW_TYPE",
+        "123": "MOW_STATE",
+        "124": "MAPPING_TYPE",
+        "125": "MAPPING_STATE",
+        "126": "OTA_STATE",
+        "127": "CHARGE_STATE",
+        "128": "DOCK_STATE",
+        "129": "CHARGE_TYPE",
+        "130": "PEND_TYPE",
+        "131": "REMOTE_STATE",
+        "132": "MOW_START_TYPE",
+        "133": "MOW_EFF_MODE",
+        "134": "MOW_HEIGHT",
+        "135": "MOW_DIRECTION_ANGLE",
+        "136": "MOW_PATTEN",
+        "137": "MOW_CONF_MODE",
+        "138": "OFFLINE_STATUS",
+        "139": "MOW_PROGRESS",
+        "140": "BLADE_LIFESPAN",
+        "141": "FC_STATE",
+        "142": "GPS_COORDINATE",
+        "143": "OFF_DOCK_NO_TASK_STATUS",
+        "144": "AFS_STATUS",
+        "145": "NETWORK_CHANNEL",
+        "201": "START",
+        "202": "DOCK",
+        "203": "PAUSE",
+        "204": "RESUME",
+        "205": "STOP"
+      },
+      "warning": "The command block is shifted against the vacuum's: mower 203=PAUSE / 204=RESUME / 205=STOP versus vacuum 204=Pause / 205=Resume / 206=Stop."
+    },
+    "mowType": { "dpKey": 122, "values": { "1": "GLOBAL", "2": "EDGE", "3": "SELECTION", "4": "ZONING", "5": "REMOTE", "6": "RANDOM" } },
+    "mowState": { "dpKey": 123, "values": { "1": "ZIGZAG_MOWING", "2": "EDGE_MOWING", "3": "TRANSITION", "4": "SUSPENDED", "5": "REMOTE_WALKING", "6": "REMOTE_MOWING" } },
+    "mappingType": { "dpKey": 124, "values": { "1": "LAWN_MAPPING", "2": "FORBIDDEN_ZONE_MAPPING", "3": "CHANNEL_MAPPING", "4": "SPLIT_WORKSPACE", "5": "MERGE_WORKSPACE", "6": "BOUNDARY_MODIFY" } },
+    "mappingState": { "dpKey": 125, "values": { "1": "AUTO_MAPPING", "2": "TRACK_ERASE", "3": "SUSPENDED", "4": "SAVING_MAP", "5": "REMOTE_WALKING", "6": "REMOTE_MAPPING" } },
+    "otaState": { "dpKey": 126, "values": { "1": "DOWNLOADING", "2": "INSTALLING", "3": "REBOOTING" } },
+    "chargeState": { "dpKey": 127, "values": { "1": "CHARGING", "2": "CHARGE_COMPLETED", "3": "WAITING_CHARGE", "4": "LOW_POWER", "5": "CHARGE_ERROR" } },
+    "dockState": { "dpKey": 128, "values": { "1": "MOVING_TO_TARGET", "2": "DOCKING", "3": "SUSPENDED" } },
+    "chargeType": { "dpKey": 129, "values": { "1": "MANUAL_DOCK", "2": "RAIN_DOCK", "3": "DO_NOT_DISTURB_DOCK", "4": "STANDBY_TIMEOUT_DOCK", "5": "LOW_BATTERY_DOCK", "6": "TASK_FINISHED_DOCK", "7": "MOW_FAULT_DOCK" } },
+    "pendType": { "dpKey": 130, "values": { "1": "APP_PAUSE", "2": "BUTTON_EMERGENCY_STOP", "3": "FAULT", "4": "BREAKPOINT_PAUSE", "5": "OTHER" } },
+    "remoteState": { "dpKey": 131, "values": { "1": "VIDEO_REMOTE", "2": "REMOTE_WALKING" } },
+    "mowStartType": { "dpKey": 132, "values": { "1": "APP_START", "2": "BUTTON_START", "3": "SCHEDULE_START" } },
+    "mowEffMode": { "dpKey": 133, "values": { "1": "DAILY", "2": "PRECISE", "3": "FAST" } },
+    "mowPatten": { "dpKey": 136, "values": { "1": "ZIGZAG", "2": "WELL", "3": "DIAMOND", "4": "TRIANGLE", "5": "AUTO_DEFLECT", "6": "RANDOM" }, "note": "'Patten' is the app's own spelling of 'pattern'." },
+    "mowConfMode": { "dpKey": 137, "values": { "1": "GLOBAL_CONFIG", "2": "ZONE_CUSTOM" } },
+    "offlineStatus": {
+      "dpKey": 138,
+      "values": { "1": "MANUAL_SHUTDOWN", "2": "SLEEP_SHUTDOWN", "3": "LOW_BATTERY_SHUTDOWN", "4": "UPGRADE_REBOOT" },
+      "note": "Same 1/2/3/4 encoding the vacuum's ODM (data-point) card uses for its offline reason - not the 1/34/51/103 encoding of the vacuum's RPC path."
+    },
+    "fcState": { "dpKey": 141, "values": { "1": "FC" } },
+    "gpsCoordinate": { "dpKey": 142, "fields": ["latitude", "longitude"] },
+    "offDockNoTaskStatus": { "dpKey": 143, "values": { "0": "UNKNOWN", "1": "WAITING", "2": "SUSPENDING", "3": "DOCKING", "4": "REMOTING" } },
+    "afsStatus": { "dpKey": 144, "values": { "0": "IDLE", "1": "BIT", "2": "MMT_OBA", "3": "CALIBRATION", "4": "ACTIVE", "5": "INACTIVE" } },
+    "networkChannel": { "dpKey": 145, "values": { "0": "UNKNOWN", "1": "WLAN0", "2": "WLAN1", "3": "MOBILE_4G" } },
+    "start": { "dpKey": 201, "values": { "1": "GLOBAL", "2": "SELECTION_WITH_ID", "3": "EDGE_WITH_ID", "4": "ZONING_WITH_PARAMS" } },
+    "navigationState": {
+      "description": "rock.common.NavigationState - the mower's rich internal state machine, carried in the protobuf RobotMsg (not in a DpPoint).",
+      "values": {
+        "0": "UNKNOWN",
+        "1": "MAP_INITIALIZING", "2": "MAP_UNDOCKING", "3": "MAP_UNDOCK_FAULT", "4": "MAP_LOCATING",
+        "5": "MAP_PREPARE_BOUNDARY", "6": "MAP_PREPARE_ISLAND", "7": "MAP_PREPARE_PATH",
+        "8": "MAP_BOUNDARY", "9": "MAP_ISLAND", "10": "MAP_PATH", "11": "MAP_BOUNDARY_AUTO",
+        "12": "MAP_ERASEING", "13": "MAP_SAVE", "14": "MAP_WAIT", "15": "MAP_RECOVERABLE_FAULT",
+        "16": "MAP_FAULT", "17": "MAP_EMERGENCY_STOP", "18": "MAP_WAITING_FAULT", "19": "MAP_NO_AVOID",
+        "20": "MAP_PREPARE_NO_AVOID", "21": "MAP_RESET_PASSAGE", "22": "MAP_PREPARE_RESET_PASSAGE",
+        "51": "MOW_INITIALIZING", "52": "MOW_UNDOCKING", "53": "MOW_LOCATING", "54": "MOW_ADJUST_CUTTER",
+        "55": "MOW_ZIG_ZAG", "56": "MOW_EDGE", "57": "MOW_GOTO", "58": "MOW_SUSPEND",
+        "59": "MOW_RECOVERABLE_FAULT", "60": "MOW_FAULT", "61": "MOW_DOCK_RAINFALL",
+        "62": "MOW_DOCK_NOTDISTURB", "63": "MOW_DOCK_LOW_BATTERY", "64": "MOW_WAIT",
+        "65": "MOW_PREPARE_REMOTE", "66": "MOW_REMOTE", "67": "MOW_EMERGENCY_STOP",
+        "68": "MOW_DOCK_MANUAL", "69": "MOW_DOCK_FAULT", "70": "MOW_REMOTE_UNDOCKING",
+        "71": "MOW_TO_DOCK_INITIALIZING", "72": "MOW_TO_DOCK_LOCATING",
+        "73": "MOW_TO_DOCK_RECOVERABLE_FAULT", "74": "MOW_TO_DOCK_FAULT",
+        "75": "MOW_TO_DOCK_EMERGENCY_STOP", "76": "MOW_TO_DOCK_CHARGING",
+        "77": "MOW_TO_DOCK_CHARGE_COMPLETED", "78": "MOW_PAUSE",
+        "101": "FREE", "102": "FREE_INITIALIZING", "103": "FREE_LOCATING", "104": "FREE_DOCK_MANUAL",
+        "105": "FREE_DOCK_MOW_END", "106": "FREE_DOCK_PLAN_END", "107": "FREE_EMERGENCY_STOP",
+        "108": "FREE_RECOVERABLE_FAULT", "109": "FREE_FAULT", "110": "FREE_BATTERY_HOLD_MODE",
+        "151": "CHARGING", "152": "CHARGE_COMPLETED", "153": "CHARGE_WAITING", "154": "CHARGE_FAULT"
+      }
+    },
+    "appButtonCommands": {
+      "description": "rock.common.RobotCommand - the command ids the app sends over the protobuf channel. Excerpt of the APP_BUTTON_* block; the full enum also carries SECURITY_*, sensor and factory-test codes.",
+      "confidence": "proven",
+      "values": {
+        "301": "APP_BUTTON_START", "302": "APP_BUTTON_PAUSE", "303": "APP_BUTTON_STOP",
+        "304": "APP_BUTTON_RESUME", "305": "APP_BUTTON_CHARGE", "306": "APP_BUTTON_CREATE_MAP",
+        "307": "APP_BUTTON_RESUME_CREATE_MAP", "308": "APP_BUTTON_TO_CLOSE", "309": "APP_BUTTON_ERASE",
+        "310": "APP_BUTTON_EXIT_MAPPING_PAGE", "311": "APP_BUTTON_BUILD_BOUNDARY",
+        "312": "APP_BUTTON_BUILD_ISLAND", "313": "APP_BUTTON_BUILD_PATH", "314": "APP_BUTTON_MOW_GLOBAL",
+        "315": "APP_BUTTON_MOW_EDGE", "316": "APP_BUTTON_MOW_SELECT", "317": "APP_BUTTON_DOCK_START"
+      }
+    }
+  }
+}

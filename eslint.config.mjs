@@ -20,7 +20,13 @@ const projectIgnores = [
 	"**/.sniff/**",
 	"**/.agent/**",
 	"**/.apk/**",
-	"**/coverage/**"
+	"**/coverage/**",
+	// Reverse-engineering scratch space: decompiled bundles and vendor sources, never shipped.
+	// Git ignores these through .git/info/exclude, but eslint has its own list.
+	"**/_appanalysis/**",
+	"**/_fwanalysis/**",
+	// Agent worktrees hold a full copy of the project; linting them multiplies every finding.
+	"**/.claude/**"
 ];
 
 const legacyRuleIgnores = [
