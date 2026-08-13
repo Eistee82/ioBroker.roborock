@@ -53,6 +53,8 @@ export class MockRobot {
 				return this.roomMapping;
 			case "get_timer":
 				return this.timers;
+			case "upd_timer":
+				return this.handleUpdTimer(params);
 			case "app_start":
 				this.updateState({ state: 5, in_cleaning: 1 }); // 5 = Cleaning
 				return ["ok"];
@@ -78,6 +80,21 @@ export class MockRobot {
 				// Return generic success for unknown commands to prevent crashes
 				return ["ok"];
 		}
+	}
+
+	/**
+	 * `upd_timer` flips an existing timer on/off: params are `[timerId, "on"|"off"]`, answer `["ok"]`.
+	 * @param params Raw request params.
+	 */
+	private handleUpdTimer(params: any[]): any[] {
+		const [timerId, mode] = params;
+		if (mode !== "on" && mode !== "off") return ["invalid_params"];
+
+		const timer = this.timers.find((entry) => Array.isArray(entry) && entry[0] === timerId);
+		if (!timer) return ["unknown_id"];
+
+		timer[1] = mode;
+		return ["ok"];
 	}
 
 	private handleGetProp(keys: string[]): any[] {

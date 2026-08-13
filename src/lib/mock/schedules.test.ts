@@ -81,4 +81,34 @@ describe("Schedule (Timer) Verification", () => {
 		await mockAdapter.expectState(`Devices.${duid}.schedules.timer_id_2.enabled`, { val: false });
 		await mockAdapter.expectState(`Devices.${duid}.schedules.timer_id_3.cron`, { val: "0 8 * * 1,3,5" });
 	});
+
+	it("keeps the enabled switch writable so it can be toggled", async () => {
+		await vacuumFeatures.updateTimers();
+
+		const timerId = mockRobot.timers[0][0];
+		const obj = await mockAdapter.getObjectAsync(`Devices.${mockRobot.duid}.schedules.${timerId}.enabled`);
+		expect(obj.common.write).toBe(true);
+
+		// The cron of a timer can only be changed by rewriting the whole timer (set_timer), so it stays read-only.
+		const cronObj = await mockAdapter.getObjectAsync(`Devices.${mockRobot.duid}.schedules.${timerId}.cron`);
+		expect(cronObj.common.write).toBe(false);
+	});
+
+	it("reflects an upd_timer toggle on the next timer read", async () => {
+		const timerId = mockRobot.timers[0][0];
+		await vacuumFeatures.updateTimers();
+		await mockAdapter.expectState(`Devices.${mockRobot.duid}.schedules.${timerId}.enabled`, { val: true });
+
+		// upd_timer is the counterpart of get_timer: [timerId, "on"|"off"] -> ["ok"].
+		const result = await depsMock.requestsHandler.sendRequest(mockRobot.duid, "upd_timer", [timerId, "off"]);
+		expect(result).toEqual(["ok"]);
+
+		await vacuumFeatures.updateTimers();
+		await mockAdapter.expectState(`Devices.${mockRobot.duid}.schedules.${timerId}.enabled`, { val: false });
+	});
+
+	it("rejects an upd_timer for an unknown timer id", async () => {
+		const result = await depsMock.requestsHandler.sendRequest(mockRobot.duid, "upd_timer", ["does_not_exist", "off"]);
+		expect(result).toEqual(["unknown_id"]);
+	});
 });

@@ -55,6 +55,11 @@ export const METHOD_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.freez
 	get_flow_led_status: 8_000,
 	get_water_box_custom_mode: 8_000,
 
+	// --- schedule writes -------------------------------------------------------------
+	// Counterpart of get_timer: enables/disables an existing timer. It is a small config
+	// write, so it gets the same budget as the set_* commands rather than the read tier.
+	upd_timer: 15_000,
+
 	// --- list / history reads --------------------------------------------------------
 	get_clean_summary: 15_000,
 	get_clean_record: 15_000,

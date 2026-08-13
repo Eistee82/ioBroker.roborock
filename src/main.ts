@@ -338,6 +338,8 @@ export class Roborock extends utils.Adapter {
 				...Array.from(writableFolders).map((folder) => this.subscribeStatesAsync(`Devices.*.${folder}.*`)),
 				this.subscribeStatesAsync("Devices.*.resetConsumables.*"),
 				this.subscribeStatesAsync("Devices.*.programs.*"),
+				// schedules.<timerId>.enabled is a writable switch, so it has to be watched as well.
+				this.subscribeStatesAsync("Devices.*.schedules.*"),
 				this.subscribeStatesAsync("Devices.*.deviceStatus.state"),
 				this.subscribeStatesAsync("Devices.*.deviceStatus.status"),
 				this.subscribeStatesAsync("loginCode")
@@ -1497,6 +1499,13 @@ export class Roborock extends utils.Adapter {
 				return;
 			}
 		}
+
+		// Special handling for schedules (deeply nested: Devices.duid.schedules.<timerId>.enabled)
+		if (folder === "schedules" && idParts.length >= 7 && idParts[6] === "enabled") {
+			await this.handleScheduleToggle(duid, idParts[5], state, id);
+			return;
+		}
+
 		this.rLog("Requests", duid, "Info", undefined, undefined, `[onStateChange] Processing ${folder}.${command}`, "info");
 
 		const handler = this.deviceFeatureHandlers.get(duid);
@@ -2224,6 +2233,53 @@ export class Roborock extends utils.Adapter {
 			case "error":
 				this.log.error(logMsg);
 				break;
+		}
+	}
+
+	/**
+	 * Enables or disables an existing device schedule (timer).
+	 *
+	 * `updateTimers()` publishes every timer of the robot as `schedules.<timerId>.enabled`.
+	 * The counterpart of the `get_timer` read is `upd_timer`, which takes the timer id together
+	 * with the literal on/off state that `get_timer` also reports:
+	 *   `{"method":"upd_timer","params":["1498595904821","off"]}` -> `["ok"]`
+	 * The timer id is exactly the one `get_timer` returned, so no id translation is needed.
+	 *
+	 * The switch is only acknowledged after the robot confirmed the change. On any other answer
+	 * the timers are re-read so the state keeps showing what the robot actually does instead of
+	 * the value the user just clicked.
+	 * @param duid Device unique id.
+	 * @param timerId Timer id as reported by `get_timer`.
+	 * @param state The state that was written by the user.
+	 * @param stateId Full object id of that state.
+	 */
+	async handleScheduleToggle(duid: string, timerId: string, state: ioBroker.State, stateId: string): Promise<void> {
+		const handler = this.deviceFeatureHandlers.get(duid);
+		if (!handler) {
+			this.rLog("Requests", duid, "Warn", undefined, undefined, "[scheduleToggle] Received schedule command for unknown device", "warn");
+			return;
+		}
+		if (!timerId) return;
+
+		const enabled = this.isTruthy(state.val);
+		const mode = enabled ? "on" : "off";
+
+		try {
+			this.rLog("Requests", duid, "Info", handler.protocolVersion || undefined, undefined, `[scheduleToggle] Switching timer ${timerId} ${mode}`, "info");
+			const result = await this.requestsHandler.sendRequest(duid, "upd_timer", [timerId, mode]);
+
+			const data = (result && typeof result === "object" && "data" in result) ? (result as { data: unknown }).data : result;
+			if (Array.isArray(data) && data.length === 1 && data[0] === "ok") {
+				await this.setState(stateId, { val: enabled, ack: true });
+				return;
+			}
+
+			this.rLog("Requests", duid, "Warn", handler.protocolVersion || undefined, undefined, `[scheduleToggle] upd_timer for ${timerId} returned unexpected result: ${JSON.stringify(data)} (expected ["ok"])`, "warn");
+			await handler.updateTimers();
+		} catch (e: unknown) {
+			this.catchError(e, "scheduleToggle", duid);
+			// Re-read so the switch falls back to the timer state the robot really has.
+			await handler.updateTimers().catch((refreshError: unknown) => this.catchError(refreshError, "scheduleToggle(refresh)", duid));
 		}
 	}
 
