@@ -132,7 +132,10 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 				label={I18n.t("ui_repeat")}
 				value={String(props.cleanCount)}
 				onChange={event => props.onCleanCountChange(Number(event.target.value))}
-				sx={{ width: 128 }}
+				// The longest translation is the German "2 Durchgänge". A fixed width truncated it,
+				// and the surrounding flex row shrank the field further, so give it a floor and
+				// keep it out of the shrinking.
+				sx={{ minWidth: 168, flexShrink: 0 }}
 			>
 				<MenuItem value="1">{I18n.t("ui_repeat_once")}</MenuItem>
 				<MenuItem value="2">{I18n.t("ui_repeat_twice")}</MenuItem>

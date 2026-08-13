@@ -60,6 +60,9 @@ This feature only works when map creation is enabled in the adapter options. Ope
 -->
 ### **WORK IN PROGRESS**
 
+- (Eistee82) Fixed the obstacle icons in the map tab showing a broken image placeholder. The artwork lives in the adapter file storage, which the admin serves under a different path than the former web adapter did; the tab now resolves it relative to the admin root so it also survives a reverse proxy.
+- (Eistee82) Fixed the pass selector in the map tab cutting off its label. It had a fixed width that was too narrow for the longest translation and was additionally squeezed by the surrounding row.
+
 - (Eistee82) Added the missing user documentation `docs/en/README.md` and `docs/de/README.md` with setup instructions (including the cloud free operation with `duid`/`localKey`), a configuration reference, a states reference and an FAQ.
 - (Eistee82) The reference tables of that documentation are generated instead of hand maintained: the model, command and state tables come from the real feature handlers, which are instantiated offline through the model registry, and the configuration tables come from `admin/jsonConfig.json` together with the existing `admin/i18n` translations. Only the parts between the `BEGIN`/`END` marker comments belong to the generator; the prose around them is never touched.
 - (Eistee82) Added a unit test that fails as soon as the generated documentation sections no longer match the code or the admin configuration, so the documentation cannot go stale unnoticed. `npm run docs -- --check` reports the same without writing anything.

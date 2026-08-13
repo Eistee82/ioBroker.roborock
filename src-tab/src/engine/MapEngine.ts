@@ -7,6 +7,17 @@ import type { B01MapData } from "@adapter/lib/map/b01/types";
 import { Q10_CANVAS_SCALE, Q10MapGeometry } from "@adapter/lib/map/q10/Q10MapGeometry";
 import { floorScopeKey, normalizeMapFlag, normalizeRoomId, roomNameCacheKey } from "@adapter/lib/map/roomKey";
 import { SVGMapRenderer } from "./SVGMapRenderer";
+
+/**
+ * Base path for the device artwork the AppPluginManager stores in the adapter's file storage
+ * (`writeFileAsync("roborock", "assets/<model>/…")`).
+ *
+ * The tab is served from `…/adapter/roborock/tab.html`, while the file storage is reachable at
+ * `…/files/roborock/…`. The relative prefix therefore has to climb two levels — the same way
+ * ioBroker.javascript resolves its own downloads. Keeping it relative also survives an admin
+ * that is mounted under a sub path by a reverse proxy, which an absolute `/files/…` would not.
+ */
+const ASSET_BASE = "../../files/roborock/assets";
 import type {
 	ConsumablePartModel,
 	DockControlModel,
@@ -1499,7 +1510,7 @@ export class MapEngine {
 			(this.currentRobotDuid && this.robotModels[this.currentRobotDuid]) ||
 			(Object.keys(this.robotModels).length ? this.robotModels[Object.keys(this.robotModels)[0]] : null) ||
 			"roborock.vacuum.a147";
-		const baseUrl = `assets/${modelFolder}/drawable-mdpi/`;
+		const baseUrl = `${ASSET_BASE}/${modelFolder}/drawable-mdpi/`;
 		const renderer = this.createSvgRenderer(baseUrl, params);
 
 		drawMapV1(this.map as any, renderer, {
@@ -1832,7 +1843,7 @@ export class MapEngine {
 			this.model ||
 			(this.currentRobotDuid && this.robotModels[this.currentRobotDuid]) ||
 			"roborock.vacuum.ss09";
-		const baseUrl = `assets/${modelFolder}/drawable-mdpi/`;
+		const baseUrl = `${ASSET_BASE}/${modelFolder}/drawable-mdpi/`;
 		const geometry = new Q10MapGeometry(map, 1, this.getQ10CanvasScale(map));
 		const renderer = this.createSvgRendererWithOptions(baseUrl, null, {
 			obstacleRadius: 0,
