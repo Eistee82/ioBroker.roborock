@@ -36,7 +36,10 @@ function createPollEnv(options: { updateInterval?: number } = {}): PollEnv {
 		errorMessage: (e: unknown): string => (e instanceof Error ? e.message : String(e)),
 		http_api: {
 			updateHomeData: vi.fn().mockResolvedValue(undefined),
-			getDevices: (): typeof devices => devices
+			getDevices: (): typeof devices => devices,
+			// Diese Tests decken das Polling im Cloud-Betrieb ab; im Nur-Lokal-Modus
+			// überspringt der DeviceManager den HomeData-Poll ganz.
+			hasCloudSession: (): boolean => true
 		},
 		local_api: { refreshStaleLocalEndpoints: undefined },
 		requestsHandler: { startupFinished: true },
