@@ -55,6 +55,12 @@ This feature only works when map creation is enabled in the adapter options. Ope
 
 - (Eistee82) Fixed room names on devices with several stored maps: rooms are now consistently keyed by the composite `(mapFlag, roomId)`, so maps that reuse the same room ids no longer show the names of another floor.
 - (Eistee82) The generated V1 map data now carries the active `mapFlag`, and the map web UI requests and caches room names per floor instead of always using floor 0.
+- (Eistee82) Added method dependent request timeouts: status polls now fail fast while map, photo and cleaning commands get the time they actually need. All values live in one declarative table (`src/lib/requestPolicy.ts`).
+- (Eistee82) Added adaptive polling: slower while the robot is idle or the adapter is still starting up, faster while it is cleaning, with exponential backoff per device after failed polls.
+- (Eistee82) Replaced the flat one second retry delay with exponential backoff and jitter.
+- (Eistee82) Fixed the timeout cascade after a connection loss: pending and new requests now fail immediately with a clear message instead of each running into its own timeout, and repeated outage messages are throttled to one per device per minute.
+- (Eistee82) Fixed an explicit request timeout being silently overwritten for any method containing "map" (the floor switch asked for 60s and got 20s).
+- (Eistee82) Fixed the 24h request ID reset interval and the request bookkeeping timers not being cleared when the adapter unloads.
 
 ### 0.7.4 (2026-06-07)
 

@@ -7,6 +7,7 @@ import { FallbackBaseFeatures, FallbackVacuumFeatures } from "./features/fallbac
 import { DEFAULT_PROFILE, VacuumProfile } from "./features/vacuum/v1VacuumFeatures";
 
 import { ProductHelper } from "./productHelper";
+import { getPollIntervalSeconds, isChannelUnavailableError } from "./requestPolicy";
 import { Feature } from "./features/features.enum";
 import { getB01VariantFromModel } from "./b01Variant";
 import { isB01ParkedState } from "./map/b01/B01StateSemantics";
@@ -108,6 +109,10 @@ export class DeviceManager {
 	private mainUpdateInterval: ioBroker.Interval | undefined = undefined;
 	private pollingDevices = new Set<string>();
 	public deviceFeatureHandlers = new Map<string, BaseDeviceFeatures>();
+	/** Adaptive polling: earliest tick (ms epoch) at which a device may be polled again. */
+	private nextPollDueAt = new Map<string, number>();
+	/** Adaptive polling: consecutive failed poll cycles per device, drives the error backoff. */
+	private pollErrorCount = new Map<string, number>();
 
 	constructor(adapter: Roborock) {
 		this.adapter = adapter;
@@ -236,7 +241,6 @@ export class DeviceManager {
 
 	// Track previous state
 	private lastStateCode = new Map<string, number>();
-	private skipPollUntilNextHomeData = new Set<string>(); // cleared each slow tick
 
 	/**
 	 * Get current state code. V1 uses deviceStatus.state, B01 uses deviceStatus.status.
@@ -276,11 +280,40 @@ export class DeviceManager {
 		return isB01ParkedState(stateCode);
 	}
 
+	/**
+	 * Adaptive polling cadence for one device.
+	 *
+	 * Values come from the declarative policy in requestPolicy.ts: slow while idle or still
+	 * loading, fast while the robot is actually working, exponential backoff after failures.
+	 */
+	private resolvePollIntervalSeconds(duid: string, isActive: boolean): number {
+		return getPollIntervalSeconds({
+			baseIntervalSeconds: this.adapter.config.updateInterval,
+			isActive,
+			isStartingUp: this.adapter.requestsHandler?.startupFinished === false,
+			consecutiveErrors: this.pollErrorCount.get(duid) ?? 0
+		});
+	}
+
+	/** Records a successful poll cycle: clears the error backoff for the device. */
+	private notePollSuccess(duid: string): void {
+		if (this.pollErrorCount.delete(duid)) {
+			this.adapter.rLog("System", duid, "Debug", undefined, undefined, "Polling recovered; error backoff reset.", "debug");
+		}
+	}
+
+	/** Records a failed poll cycle and returns the new consecutive error count. */
+	private notePollFailure(duid: string): number {
+		const count = (this.pollErrorCount.get(duid) ?? 0) + 1;
+		this.pollErrorCount.set(duid, count);
+		return count;
+	}
+
 	/** Starts polling. updateInterval (UI) drives everything except TCP; TCP keepalive is fixed 30s. */
 	public startPolling(): void {
 		const mainPollInterval = this.adapter.config.updateInterval; // e.g. 60s
 
-		this.adapter.rLog("System", null, "Info", undefined, undefined, `Starting main poll (every ${mainPollInterval}s). Heavy data updates only after activity finishes.`, "info");
+		this.adapter.rLog("System", null, "Info", undefined, undefined, `Starting main poll (base ${mainPollInterval}s, adaptive: faster while cleaning, backoff after errors). Heavy data updates only after activity finishes.`, "info");
 
 		let mainUpdateCount = mainPollInterval; // Slow loop counter
 
@@ -291,7 +324,6 @@ export class DeviceManager {
 
 			if (isSlowTick) {
 				mainUpdateCount = 0;
-				this.skipPollUntilNextHomeData.clear();
 				this.adapter.rLog("System", null, "Debug", undefined, undefined, "Running scheduled main device update...", "debug");
 				await this.adapter.http_api.updateHomeData();
 				void this.adapter.local_api?.refreshStaleLocalEndpoints?.("slow poll")?.catch((e: unknown) => {
@@ -299,26 +331,34 @@ export class DeviceManager {
 				});
 			}
 
+			const now = Date.now();
 			const cloudDevices = this.adapter.http_api.getDevices();
 			for (const device of cloudDevices) {
 				const duid = device.duid;
-				if (this.skipPollUntilNextHomeData.has(duid)) continue;
 
 				const handler = this.deviceFeatureHandlers.get(duid);
 				if (!handler) continue;
 
 				const lastState = this.lastStateCode.get(duid) || 0;
 				const isActive = this.isActiveState(lastState);
-				const isFastTick = (mainUpdateCount % 2 === 0);
-				const shouldPoll = isSlowTick || (isActive && isFastTick);
+				// Cloud-side housekeeping is cheap and independent of the robot channel, so it
+				// keeps running on the slow tick even while the device itself is backed off.
+				const dueAt = this.nextPollDueAt.get(duid) ?? 0;
+				const isDue = now >= dueAt;
 
-				if (!shouldPoll) continue;
+				if (!isSlowTick && !isDue) continue;
 
 				try {
 					if (isSlowTick) {
 						await this.adapter.updateDeviceInfo(duid, cloudDevices);
 						await this.updateHomeDataDeviceStatus(duid, cloudDevices);
 					}
+					if (!isDue) continue;
+
+					// Provisional slot so a long-running poll cannot pile up ticks; it is
+					// recomputed from the fresh device state once the poll succeeded.
+					this.nextPollDueAt.set(duid, now + this.resolvePollIntervalSeconds(duid, isActive) * 1000);
+
 					if (!device.online) continue;
 					const version = await this.adapter.getDeviceProtocolVersion(duid);
 					if (this.pollingDevices.has(duid)) {
@@ -342,12 +382,27 @@ export class DeviceManager {
 							default:
 								this.adapter.rLog("System", duid, "Warn", version, undefined, "Unknown protocol version. Skipping poll.", "warn");
 						}
+						this.notePollSuccess(duid);
+						// The poll just refreshed lastStateCode: if the robot started cleaning we
+						// must switch to the fast cadence now, not one slow interval later.
+						const freshActive = this.isActiveState(this.lastStateCode.get(duid) ?? 0);
+						this.nextPollDueAt.set(duid, Date.now() + this.resolvePollIntervalSeconds(duid, freshActive) * 1000);
 					} finally {
 						this.pollingDevices.delete(duid);
 					}
 				} catch (error: unknown) {
-					this.adapter.catchError(error, "mainUpdateInterval", duid);
-					this.skipPollUntilNextHomeData.add(duid);
+					const errors = this.notePollFailure(duid);
+					const backoffSeconds = this.resolvePollIntervalSeconds(duid, isActive);
+					this.nextPollDueAt.set(duid, Date.now() + backoffSeconds * 1000);
+
+					if (isChannelUnavailableError(error)) {
+						// Connection is down — expected and already reported once by the request
+						// handler. Do not add a stack trace per poll cycle to the log.
+						this.adapter.rLog("System", duid, "Warn", undefined, undefined, `Poll skipped, connection unavailable (attempt ${errors}). Next try in ${backoffSeconds}s.`, "debug");
+					} else {
+						this.adapter.catchError(error, "mainUpdateInterval", duid);
+						this.adapter.rLog("System", duid, "Warn", undefined, undefined, `Poll failed (${errors} consecutive). Backing off, next try in ${backoffSeconds}s.`, "debug");
+					}
 				}
 			}
 		}, 1000); // 1s ticker
@@ -491,6 +546,9 @@ export class DeviceManager {
 			this.adapter.clearInterval(this.mainUpdateInterval as any);
 			this.mainUpdateInterval = undefined;
 		}
+		this.nextPollDueAt.clear();
+		this.pollErrorCount.clear();
+		this.pollingDevices.clear();
 	}
 	/**
 	 * Fetches non-status data.
