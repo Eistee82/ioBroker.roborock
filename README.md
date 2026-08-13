@@ -54,6 +54,8 @@ This feature only works when map creation is enabled in the adapter options. Ope
 ### **WORK IN PROGRESS**
 
 - (Eistee82) Fixed the schedule switch `schedules.<timerId>.enabled` having no effect: writes were never subscribed and were silently dropped. Toggling it now sends `upd_timer` to the robot, and the switch is only acknowledged after the robot confirmed the change.
+- (Eistee82) Fixed the "Load Map" button `floors.<mapFlag>.load` having no effect: like the schedule switch it was never subscribed, so pressing it never reached the floor switch logic.
+- (Eistee82) The `deviceStatus` entries `along_floor`, `green_laser`, `status`, `wind` and `water` are no longer marked writable. They only mirror what the robot reports; the working write surface is the `commands` folder.
 - (Eistee82) Fixed room switches being collected across all stored maps when starting a segment cleaning: only the rooms of the currently loaded map are sent to `app_segment_clean`. On devices with several floors this previously mixed rooms of different floors into one cleaning job, because room ids are only unique within one map.
 - (Eistee82) Fixed room names on devices with several stored maps: rooms are now consistently keyed by the composite `(mapFlag, roomId)`, so maps that reuse the same room ids no longer show the names of another floor.
 - (Eistee82) The generated V1 map data now carries the active `mapFlag`, and the map web UI requests and caches room names per floor instead of always using floor 0.

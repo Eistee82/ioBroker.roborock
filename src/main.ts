@@ -56,6 +56,25 @@ type SceneSegmentWaitResult = "ready" | "not-started" | "finish-timeout" | "canc
 type SceneSegmentStartResult = "started" | "not-started" | "cancelled";
 type SceneSegmentInactiveResult = "ready" | "timeout" | "cancelled";
 
+/**
+ * State patterns the adapter watches on top of the per device command folders
+ * (`Devices.*.<commandFolder>.*`, derived at runtime from the feature handlers).
+ *
+ * Every writable state needs to be covered here, otherwise its writes never reach
+ * {@link Roborock.onStateChange} and the state looks operable while doing nothing. The nested
+ * entries `schedules.<timerId>.enabled` and `floors.<mapFlag>.load` are exactly such cases.
+ * `test/unit/state_subscriptions.test.ts` guards the coverage.
+ */
+export const STATIC_SUBSCRIPTION_PATTERNS = [
+	"Devices.*.resetConsumables.*",
+	"Devices.*.programs.*",
+	"Devices.*.schedules.*",
+	"Devices.*.floors.*",
+	"Devices.*.deviceStatus.state",
+	"Devices.*.deviceStatus.status",
+	"loginCode"
+] as const;
+
 const SCENE_QUEUE_VERSION = 1;
 const SCENE_SEGMENT_START_MAX_ATTEMPTS = 3;
 const SCENE_SEGMENT_START_TIMEOUT_MS = 2 * 60 * 1000;
@@ -335,14 +354,7 @@ export class Roborock extends utils.Adapter {
 			// Parallelize non-dependent startup tasks
 			await Promise.all([
 				...(localOnly ? [] : [this.processScenes(), this.start_go2rtc()]),
-				...Array.from(writableFolders).map((folder) => this.subscribeStatesAsync(`Devices.*.${folder}.*`)),
-				this.subscribeStatesAsync("Devices.*.resetConsumables.*"),
-				this.subscribeStatesAsync("Devices.*.programs.*"),
-				// schedules.<timerId>.enabled is a writable switch, so it has to be watched as well.
-				this.subscribeStatesAsync("Devices.*.schedules.*"),
-				this.subscribeStatesAsync("Devices.*.deviceStatus.state"),
-				this.subscribeStatesAsync("Devices.*.deviceStatus.status"),
-				this.subscribeStatesAsync("loginCode")
+				...this.getSubscriptionPatterns(writableFolders).map((pattern) => this.subscribeStatesAsync(pattern))
 			]);
 
 			if (!localOnly) {
@@ -1450,6 +1462,19 @@ export class Roborock extends utils.Adapter {
 	}
 
 	/**
+	 * Every state pattern the adapter subscribes to.
+	 *
+	 * The per device command folders are only known once the feature handlers exist, the rest is
+	 * static ({@link STATIC_SUBSCRIPTION_PATTERNS}). Kept as its own method so the coverage of all
+	 * writable states can be asserted without booting the adapter.
+	 * @param commandFolders Command folders reported by the feature handlers.
+	 */
+	public getSubscriptionPatterns(commandFolders: Iterable<string>): string[] {
+		const folderPatterns = [...new Set(commandFolders)].map((folder) => `Devices.*.${folder}.*`);
+		return [...folderPatterns, ...STATIC_SUBSCRIPTION_PATTERNS];
+	}
+
+	/**
 	 * Is called if a subscribed state changes.
 	 */
 	async onStateChange(id: string, state: ioBroker.State | null | undefined) {
@@ -1488,16 +1513,19 @@ export class Roborock extends utils.Adapter {
 		const folder = idParts[4];
 		const command = idParts[5];
 
-		// Special handling for floors (deeply nested: Devices.duid.floors.mapFlag.load)
+		// Special handling for floors (deeply nested: Devices.duid.floors.<mapFlag>.<target>)
 		if (folder === "floors" && idParts.length >= 7) {
-			const mapFlag = parseInt(idParts[5], 10);
+			const mapFlag = Number(idParts[5]);
 			const target = idParts[6];
 
 			// Load Map Button
-			if (target === "load" && (state.val === true || state.val === "true" || state.val === 1)) {
+			if (target === "load" && Number.isInteger(mapFlag) && mapFlag >= 0 && this.isTruthy(state.val)) {
 				await this.handleFloorSwitch(duid, mapFlag, id);
-				return;
 			}
+
+			// Anything else below floors is a room switch or floor metadata. Room switches are read
+			// on demand when a segment cleaning starts, so a write needs no request of its own.
+			return;
 		}
 
 		// Special handling for schedules (deeply nested: Devices.duid.schedules.<timerId>.enabled)

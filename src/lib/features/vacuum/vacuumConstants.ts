@@ -475,8 +475,11 @@ export const VACUUM_CONSTANTS = {
 		waterShortageActive: { name: "Water Shortage Active", type: "boolean" },
 		cleaned_area: { type: "number", unit: "m²" },
 		clean_times: { type: "number" },
-		along_floor: { type: "number", def: 0, states: { 0: "Off", 1: "On" }, write: true },
-		green_laser: { type: "number", def: 0, states: { 0: "Off", 1: "On" }, write: true },
+		// deviceStatus mirrors what the robot reports. The write surface for these values is the
+		// commands folder (commands.green_laser, commands.set_custom_mode, ...), which is the only
+		// one that is subscribed – a writable mirror here would look operable and do nothing.
+		along_floor: { type: "number", def: 0, states: { 0: "Off", 1: "On" } },
+		green_laser: { type: "number", def: 0, states: { 0: "Off", 1: "On" } },
 		dust_bag_used: { type: "number", def: 0 },
 		add_sweep_status: { type: "number", def: 0, states: { 0: "None", 1: "Active" } },
 		clean_finish: { type: "string" },
@@ -508,7 +511,6 @@ export const VACUUM_CONSTANTS = {
 				29: "Mapping",
 				100: "Fully Charged",
 			},
-			write: true,
 		},
 		washingTaskStatus: { name: "Washing Task Status", type: "number", def: 0, states: {} },
 		washingMode: { name: "Washing Mode", type: "number", def: 0, states: Z70_WASHING_MODE_STATES },
@@ -520,13 +522,11 @@ export const VACUUM_CONSTANTS = {
 			type: "number",
 			def: 102,
 			states: { 101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max", 105: "Off", 108: "Max+" },
-			write: true,
 		},
 		water: {
 			type: "number",
 			def: 201,
 			states: { 200: "Off", 201: "Mild", 202: "Moderate", 203: "Intense", 204: "Custom" },
-			write: true,
 		},
 	},
 	consumables: {
