@@ -183,16 +183,19 @@ export class mqtt_api {
 		client.on("disconnect", () => {
 			this.adapter.rLog("MQTT", null, "Info", undefined, undefined, `MQTT disconnected.`, "info");
 			this.connected = false;
+			this.notifyChannelDown("broker sent DISCONNECT");
 		});
 
 		client.on("error", (error: Error) => {
 			this.adapter.rLog("MQTT", null, "Error", "Info", undefined, `MQTT connection error: ${error.message}. Broker: ${rriot.r.m}`, "error");
 			this.connected = false;
+			this.notifyChannelDown(error.message);
 		});
 
 		client.on("close", () => {
 			this.adapter.rLog("MQTT", null, "Info", undefined, undefined, `MQTT connection closed. Reconnecting in 60 seconds...`, "info");
 			this.connected = false;
+			this.notifyChannelDown("connection closed");
 		});
 
 		client.on("reconnect", () => {
@@ -208,6 +211,7 @@ export class mqtt_api {
 		client.on("offline", () => {
 			this.adapter.rLog("MQTT", null, "Info", undefined, undefined, "MQTT connection went offline.", "warn");
 			this.connected = false;
+			this.notifyChannelDown("client went offline");
 		});
 	}
 
@@ -925,6 +929,17 @@ export class mqtt_api {
 
 	isConnected(): boolean {
 		return this.connected;
+	}
+
+	/**
+	 * Notifies the request handler that the cloud channel is down.
+	 *
+	 * Robust-request-handling hook (see requestsHandler.onChannelDown): in-flight cloud requests
+	 * are failed immediately instead of each running into its own timeout.
+	 * Deliberately optional-chained so a partially initialised adapter cannot throw here.
+	 */
+	private notifyChannelDown(reason: string): void {
+		this.adapter.requestsHandler?.onChannelDown?.("MQTT", reason);
 	}
 
 	async disconnectClient(): Promise<void> {

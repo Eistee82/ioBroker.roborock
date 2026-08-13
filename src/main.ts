@@ -1656,7 +1656,8 @@ export class Roborock extends utils.Adapter {
 		this.commandTimeouts.clear();
 
 		this.deviceManager.stopPolling();
-		this.requestsHandler.clearQueue();
+		// permanent=true: also stops the request-ID reset interval and latches the handler.
+		this.requestsHandler.clearQueue(true);
 	}
 
 	/** Timestamp keys we format as readable date string; all other keys passed through as-is. */

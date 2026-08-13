@@ -4,12 +4,26 @@ import { Q10CommandHandler } from "./b01/q10/Q10CommandHandler";
 import { isConnectivityLikeError } from "./errorUtils";
 import type { BaseDeviceFeatures } from "./features/baseDeviceFeatures";
 import { messageParser } from "./messageParser";
+import {
+	ChannelUnavailableError,
+	DEFAULT_REQUEST_TIMEOUT_MS,
+	RETRY_POLICY,
+	getRequestTimeoutMs,
+	getRetryDelayMs,
+	isChannelUnavailableError
+} from "./requestPolicy";
 
-const REQUEST_TIMEOUT = 10000;
+const REQUEST_TIMEOUT = DEFAULT_REQUEST_TIMEOUT_MS;
 /** Max retries on failure (timeout/network); total attempts = 1 + this value. */
-const MAX_REQUEST_RETRIES = 2;
+const MAX_REQUEST_RETRIES = RETRY_POLICY.maxRetries;
+
+/** Log at most one "channel is down" line per duid per this window; the rest is counted. */
+const CHANNEL_LOG_THROTTLE_MS = 60_000;
 
 function isRetryableError(error: unknown): boolean {
+	// A known-down channel is not worth retrying: nothing was sent, and the poll backoff
+	// already governs when we try again. Retrying here would only re-create the cascade.
+	if (isChannelUnavailableError(error)) return false;
 	return isConnectivityLikeError(error);
 }
 
@@ -322,6 +336,17 @@ export class requestsHandler {
 	public startupFinished: boolean = true;
 	private finishedRequests: Set<number> = new Set();
 
+	/** Timers that expire entries of {@link finishedRequests}; cleared on unload. */
+	private finishedRequestTimers: Set<ioBroker.Timeout> = new Set();
+	/** Pending retry-backoff timers; cleared (and their waiters released) on unload. */
+	private backoffTimers: Set<ioBroker.Timeout> = new Set();
+	/** Resolvers of running backoff waits, so unload can release them instead of hanging. */
+	private backoffReleases: Set<(reason: Error) => void> = new Set();
+	/** Set once clearQueue() ran, so late callers fail fast instead of queueing into a dead adapter. */
+	private stopped: boolean = false;
+	/** Throttle bookkeeping for "channel down" logs: duid -> { last log, suppressed count }. */
+	private channelLogState: Map<string, { lastLoggedAt: number; suppressed: number }> = new Map();
+
 	constructor(adapter: Roborock) {
 		this.adapter = adapter;
 		// Offset ID by instance to avoid collisions
@@ -412,6 +437,11 @@ export class requestsHandler {
 				await callback(result);
 			} catch (e: unknown) {
 				const errorMsg = this.adapter.errorMessage(e);
+				// A down channel is an expected, self-explaining condition — one short line, no stack.
+				if (isChannelUnavailableError(e)) {
+					this.adapter.rLog("System", duid, "Warn", "Connection", undefined, `[${identifier}] skipped: ${errorMsg}`, "debug");
+					return;
+				}
 				// Handle timeouts/aborts gracefully
 				if (errorMsg.includes("Timeout") || errorMsg.includes("timed out") || errorMsg.includes("Aborted") || errorMsg.includes("CANCELLED") || errorMsg.includes("ADAPTER_STOPPED")) {
 					const idMatch = errorMsg.match(/Task (req_\d+_\d+)/);
@@ -435,7 +465,155 @@ export class requestsHandler {
 		promise.catch(() => {});
 	}
 
+	/**
+	 * Methods that must stay allowed while the channel looks down, because they are part of
+	 * recovering it (endpoint refresh / re-discovery).
+	 */
+	private static readonly CHANNEL_GUARD_EXEMPT_METHODS = new Set(["get_network_info", "service.get_net_info"]);
+
+	/**
+	 * Returns a human readable reason if the transport towards `duid` is known to be down,
+	 * otherwise `undefined`.
+	 *
+	 * This is deliberately conservative: only when BOTH the cloud (MQTT) and the local TCP
+	 * session are down do we treat the channel as unavailable. A single healthy channel is
+	 * enough, because the send path picks the protocol accordingly.
+	 */
+	public getChannelUnavailableReason(duid: string, method: string): string | undefined {
+		if (this.stopped) return "Adapter is shutting down";
+		if (requestsHandler.CHANNEL_GUARD_EXEMPT_METHODS.has(method)) return undefined;
+
+		const cloudUp = this.adapter.mqtt_api?.isConnected?.() === true;
+		const localUp = this.adapter.local_api?.isConnected?.(duid) === true;
+		if (cloudUp || localUp) return undefined;
+
+		return `No connection to robot ${duid}: cloud (MQTT) and local (TCP) channel are both down`;
+	}
+
+	/**
+	 * Logs a channel problem at most once per {@link CHANNEL_LOG_THROTTLE_MS} per device.
+	 * Everything in between is counted and reported with the next line, so an outage costs a
+	 * handful of log lines instead of one per request.
+	 */
+	private logChannelUnavailable(duid: string, reason: string): void {
+		const now = Date.now();
+		const state = this.channelLogState.get(duid) ?? { lastLoggedAt: 0, suppressed: 0 };
+
+		if (now - state.lastLoggedAt < CHANNEL_LOG_THROTTLE_MS) {
+			state.suppressed += 1;
+			this.channelLogState.set(duid, state);
+			return;
+		}
+
+		const suffix = state.suppressed > 0 ? ` (${state.suppressed} further request(s) suppressed since the last message)` : "";
+		this.adapter.rLog("System", duid, "Warn", undefined, undefined, `${reason}. Requests are rejected immediately until the connection is back${suffix}.`, "warn");
+		this.channelLogState.set(duid, { lastLoggedAt: now, suppressed: 0 });
+	}
+
+	/** Clears the throttle state for a device once its channel is usable again. */
+	private noteChannelUsable(duid: string): void {
+		const state = this.channelLogState.get(duid);
+		if (!state) return;
+
+		if (state.suppressed > 0) {
+			this.adapter.rLog("System", duid, "Info", undefined, undefined, `Connection to robot ${duid} is available again (${state.suppressed} request(s) were rejected while it was down).`, "info");
+		}
+		this.channelLogState.delete(duid);
+	}
+
+	/**
+	 * Rejects every pending request matching `predicate` in one go.
+	 *
+	 * Without this, each in-flight request waits out its own timer after a disconnect, which
+	 * is exactly the "timeout wave" users report: dozens of warnings trickling in over half a
+	 * minute although the cause was a single connection drop.
+	 *
+	 * @returns number of rejected requests.
+	 */
+	public failPendingRequests(reason: string, predicate: (req: RoborockRequest) => boolean): number {
+		let rejected = 0;
+
+		for (const req of Array.from(this.adapter.pendingRequests.values())) {
+			if (!(req instanceof RoborockRequest)) continue;
+			if (!predicate(req)) continue;
+
+			req.reject(new ChannelUnavailableError(reason));
+			rejected += 1;
+		}
+
+		return rejected;
+	}
+
+	/**
+	 * Entry point for the transports: called when a channel is detected as down.
+	 *
+	 * `duid === undefined` means the cloud channel (which serves every device) went away.
+	 * Pending requests that were sent over the affected transport are failed immediately.
+	 */
+	public onChannelDown(channel: "MQTT" | "TCP", reason: string, duid?: string): void {
+		const sentType = channel === "MQTT" ? "MQTT" : "TCP";
+		const scope = duid ? `${channel} session for ${duid}` : `${channel} connection`;
+		const message = `${scope} lost: ${reason}`;
+
+		const rejected = this.failPendingRequests(message, (req) => {
+			if (duid && req.duid !== duid) return false;
+			// Requests that have not been put on the wire yet have no sentConnectionType and
+			// will fail fast on their own via the channel guard in send().
+			return req.sentConnectionType === sentType;
+		});
+
+		if (rejected > 0) {
+			this.adapter.rLog(channel, duid ?? null, "Warn", undefined, undefined, `${message}. Failed ${rejected} in-flight request(s) immediately instead of waiting for their timeouts.`, "warn");
+		}
+	}
+
+	/** Waits `ms`, but resolves early with a rejection when the adapter stops. */
+	private waitBeforeRetry(ms: number): Promise<void> {
+		return new Promise<void>((resolve, reject) => {
+			if (this.stopped) {
+				reject(new Error("ADAPTER_STOPPED"));
+				return;
+			}
+
+			const state: { timer?: ioBroker.Timeout } = {};
+			const release = (reason: Error): void => {
+				if (state.timer) {
+					this.backoffTimers.delete(state.timer);
+					this.adapter.clearTimeout(state.timer);
+					state.timer = undefined;
+				}
+				this.backoffReleases.delete(release);
+				reject(reason);
+			};
+
+			const timer = this.adapter.setTimeout(() => {
+				if (state.timer) this.backoffTimers.delete(state.timer);
+				state.timer = undefined;
+				this.backoffReleases.delete(release);
+				resolve();
+			}, ms);
+
+			if (!timer) {
+				resolve();
+				return;
+			}
+
+			state.timer = timer;
+			this.backoffTimers.add(timer);
+			this.backoffReleases.add(release);
+		});
+	}
+
 	async sendRequest(duid: string, method: string, params: unknown, options: { priority?: number; timeout?: number } = {}) {
+		// Fail fast BEFORE the request enters a queue: a dead channel must not consume a queue
+		// slot and must not start a timeout timer.
+		const unavailableReason = this.getChannelUnavailableReason(duid, method);
+		if (unavailableReason) {
+			this.logChannelUnavailable(duid, unavailableReason);
+			throw new ChannelUnavailableError(`${unavailableReason} — request "${method}" was not sent.`);
+		}
+		this.noteChannelUsable(duid);
+
 		const version = await this.adapter.getDeviceProtocolVersion(duid);
 
 		let manager = this.globalManager;
@@ -456,12 +634,8 @@ export class requestsHandler {
 		}
 
 		const priority = options.priority ?? RequestPriority.NORMAL;
-		let timeout = options.timeout ?? REQUEST_TIMEOUT;
-
-		// Map and room-related requests need more time (especially on slow connections or when robot is busy)
-		if (method.includes("map") || method.includes("room") || method === "get_clean_record_map" || method === "get_photo") {
-			timeout = 20000;
-		}
+		// Method dependent timeout from the declarative table; an explicit caller override wins.
+		const timeout = getRequestTimeoutMs(method, options.timeout);
 
 		const attempt = async (retryCount: number): Promise<unknown> => {
 			const req = new RoborockRequest(this, duid, method, params, manager, queueName, version, timeout);
@@ -476,21 +650,25 @@ export class requestsHandler {
 				const result = await manager.add(taskId, (signal) => req.send(signal), priority);
 
 				if (Array.isArray(result) && result[0] === "retry" && retryCount < MAX_REQUEST_RETRIES) {
-					this.adapter.rLog("System", duid, "Debug", "Retry", undefined, `[sendRequest] Received 'retry' for ${method} on ${duid}. Retrying (${retryCount + 1}/${MAX_REQUEST_RETRIES + 1})...`, "debug");
-					await new Promise((resolve) => {
-						const timeout = this.adapter.setTimeout(() => resolve(undefined), 1000);
-						if (!timeout) resolve(undefined);
-					});
+					const delay = getRetryDelayMs(retryCount);
+					this.adapter.rLog("System", duid, "Debug", "Retry", undefined, `[sendRequest] Received 'retry' for ${method} on ${duid}. Retrying in ${delay}ms (${retryCount + 1}/${MAX_REQUEST_RETRIES + 1})...`, "debug");
+					await this.waitBeforeRetry(delay);
 					return attempt(retryCount + 1);
 				}
 				return result;
 			} catch (error) {
 				if (retryCount < MAX_REQUEST_RETRIES && isRetryableError(error)) {
-					this.adapter.rLog("System", duid, "Warn", "Retry", undefined, `[sendRequest] ${method} failed (${(error as Error).message}). Retrying (${retryCount + 1}/${MAX_REQUEST_RETRIES + 1})...`, "warn");
-					await new Promise((resolve) => {
-						const timeout = this.adapter.setTimeout(() => resolve(undefined), 1000);
-						if (!timeout) resolve(undefined);
-					});
+					// Re-check the channel before burning a retry: if it went down meanwhile,
+					// fail now instead of running into the next timeout.
+					const reason = this.getChannelUnavailableReason(duid, method);
+					if (reason) {
+						this.logChannelUnavailable(duid, reason);
+						throw new ChannelUnavailableError(`${reason} — retry of "${method}" aborted.`);
+					}
+
+					const delay = getRetryDelayMs(retryCount);
+					this.adapter.rLog("System", duid, "Warn", "Retry", undefined, `[sendRequest] ${method} failed (${(error as Error).message}). Retrying in ${delay}ms (${retryCount + 1}/${MAX_REQUEST_RETRIES + 1})...`, "warn");
+					await this.waitBeforeRetry(delay);
 					return attempt(retryCount + 1);
 				}
 				throw error;
@@ -536,10 +714,8 @@ export class requestsHandler {
 				finalParams = intercepted;
 			}
 		}
-		const requestPromise = this.sendRequest(duid, finalMethod, finalParams, {
-			priority: 1,
-			timeout: method === "load_multi_map" ? 20000 : undefined
-		});
+		// Timeout comes from the declarative table in requestPolicy.ts (see METHOD_TIMEOUTS_MS).
+		const requestPromise = this.sendRequest(duid, finalMethod, finalParams, { priority: 1 });
 
 		this._processResult(
 			requestPromise,
@@ -610,9 +786,11 @@ export class requestsHandler {
 
 			// Add to finished set to prevent race conditions
 			this.finishedRequests.add(messageID);
-			this.adapter.setTimeout(() => {
+			const expiryTimer = this.adapter.setTimeout(() => {
 				this.finishedRequests.delete(messageID);
+				if (expiryTimer) this.finishedRequestTimers.delete(expiryTimer);
 			}, 60000);
+			if (expiryTimer) this.finishedRequestTimers.add(expiryTimer);
 
 			if (typeof (req as any).resolve === "function") {
 				// Special Handling for Map Requests via TCP
@@ -655,18 +833,13 @@ export class requestsHandler {
 	}
 
 	public rejectPendingTcpRequests(duid: string, reason: string): number {
-		let rejected = 0;
-
-		for (const req of Array.from(this.adapter.pendingRequests.values())) {
-			if (!(req instanceof RoborockRequest)) continue;
-			if (req.duid !== duid || req.sentConnectionType !== "TCP") continue;
-
-			req.reject(new Error(`TCP network session reset for ${duid}: ${reason}`));
-			rejected += 1;
-		}
+		const rejected = this.failPendingRequests(
+			`TCP network session reset for ${duid}: ${reason}`,
+			(req) => req.duid === duid && req.sentConnectionType === "TCP"
+		);
 
 		if (rejected > 0) {
-			this.adapter.rLog("TCP", duid, "Warn", undefined, undefined, `Rejected ${rejected} pending TCP request(s): ${reason}`, "warn");
+			this.adapter.rLog("TCP", duid, "Warn", undefined, undefined, `Rejected ${rejected} pending TCP request(s) immediately: ${reason}`, "warn");
 		}
 
 		return rejected;
@@ -676,9 +849,41 @@ export class requestsHandler {
 		return this.finishedRequests.has(messageID);
 	}
 
-	clearQueue() {
+	/**
+	 * Clears all queues, pending requests and timers of this handler.
+	 *
+	 * @param permanent `true` on adapter unload — additionally stops the 24 h request-ID reset
+	 *                  interval and latches the handler so late callers fail fast. `false` (the
+	 *                  default) is used by the MQTT reset, after which the handler must keep working.
+	 */
+	clearQueue(permanent: boolean = false) {
+		this.stopped = permanent;
 		this.adapter.local_api.clearLocalDevicedTimeout();
 		this.adapter.mqtt_api.clearIntervals();
+
+		// Stop the 24h request-ID reset interval; it used to survive onUnload.
+		if (permanent && this.mqttResetInterval) {
+			this.adapter.clearInterval(this.mqttResetInterval);
+			this.mqttResetInterval = undefined;
+		}
+
+		// Release backoff waits so no retry chain keeps running after unload.
+		for (const release of Array.from(this.backoffReleases)) {
+			release(new Error("ADAPTER_STOPPED"));
+		}
+		this.backoffReleases.clear();
+		for (const timer of Array.from(this.backoffTimers)) {
+			this.adapter.clearTimeout(timer);
+		}
+		this.backoffTimers.clear();
+
+		// Expiry timers of the "recently finished" guard.
+		for (const timer of Array.from(this.finishedRequestTimers)) {
+			this.adapter.clearTimeout(timer);
+		}
+		this.finishedRequestTimers.clear();
+		this.finishedRequests.clear();
+		this.channelLogState.clear();
 
 		// Clear global queue
 		this.globalManager.clear();
