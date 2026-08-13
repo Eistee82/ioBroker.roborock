@@ -57,6 +57,16 @@ This feature only works when map creation is enabled in the adapter options. Ope
 - (Eistee82) Fixed the "Load Map" button `floors.<mapFlag>.load` having no effect: like the schedule switch it was never subscribed, so pressing it never reached the floor switch logic.
 - (Eistee82) The `deviceStatus` entries `along_floor`, `green_laser`, `status`, `wind` and `water` are no longer marked writable. They only mirror what the robot reports; the working write surface is the `commands` folder.
 - (Eistee82) Fixed room switches being collected across all stored maps when starting a segment cleaning: only the rooms of the currently loaded map are sent to `app_segment_clean`. On devices with several floors this previously mixed rooms of different floors into one cleaning job, because room ids are only unique within one map.
+- (Eistee82) Added room cleaning to the map web UI: room names in the map are now clickable, several rooms can be selected at once and started with one button. The adapter already supported this; only the UI and the `app_segment_clean` bridge were missing.
+- (Eistee82) Added a floor selector to the map web UI. It is filled from the `load_multi_map` command object and switches the stored map via the new `load_multi_map` socket command.
+- (Eistee82) Added a status line above the map showing robot state, battery, cleaned area, cleaning duration, error text and, where available, the preferred connection channel.
+- (Eistee82) Added suction, mop and water selectors to the map web UI. Their options come from the `common.states` of the command objects, so the UI needs no knowledge about device models.
+- (Eistee82) The map web UI no longer guesses the robot state: Start/Pause now follow `deviceStatus.state` (`deviceStatus.status` on B01/Q10), so a run started from the phone app is shown correctly.
+- (Eistee82) Added the generic `set_state` socket command for the web UI. It only writes to command folders the device handler registered, which keeps the web UI from writing arbitrary states.
+- (Eistee82) The map web UI is now localized in all eleven adapter languages and no longer has a fixed 450 x 450 pixel layout; the map fills the available space and the controls wrap below it on narrow screens.
+- (Eistee82) The map web UI now shows a hint while it waits for map data and reports failed commands in the page instead of only in the browser console.
+- (Eistee82) Fixed the zone repeat selector in the map web UI offering three passes while the adapter command `set_clean_repeat_times` only allows two.
+- (Eistee82) Removed the ineffective `importmap` from the map page; d3 is compiled into `www/app.js` and was never loaded from the internet.
 - (Eistee82) Fixed room names on devices with several stored maps: rooms are now consistently keyed by the composite `(mapFlag, roomId)`, so maps that reuse the same room ids no longer show the names of another floor.
 - (Eistee82) The generated V1 map data now carries the active `mapFlag`, and the map web UI requests and caches room names per floor instead of always using floor 0.
 - (Eistee82) Added method dependent request timeouts: status polls now fail fast while map, photo and cleaning commands get the time they actually need. All values live in one declarative table (`src/lib/requestPolicy.ts`).

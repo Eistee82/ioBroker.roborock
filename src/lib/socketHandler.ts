@@ -11,6 +11,12 @@ interface Robot {
 // Message handler type
 type MessageHandler = (message: any, id?: string | number) => Promise<any>;
 
+/**
+ * Allowed characters for state path fragments that originate from the web UI.
+ * Keeps duid/folder/command from escaping the intended object path.
+ */
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9_-]+$/;
+
 export class socketHandler {
 	private adapter: Roborock;
 
@@ -31,6 +37,10 @@ export class socketHandler {
 		this.commandHandlers.set("app_charge", (msg, id) => this.handleSimpleCommand(msg.duid, "app_charge", id));
 		this.commandHandlers.set("app_goto_target", (msg, id) => this.handleGotoTarget(msg, id));
 		this.commandHandlers.set("app_zoned_clean", (msg, id) => this.handleZonedClean(msg, id));
+		this.commandHandlers.set("app_segment_clean", (msg, id) => this.handleSegmentClean(msg, id));
+		this.commandHandlers.set("load_multi_map", (msg) => this.handleLoadMultiMap(msg));
+		this.commandHandlers.set("set_state", (msg) => this.handleSetState(msg));
+		this.commandHandlers.set("get_translations", () => this.handleGetTranslations());
 	}
 
 	/**
@@ -329,5 +339,140 @@ export class socketHandler {
 
 		await this.adapter.requestsHandler.command(handler, duid, "app_zoned_clean", zones, id ? String(id) : undefined);
 		return { result: "ok" };
+	}
+
+	/**
+	 * Handles 'app_segment_clean'. The web UI sends the explicitly selected room ids,
+	 * so the device handler does not have to collect the room states itself.
+	 */
+	private async handleSegmentClean(message: { duid: string; segments: unknown }, id?: string | number): Promise<{ result: string }> {
+		const duid = message?.duid;
+		const rawSegments = message?.segments;
+		const segments = Array.isArray(rawSegments) ? rawSegments.map((segment) => Number(segment)).filter((segment) => Number.isInteger(segment) && segment > 0) : [];
+
+		if (!duid || segments.length === 0) {
+			throw new Error("Invalid 'app_segment_clean' message: requires 'duid' and a non-empty 'segments' array");
+		}
+
+		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'app_segment_clean' with segments: ${JSON.stringify(segments)} (ID: ${id})`, "info");
+
+		const handler = this.adapter.deviceFeatureHandlers.get(duid);
+		if (!handler) throw new Error(`No handler for DUID ${duid}`);
+
+		await this.adapter.requestsHandler.command(handler, duid, "app_segment_clean", segments, id ? String(id) : undefined);
+		return { result: "ok" };
+	}
+
+	/**
+	 * Handles 'load_multi_map' (floor switch). Only map flags the adapter itself published
+	 * on the 'load_multi_map' command object are accepted.
+	 */
+	private async handleLoadMultiMap(message: { duid: string; mapFlag: unknown }): Promise<{ result: string }> {
+		const duid = message?.duid;
+		const mapFlag = Number(message?.mapFlag);
+
+		if (!duid || !Number.isInteger(mapFlag) || mapFlag < 0) {
+			throw new Error("Invalid 'load_multi_map' message: requires 'duid' and a numeric 'mapFlag'");
+		}
+
+		const handler = this.adapter.deviceFeatureHandlers.get(duid);
+		if (!handler) throw new Error(`No handler for DUID ${duid}`);
+
+		const commandObject = await this.adapter.getObjectAsync(`Devices.${duid}.commands.load_multi_map`);
+		const knownMaps = (commandObject as any)?.common?.states;
+		if (!knownMaps || typeof knownMaps !== "object" || !(String(mapFlag) in knownMaps)) {
+			throw new Error(`Unknown map flag ${mapFlag} for DUID ${duid}`);
+		}
+
+		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'load_multi_map' for map flag ${mapFlag}`, "info");
+
+		// The floor switch verifies the map index and reloads rooms/map afterwards; that easily
+		// takes more than a minute, so the web UI is acknowledged immediately.
+		void this.adapter.handleFloorSwitch(duid, mapFlag, `Devices.${duid}.floors.${mapFlag}.load`).catch((error: unknown) => this.adapter.catchError(error, "handleLoadMultiMap", duid));
+
+		return { result: "ok" };
+	}
+
+	/**
+	 * Generic writer for command states. This is a security boundary: the web UI may only write
+	 * to command folders that the device handler registered (same check as main.ts handleCommand).
+	 */
+	private async handleSetState(message: { duid: string; folder: string; command: string; value: unknown }): Promise<{ result: string }> {
+		const duid = message?.duid;
+		const folder = message?.folder;
+		const command = message?.command;
+
+		if (!duid || !folder || !command) {
+			throw new Error("Invalid 'set_state' message: requires 'duid', 'folder' and 'command'");
+		}
+		if (!SAFE_PATH_SEGMENT.test(String(duid)) || !SAFE_PATH_SEGMENT.test(String(folder)) || !SAFE_PATH_SEGMENT.test(String(command))) {
+			throw new Error("Invalid 'set_state' message: illegal characters in target");
+		}
+
+		const handler = this.adapter.deviceFeatureHandlers.get(duid);
+		if (!handler) throw new Error(`No handler for DUID ${duid}`);
+
+		if (!handler.hasCommandFolder(folder)) {
+			throw new Error(`'${folder}' is not a command folder of DUID ${duid}`);
+		}
+
+		const spec = handler.getCommandSpec(folder, command);
+		if (!spec) {
+			throw new Error(`Unregistered command ${folder}.${command}`);
+		}
+
+		const value = this.coerceCommandValue(spec, message.value);
+		const stateId = `Devices.${duid}.${folder}.${command}`;
+
+		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'set_state' for ${folder}.${command} = ${String(value)}`, "info");
+
+		// Written unacknowledged on purpose: this is the same path a script or the admin UI takes.
+		await this.adapter.setState(stateId, { val: value, ack: false });
+		return { result: "ok" };
+	}
+
+	/**
+	 * Converts a value coming from the web UI into the type the command object declares
+	 * and rejects everything the command definition does not allow.
+	 */
+	private coerceCommandValue(spec: { type?: string; min?: number; max?: number; states?: unknown }, raw: unknown): ioBroker.StateValue {
+		if (spec?.type === "boolean") {
+			return raw === true || raw === "true" || raw === 1 || raw === "1";
+		}
+
+		let value: ioBroker.StateValue;
+		if (spec?.type === "number") {
+			const numeric = Number(raw);
+			if (!Number.isFinite(numeric)) {
+				throw new Error(`Value '${String(raw)}' is not a number`);
+			}
+			if (typeof spec.min === "number" && numeric < spec.min) {
+				throw new Error(`Value ${numeric} is below the allowed minimum ${spec.min}`);
+			}
+			if (typeof spec.max === "number" && numeric > spec.max) {
+				throw new Error(`Value ${numeric} is above the allowed maximum ${spec.max}`);
+			}
+			value = numeric;
+		} else {
+			value = raw === null || raw === undefined ? "" : String(raw);
+		}
+
+		const states = spec?.states;
+		if (states && typeof states === "object" && !Array.isArray(states) && !(String(value) in (states as Record<string, unknown>))) {
+			throw new Error(`Value '${String(value)}' is not allowed for this command`);
+		}
+
+		return value;
+	}
+
+	/**
+	 * Returns the adapter language plus the loaded admin translations so the web UI
+	 * can label itself without shipping a second translation store.
+	 */
+	private async handleGetTranslations(): Promise<{ language: string; translations: Record<string, string> }> {
+		return {
+			language: this.adapter.language || "en",
+			translations: this.adapter.translations || {}
+		};
 	}
 }

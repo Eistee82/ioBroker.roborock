@@ -2,25 +2,33 @@
 <html>
 	<head>
 		<title>Roborock Map</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
 
-		<script type="importmap">
-			{
-				"imports": {
-					"d3": "https://esm.sh/d3@7.9.0"
-				}
-			}
-		</script>
 		<script src="/socket.io/socket.io.js"></script>
 		<script type="module" src="./app.js"></script>
 
 		<style>
-			/* Main Layout */
+			/* --- Layout --- */
+			:root {
+				--rr-bg: #000000;
+				--rr-panel: #1a1a1a;
+				--rr-border: #4f4f4f;
+				--rr-accent: #2d9cdb;
+				--rr-accent-hover: #47a9dc;
+				--rr-text: #f0f0f0;
+				--rr-text-dim: #a8a8a8;
+				--rr-error: #ff5b52;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
 			body {
-				display: flex;
-				align-items: center;
-				background-color: #000000;
 				margin: 0;
-				overflow: hidden; /* Prevents scrollbars from D3 zoom */
+				min-height: 100vh;
+				background-color: var(--rr-bg);
+				color: var(--rr-text);
 				font-family:
 					system-ui,
 					-apple-system,
@@ -35,16 +43,72 @@
 					sans-serif;
 			}
 
+			[hidden] {
+				display: none !important;
+			}
+
+			#layout {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) 320px;
+				gap: 12px;
+				padding: 12px;
+				height: 100vh;
+			}
+
+			#mapPane {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				min-width: 0;
+				min-height: 0;
+			}
+
+			/* --- Status bar --- */
+			#statusBar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: baseline;
+				gap: 6px 18px;
+				padding: 8px 12px;
+				border: 1px solid var(--rr-border);
+				border-radius: 10px;
+				background-color: var(--rr-panel);
+				font-size: 14px;
+			}
+
+			.status-item {
+				display: flex;
+				gap: 6px;
+				align-items: baseline;
+			}
+
+			.status-label {
+				color: var(--rr-text-dim);
+				font-size: 12px;
+				text-transform: uppercase;
+				letter-spacing: 0.04em;
+			}
+
+			.status-value {
+				font-weight: 600;
+			}
+
+			#statusError {
+				flex-basis: 100%;
+				color: var(--rr-error);
+				font-weight: 600;
+			}
+
+			/* --- Map --- */
 			#mapSvgContainer {
-				/* SVG Container */
-				width: 450px;
-				height: 450px;
-				border: 2px solid #4f4f4f;
+				position: relative;
+				flex: 1 1 auto;
+				min-height: 260px;
+				border: 2px solid var(--rr-border);
 				box-shadow: 0px 0px 10px #333;
 				border-radius: 15px;
 				overflow: hidden; /* Important for Pan/Zoom constraints */
-				position: relative;
-				background-color: #1a1a1a;
+				background-color: var(--rr-panel);
 			}
 
 			#mapSvg {
@@ -58,12 +122,109 @@
 				cursor: grabbing;
 			}
 
-			/* --- Interactive SVG Elements --- */
+			#mapPlaceholder {
+				position: absolute;
+				inset: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				color: var(--rr-text-dim);
+				pointer-events: none;
+				text-align: center;
+				padding: 20px;
+			}
+
+			#messageBar {
+				padding: 8px 12px;
+				border-radius: 10px;
+				border: 1px solid var(--rr-error);
+				background-color: rgba(255, 91, 82, 0.12);
+				color: var(--rr-error);
+				font-size: 14px;
+			}
+
+			/* --- Control panel --- */
+			#controls {
+				display: flex;
+				flex-direction: column;
+				gap: 12px;
+				padding: 12px;
+				border: 1px solid var(--rr-border);
+				border-radius: 10px;
+				background-color: var(--rr-panel);
+				overflow-y: auto;
+				min-width: 0;
+			}
+
+			.control-group {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+			}
+
+			.control-group > h2 {
+				margin: 0;
+				font-size: 12px;
+				font-weight: 700;
+				text-transform: uppercase;
+				letter-spacing: 0.06em;
+				color: var(--rr-text-dim);
+			}
+
+			.control-row {
+				display: flex;
+				gap: 6px;
+			}
+
+			.control-row > * {
+				flex: 1 1 0;
+				min-width: 0;
+			}
+
+			.control-hint {
+				margin: 0;
+				font-size: 12px;
+				color: var(--rr-text-dim);
+			}
+
+			label.field {
+				display: flex;
+				flex-direction: column;
+				gap: 4px;
+				font-size: 12px;
+				color: var(--rr-text-dim);
+			}
+
+			button,
+			select {
+				width: 100%;
+				padding: 10px 12px;
+				border-radius: 10px;
+				background-color: var(--rr-accent);
+				color: var(--rr-text);
+				cursor: pointer;
+				transition: background-color 0.2s ease-in-out;
+				font-size: 15px;
+				font-weight: bold;
+				border: 1px solid var(--rr-border);
+			}
+
+			button:hover:not(:disabled),
+			select:hover {
+				background-color: var(--rr-accent-hover);
+			}
+
+			button:disabled {
+				color: gray;
+				background-color: lightgray;
+				cursor: not-allowed;
+			}
+
+			/* --- Interactive SVG elements --- */
 			.zone-rect {
 				fill: rgba(255, 255, 255, 0.5);
 				stroke: white;
 				stroke-width: 1.5;
-				/* vector-effect: non-scaling-stroke; Keeps stroke width constant */
 				cursor: move;
 			}
 
@@ -84,11 +245,15 @@
 				fill: rgba(0, 200, 255, 0.9);
 			}
 
+			.room-label.selectable {
+				cursor: pointer;
+			}
+
 			.go-to-pin {
 				cursor: crosshair;
 			}
 
-			/* --- Popup Styling --- */
+			/* --- Popup styling --- */
 			#popup {
 				display: none;
 				position: absolute;
@@ -153,67 +318,123 @@
 				z-index: 1001;
 			}
 
-			/* --- General Styling --- */
-			#addButton,
-			#deleteButton {
-				display: inline-block;
-				width: 100px;
-			}
-			#addButton {
-				margin-right: 0px;
-			}
-			#deleteButton {
-				margin-left: 0px;
-			}
-
-			#startButton,
-			#stopButton,
-			#pauseButton {
-				display: inline-block;
-				width: 100px;
-			}
-			#startButton,
-			#pauseButton {
-				margin-right: 0px;
-			}
-			#stopButton {
-				margin-left: 0px;
-			}
-
-			button,
-			select {
-				margin: 10px 20px;
-				padding: 10px 20px;
-				border-radius: 10px;
-				background-color: #2d9cdb;
-				color: #f0f0f0;
-				cursor: pointer;
-				transition: background-color 0.2s ease-in-out;
-				font-size: 16px;
-				font-weight: bold;
-				border: 1px solid #4f4f4f;
-				width: 200px;
-			}
-
-			button:hover,
-			select:hover {
-				background-color: #47a9dc;
-			}
-
-			button:disabled {
-				color: gray;
-				background-color: lightgray;
-				cursor: not-allowed;
-			}
-
 			.hovered-option {
-				background-color: #47a9dc !important;
+				background-color: var(--rr-accent-hover) !important;
+			}
+
+			/* --- Narrow screens: controls move below the map --- */
+			@media (max-width: 860px) {
+				#layout {
+					grid-template-columns: minmax(0, 1fr);
+					grid-template-rows: minmax(280px, 60vh) auto;
+					height: auto;
+					min-height: 100vh;
+				}
+
+				#controls {
+					overflow-y: visible;
+				}
 			}
 		</style>
 	</head>
 	<body>
-		<div id="mapSvgContainer">
-			<svg id="mapSvg" width="450" height="450"></svg>
+		<div id="layout">
+			<section id="mapPane">
+				<div id="statusBar">
+					<div class="status-item">
+						<span class="status-label" data-i18n="ui_state">State</span>
+						<span class="status-value" id="statusState">–</span>
+					</div>
+					<div class="status-item">
+						<span class="status-label" data-i18n="ui_battery">Battery</span>
+						<span class="status-value" id="statusBattery">–</span>
+					</div>
+					<div class="status-item">
+						<span class="status-label" data-i18n="ui_area">Area</span>
+						<span class="status-value" id="statusArea">–</span>
+					</div>
+					<div class="status-item">
+						<span class="status-label" data-i18n="ui_duration">Duration</span>
+						<span class="status-value" id="statusDuration">–</span>
+					</div>
+					<!-- Filled from Devices.<duid>.connection.preferred; hidden while that state is absent. -->
+					<div class="status-item" id="statusConnectionItem" hidden>
+						<span class="status-label" data-i18n="ui_connection">Connection</span>
+						<span class="status-value" id="statusConnection">–</span>
+					</div>
+					<div id="statusError" hidden></div>
+				</div>
+
+				<div id="mapSvgContainer">
+					<svg id="mapSvg" width="450" height="450"></svg>
+					<div id="mapPlaceholder" data-i18n="ui_loading_map">Waiting for map data…</div>
+				</div>
+
+				<div id="messageBar" hidden></div>
+			</section>
+
+			<section id="controls">
+				<div class="control-group">
+					<label class="field">
+						<span data-i18n="ui_device">Device</span>
+						<select id="robotSelect"></select>
+					</label>
+					<label class="field" id="floorField" hidden>
+						<span data-i18n="ui_floor">Floor</span>
+						<select id="floorSelect"></select>
+					</label>
+				</div>
+
+				<div class="control-group" id="modeGroup" hidden>
+					<label class="field" id="fanPowerField" hidden>
+						<span data-i18n="ui_fan_power">Suction power</span>
+						<select id="fanPowerSelect"></select>
+					</label>
+					<label class="field" id="mopModeField" hidden>
+						<span data-i18n="ui_mop_mode">Mop mode</span>
+						<select id="mopModeSelect"></select>
+					</label>
+					<label class="field" id="waterFlowField" hidden>
+						<span data-i18n="ui_water_flow">Water flow</span>
+						<select id="waterFlowSelect"></select>
+					</label>
+				</div>
+
+				<div class="control-group">
+					<h2 data-i18n="ui_rooms">Rooms</h2>
+					<p class="control-hint" id="roomHint" data-i18n="ui_rooms_hint">Click a room name in the map to select it.</p>
+					<button id="cleanRoomsButton" disabled data-i18n="ui_clean_rooms">Clean selected rooms</button>
+					<button id="clearRoomsButton" disabled data-i18n="ui_clear_selection">Clear selection</button>
+				</div>
+
+				<div class="control-group">
+					<h2 data-i18n="ui_zones">Zones</h2>
+					<label class="field">
+						<span data-i18n="ui_repeat">Passes</span>
+						<select id="cleanCount">
+							<option value="1" data-i18n="ui_repeat_once">1 pass</option>
+							<option value="2" data-i18n="ui_repeat_twice">2 passes</option>
+						</select>
+					</label>
+					<div class="control-row">
+						<button id="addButton" data-i18n="ui_add_zone">Add zone</button>
+						<button disabled id="deleteButton" data-i18n="ui_remove_zone">Remove zone</button>
+					</div>
+					<p class="control-hint" id="zoneHint"></p>
+				</div>
+
+				<div class="control-group">
+					<h2 data-i18n="ui_control">Control</h2>
+					<div class="control-row" id="robotButtons">
+						<button id="startButton" data-i18n="ui_start">Start</button>
+						<button id="pauseButton" hidden data-i18n="ui_pause">Pause</button>
+						<button id="stopButton" data-i18n="ui_stop">Stop</button>
+					</div>
+					<button id="dockButton" data-i18n="ui_dock">Dock</button>
+					<button id="goToButton" data-i18n="ui_goto">Go to point</button>
+					<button id="resetZoomButton" data-i18n="ui_reset_view">Reset view</button>
+				</div>
+			</section>
 		</div>
 
 		<div id="popup">
@@ -224,32 +445,6 @@
 		<div id="largePhoto">
 			<img id="largePhoto-image" src="" alt="Obstacle Detail" />
 			<div id="largePhoto-bbox"></div>
-		</div>
-
-		<div style="display: flex; flex-direction: column; align-items: center">
-			<div style="margin-left: auto">
-				<select id="robotSelect"></select>
-			</div>
-			<div style="margin-left: auto">
-				<select id="cleanCount">
-					<option value="1">1 Time</option>
-					<option value="2">2 Times</option>
-					<option value="3">3 Times</option>
-				</select>
-			</div>
-
-			<div style="display: flex" id="zoneButtons">
-				<button id="addButton">+ Zone</button>
-				<button disabled id="deleteButton">- Zone</button>
-			</div>
-			<div style="display: flex" id="robotButtons">
-				<button id="pauseButton" style="display: none">Pause</button>
-				<button id="startButton">Start</button>
-				<button id="stopButton">Stop</button>
-			</div>
-			<button id="dockButton">Dock</button>
-			<button id="goToButton">GoTo Point</button>
-			<button id="resetZoomButton">Reset zoom</button>
 		</div>
 	</body>
 </html>
