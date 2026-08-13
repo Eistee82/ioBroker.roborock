@@ -5,6 +5,7 @@ import { IMG_CHARGER, IMG_GO_TO_PIN, IMG_ROBOT_ORIGINAL } from "../common/images
 import type { DrawObstacleInput, DrawRoomLabelInput, DrawVirtualWallInput } from "../common/mapDrawing/types";
 import type { B01MapData } from "../lib/map/b01/types";
 import { Q10_CANVAS_SCALE, Q10MapGeometry } from "../lib/map/q10/Q10MapGeometry";
+import { floorScopeKey, normalizeMapFlag, normalizeRoomId, roomNameCacheKey } from "../lib/map/roomKey";
 import { Connection } from "./conn.js";
 import { SVGMapRenderer } from "./SVGMapRenderer";
 
@@ -26,6 +27,7 @@ interface MapData {
 	OBSTACLES2?: Array<[number, number, ...any]>;
 	CARPET_MAP?: number[];
 	model?: string; // e.g. roborock.vacuum.a147, for asset paths
+	mapFlag?: number; // active map/floor this map belongs to; rooms are keyed by (mapFlag, roomId)
 }
 
 type Q10FrontendMapData = B01MapData & { model?: string };
@@ -262,9 +264,10 @@ class MapApplication {
 	private rects: Rect[] = [];
 	private zones: number[][] = [];
 	private rectCounter = 0;
-	/** Cache: "duid.segmentId" -> room name (from get_room_names for cloud maps). */
+	/** Cache: "duid.mapFlag.roomId" -> room name (from get_room_names for cloud maps). */
 	private roomNamesFromStates: Record<string, string> = {};
-	private roomNamesRequestedForDuid: string | null = null;
+	/** Guard: "duid.mapFlag" of the floor whose room names have already been requested. */
+	private roomNamesRequestedForFloor: string | null = null;
 
 	// DOM Elements
 	private popup!: HTMLElement;
@@ -514,7 +517,8 @@ class MapApplication {
 			});
 			this.currentMapSubscriptions = [];
 		}
-		this.roomNamesRequestedForDuid = null;
+		this.roomNamesRequestedForFloor = null;
+		this.roomNamesFromStates = {};
 
 		this.map = undefined;
 		this.mapImage = undefined;
@@ -663,8 +667,12 @@ class MapApplication {
 
 		const list = this.map.IMAGE?.segments?.list;
 		const duid = this.currentRobotDuid;
-		const cacheKey = (id: number) => (duid ? `${duid}.${id}` : "");
-		const segmentName = (s: SegmentInfo) => s.name || (duid ? this.roomNamesFromStates[cacheKey(s.id)] : "") || "";
+		// Rooms are keyed by (mapFlag, roomId): several stored maps of one robot reuse the same
+		// room ids and names, so room names may only be resolved within the map they belong to.
+		const mapFlag = normalizeMapFlag(this.map.mapFlag);
+		const roomScope = duid !== null && mapFlag !== null ? { duid, mapFlag } : null;
+		const cacheKey = (id: number): string => (roomScope ? roomNameCacheKey(roomScope.duid, roomScope.mapFlag, id) : "");
+		const segmentName = (s: SegmentInfo) => s.name || (roomScope ? this.roomNamesFromStates[cacheKey(s.id)] : "") || "";
 
 		let roomLabels = list
 			?.filter((s: SegmentInfo) => segmentName(s))
@@ -675,18 +683,22 @@ class MapApplication {
 				text: segmentName(s),
 			}));
 
-		// Cloud maps: segment names may be empty; fetch from adapter room states and redraw once
-		if (duid && Array.isArray(list)) {
+		// Cloud maps: segment names may be empty; fetch from the room states of THIS floor and redraw once.
+		// Without a known map flag no request is made at all - names from another floor would be wrong.
+		if (roomScope && Array.isArray(list)) {
+			const scopeKey = floorScopeKey(roomScope.duid, roomScope.mapFlag);
 			const missing = list.filter((s: SegmentInfo) => !s.name && !this.roomNamesFromStates[cacheKey(s.id)]);
-			if (missing.length > 0 && this.roomNamesRequestedForDuid !== duid) {
-				this.roomNamesRequestedForDuid = duid;
+			if (missing.length > 0 && this.roomNamesRequestedForFloor !== scopeKey) {
+				this.roomNamesRequestedForFloor = scopeKey;
 				const segmentIds = missing.map((s: SegmentInfo) => s.id);
 				this.connection
-					.sendTo(this.instanceId, "get_room_names", { duid, floor: 0, segmentIds })
+					.sendTo(this.instanceId, "get_room_names", { duid: roomScope.duid, floor: roomScope.mapFlag, segmentIds })
 					.then((res: any) => {
 						if (res && typeof res === "object" && !res.error) {
 							for (const [id, name] of Object.entries(res)) {
-								if (name && String(name).trim()) this.roomNamesFromStates[`${duid}.${id}`] = String(name).trim();
+								const roomId = normalizeRoomId(id);
+								if (roomId === null || !name || !String(name).trim()) continue;
+								this.roomNamesFromStates[roomNameCacheKey(roomScope.duid, roomScope.mapFlag, roomId)] = String(name).trim();
 							}
 							this.drawOverlaysFromMap();
 						}

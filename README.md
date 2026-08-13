@@ -51,6 +51,11 @@ This feature only works when map creation is enabled in the adapter options. Ope
 	Placeholder for the next version (at the beginning of the line):
 	### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+
+- (Eistee82) Fixed room names on devices with several stored maps: rooms are now consistently keyed by the composite `(mapFlag, roomId)`, so maps that reuse the same room ids no longer show the names of another floor.
+- (Eistee82) The generated V1 map data now carries the active `mapFlag`, and the map web UI requests and caches room names per floor instead of always using floor 0.
+
 ### 0.7.4 (2026-06-07)
 
 * (copystring) Documented tested Roborock S8+ support.
