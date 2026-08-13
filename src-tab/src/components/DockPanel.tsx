@@ -1,13 +1,15 @@
 import React, { useState } from "react";
-import { Box, Button, Chip, Collapse, IconButton, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Box, Button, Chip, Collapse, IconButton, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import DockIcon from "@mui/icons-material/Dock";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { FloatingSurface } from "./FloatingSurface";
-import type { DockModel } from "../engine/types";
+import type { DockModel, RobotPhase } from "../engine/types";
 
 interface DockPanelProps {
 	dock: DockModel;
+	/** What the robot is doing; station actions need it standing in the dock. */
+	phase: RobotPhase;
 	/** `value` is a boolean for switches and buttons, a string for selects. */
 	onCommand: (command: string, value: unknown) => void;
 }
@@ -19,7 +21,7 @@ interface DockPanelProps {
  * that command object, and the object's shape decided whether it became a button, a switch
  * or a value selector.
  */
-export function DockPanel({ dock, onCommand }: DockPanelProps): React.JSX.Element | null {
+export function DockPanel({ dock, phase, onCommand }: DockPanelProps): React.JSX.Element | null {
 	const [open, setOpen] = useState(false);
 
 	if (!dock.controls.length && !dock.status.length) {
@@ -27,6 +29,14 @@ export function DockPanel({ dock, onCommand }: DockPanelProps): React.JSX.Elemen
 	}
 	const buttons = dock.controls.filter(control => control.kind === "button");
 	const selectors = dock.controls.filter(control => control.kind !== "button");
+
+	// Washing, drying and dust collection all need the robot standing in its station. While it
+	// is out cleaning, paused somewhere in the flat or still on its way back, the robot answers
+	// such a command without any usable feedback, so the button is disabled and says why.
+	// An unknown phase leaves them enabled on purpose: a guess must not take a working control
+	// away, and the robot rejecting a command is the smaller harm than a dead panel.
+	const robotAway = phase === "cleaning" || phase === "paused" || phase === "returning";
+	const buttonHint = robotAway ? I18n.t("ui_dock_needs_robot") : "";
 
 	return (
 		<FloatingSurface sx={{ width: 300, maxWidth: "100%" }}>
@@ -70,14 +80,22 @@ export function DockPanel({ dock, onCommand }: DockPanelProps): React.JSX.Elemen
 							useFlexGap
 						>
 							{buttons.map(control => (
-								<Button
+								<Tooltip
 									key={control.command}
-									size="small"
-									variant="outlined"
-									onClick={() => onCommand(control.command, true)}
+									title={buttonHint}
 								>
-									{control.label}
-								</Button>
+									{/* A disabled button fires no events, so the tooltip needs a live wrapper. */}
+									<span>
+										<Button
+											size="small"
+											variant="outlined"
+											disabled={robotAway}
+											onClick={() => onCommand(control.command, true)}
+										>
+											{control.label}
+										</Button>
+									</span>
+								</Tooltip>
 							))}
 						</Stack>
 					) : null}

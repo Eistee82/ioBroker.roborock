@@ -16,6 +16,29 @@ import type {
 } from "@adapter/common/mapDrawing/types";
 import { VISUAL_BLOCK_SIZE } from "@adapter/common/mapDrawing/constants";
 
+/**
+ * Size the room name is drawn at, in SVG user units.
+ *
+ * This is not the size it ends up at: `MapEngine.applyRoomLabelZoomBehavior()` scales the whole
+ * label group so the name lands at the number `MapEngine.roomLabelScreenFontPx()` computes,
+ * which is where the on-screen size is actually decided. This constant is only the unit that
+ * scaling is expressed in, which is why the engine imports it instead of repeating a 12.
+ */
+export const ROOM_LABEL_BASE_FONT = 12;
+
+/**
+ * White halo behind the name, as a share of the font size.
+ *
+ * `paint-order: stroke` paints it under the glyphs, so half of it eats into the letters. At
+ * roughly a sixth of the font size the halo still separates the name from any room fill in
+ * light and dark alike, while the letters keep their shape - the previous 2.5 on a 12 unit
+ * font was over a fifth and made the names look clogged as well as small.
+ */
+const ROOM_LABEL_STROKE_RATIO = 1 / 6;
+
+/** Size of the small selection-order badge, again in SVG user units. */
+const ROOM_LABEL_BADGE_FONT = 9;
+
 const PATH_LAYER_CLASS: Record<PathLayer, string> = {
 	mop: "mop-path",
 	main: "main-path",
@@ -306,15 +329,15 @@ export class SVGMapRenderer implements IMapRenderer {
 		enter.append("text")
 			.attr("class", "room-name")
 			.style("font-weight", "900")
-			.style("font-size", "12px")
-			.style("stroke-width", "2.5px")
+			.style("font-size", `${ROOM_LABEL_BASE_FONT}px`)
+			.style("stroke-width", `${ROOM_LABEL_BASE_FONT * ROOM_LABEL_STROKE_RATIO}px`)
 			.style("paint-order", "stroke")
 			.attr("shape-rendering", "geometricPrecision");
 		enter.append("circle").attr("class", "room-label-badge");
 		enter.append("text")
 			.attr("class", "room-label-badge-text")
 			.style("font-weight", "900")
-			.style("font-size", "9px");
+			.style("font-size", `${ROOM_LABEL_BADGE_FONT}px`);
 
 		const merged = enter.merge(sel as unknown as d3.Selection<SVGGElement, DrawRoomLabelInput, SVGGElement, unknown>)
 			.attr("data-x", (d) => String(d.x))

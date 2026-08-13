@@ -12,10 +12,11 @@ import CenterFocusStrongIcon from "@mui/icons-material/CenterFocusStrong";
 import CleaningServicesIcon from "@mui/icons-material/CleaningServices";
 import BackspaceIcon from "@mui/icons-material/Backspace";
 import { I18n } from "@iobroker/adapter-react-v5";
-import type { RoomSelectionModel, ZoneModel } from "../engine/types";
+import type { RobotPhase, RoomSelectionModel, ZoneModel } from "../engine/types";
 
 interface ActionDockProps {
-	running: boolean;
+	/** What the robot is doing; decides which of Start / Resume / Pause / Stop / Dock is shown. */
+	phase: RobotPhase;
 	goToActive: boolean;
 	rooms: RoomSelectionModel;
 	zones: ZoneModel;
@@ -36,13 +37,43 @@ interface ActionDockProps {
 /**
  * The primary controls, floating over the map rather than sitting in a side column.
  *
- * Start and Pause are one slot on purpose: the engine derives which of the two applies from
- * the state the robot reports, so a run started from the phone app shows up here too.
+ * The run controls are one slot on purpose: the engine derives the robot's phase from the
+ * state it reports (`deviceStatus.state` for V1, `deviceStatus.status` for B01/Q10), so a run
+ * started from the phone app shows up here too - and only the action that actually applies is
+ * offered. Showing Start and Stop side by side always left one of them meaningless.
+ *
+ * Which phase covers which reported state code is the table in `engine/robotStates.ts`:
+ *
+ *   cleaning  5 Cleaning, 11 Spot Cleaning, 16 Go To, 17 Zone Clean, 18 Room Clean,
+ *             29 Mapping, 30 Egg attack, 32 Patrol, 38 Tidy-up, 39 Remote pick-up
+ *             → Pause (primary) and Stop; Dock stays, sending it home is a real choice here.
+ *   paused    10 Paused
+ *             → Resume (primary) and Stop; Dock stays for the same reason.
+ *   returning 6 Returning Dock, 15 Docking, 26 Going to wash the mop
+ *             → Stop only. Start would fight the drive home, Dock is already happening.
+ *   docked    8 Charging, 9 Charging Error, 22 Emptying dust container, 23 Washing the mop,
+ *             25 Washing duster, 33/34 Setting up / Removing the mop, 41 Arm resetting,
+ *             100 Fully Charged
+ *             → Start only. There is nothing to stop and nowhere to send it.
+ *   idle      1 Initiating, 2 Sleeping, 3 Idle, 4 Remote Control, 7 Manual Mode, 12 In Error,
+ *             13 Shutting Down, 14 Updating, 28 In call, 36 Exhibition, 37 Dance,
+ *             40 Emergency stop, 42 Program mode
+ *             → Start and Dock. The robot stands somewhere in the flat.
+ *   unknown   0 / 102 Unknown, 101 Offline, no value yet, or a code the table does not list
+ *             → Start and Dock, deliberately: an empty control bar is worse than one button
+ *               too many, and guessing must never take a working control away.
  *
  * @param props
  */
 export function ActionDock(props: ActionDockProps): React.JSX.Element {
-	const { rooms, zones } = props;
+	const { phase, rooms, zones } = props;
+
+	const showPause = phase === "cleaning";
+	const showResume = phase === "paused";
+	// Start covers every phase in which no job is under way - including the unknown one.
+	const showStart = !showPause && !showResume && phase !== "returning";
+	const showStop = phase === "cleaning" || phase === "paused" || phase === "returning";
+	const showDock = phase !== "docked" && phase !== "returning";
 
 	return (
 		<Stack
@@ -53,7 +84,7 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 			useFlexGap
 			sx={{ px: 1.5, py: 1.25 }}
 		>
-			{props.running ? (
+			{showPause ? (
 				<Button
 					variant="contained"
 					color="primary"
@@ -62,7 +93,18 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 				>
 					{I18n.t("ui_pause")}
 				</Button>
-			) : (
+			) : null}
+			{showResume ? (
+				<Button
+					variant="contained"
+					color="primary"
+					startIcon={<PlayArrowIcon />}
+					onClick={props.onStart}
+				>
+					{I18n.t("ui_resume")}
+				</Button>
+			) : null}
+			{showStart ? (
 				<Button
 					variant="contained"
 					color="primary"
@@ -71,20 +113,31 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 				>
 					{I18n.t("ui_start")}
 				</Button>
-			)}
+			) : null}
 
-			<Tooltip title={I18n.t("ui_stop")}>
-				<IconButton onClick={props.onStop}>
-					<StopIcon />
-				</IconButton>
-			</Tooltip>
-			<Tooltip title={I18n.t("ui_dock")}>
-				<IconButton onClick={props.onDock}>
-					<HomeIcon />
-				</IconButton>
-			</Tooltip>
+			{showStop ? (
+				<Tooltip title={I18n.t("ui_stop")}>
+					<IconButton
+						aria-label={I18n.t("ui_stop")}
+						onClick={props.onStop}
+					>
+						<StopIcon />
+					</IconButton>
+				</Tooltip>
+			) : null}
+			{showDock ? (
+				<Tooltip title={I18n.t("ui_dock")}>
+					<IconButton
+						aria-label={I18n.t("ui_dock")}
+						onClick={props.onDock}
+					>
+						<HomeIcon />
+					</IconButton>
+				</Tooltip>
+			) : null}
 			<Tooltip title={props.goToActive ? I18n.t("ui_cancel") : I18n.t("ui_goto")}>
 				<IconButton
+					aria-label={props.goToActive ? I18n.t("ui_cancel") : I18n.t("ui_goto")}
 					color={props.goToActive ? "primary" : "default"}
 					onClick={props.onToggleGoTo}
 				>
@@ -92,7 +145,10 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 				</IconButton>
 			</Tooltip>
 			<Tooltip title={I18n.t("ui_reset_view")}>
-				<IconButton onClick={props.onResetZoom}>
+				<IconButton
+					aria-label={I18n.t("ui_reset_view")}
+					onClick={props.onResetZoom}
+				>
 					<CenterFocusStrongIcon />
 				</IconButton>
 			</Tooltip>
@@ -108,6 +164,7 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 			>
 				<span>
 					<IconButton
+						aria-label={I18n.t("ui_add_zone")}
 						onClick={props.onAddZone}
 						disabled={zones.atLimit}
 					>
@@ -118,6 +175,7 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 			<Tooltip title={I18n.t("ui_remove_zone")}>
 				<span>
 					<IconButton
+						aria-label={I18n.t("ui_remove_zone")}
 						onClick={props.onRemoveZone}
 						disabled={zones.count === 0}
 					>
@@ -160,6 +218,7 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 			<Tooltip title={I18n.t("ui_clear_selection")}>
 				<span>
 					<IconButton
+						aria-label={I18n.t("ui_clear_selection")}
 						onClick={props.onClearRooms}
 						disabled={rooms.selected === 0}
 					>

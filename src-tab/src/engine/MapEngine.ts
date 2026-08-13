@@ -6,7 +6,8 @@ import type { DrawObstacleInput, DrawRoomLabelInput, DrawVirtualWallInput } from
 import type { B01MapData } from "@adapter/lib/map/b01/types";
 import { Q10_CANVAS_SCALE, Q10MapGeometry } from "@adapter/lib/map/q10/Q10MapGeometry";
 import { floorScopeKey, normalizeMapFlag, normalizeRoomId, roomNameCacheKey } from "@adapter/lib/map/roomKey";
-import { SVGMapRenderer } from "./SVGMapRenderer";
+import { ROOM_LABEL_BASE_FONT, SVGMapRenderer } from "./SVGMapRenderer";
+import { ROBOT_STATES, robotPhase } from "./robotStates";
 
 /**
  * Base path for the device artwork the AppPluginManager stores in the adapter's file storage
@@ -115,8 +116,19 @@ const VISUAL_BLOCK_SIZE = 3; // Scale factor for visualization
  */
 const MAX_ZONES = 5;
 
-/** Robot state codes that mean "job in progress" – the UI then offers Pause instead of Start. */
-const RUNNING_STATE_CODES = new Set([5, 6, 11, 16, 17, 18]);
+// Room name sizing. Every `_PX` below is a CSS pixel on screen, never a map unit - the two are
+// not the same thing, and `MapEngine.roomLabelScreenFontPx()` explains why.
+
+/** Viewport edge the target size refers to; a typical admin tab is around this tall. */
+const ROOM_LABEL_REFERENCE_EDGE = 620;
+/** On-screen size at that reference viewport: the Roborock app's "readable at arm's length". */
+const ROOM_LABEL_TARGET_PX = 17;
+/** Floor, so a narrow tab or a far zoomed-out map still yields readable names. */
+const ROOM_LABEL_MIN_PX = 14;
+/** Ceiling, so a name cannot grow wider than the room it belongs to. */
+const ROOM_LABEL_MAX_PX = 26;
+/** How much of a high `devicePixelRatio` is passed on; 1 would be the full ratio. */
+const ROOM_LABEL_DENSITY_WEIGHT = 0.15;
 
 /** Command objects the mode selectors are built from; all values come from `common.states`. */
 const MODE_COMMANDS = [
@@ -627,6 +639,9 @@ export class MapEngine {
 		if (width === (parseFloat(this.svg.attr("width")) || 0) && height === (parseFloat(this.svg.attr("height")) || 0)) return;
 
 		this.svg.attr("width", width).attr("height", height);
+		// Room names are sized from this viewport, so they have to be re-measured here - also
+		// when the user adjusted the view, which returns before the refit below.
+		this.applyRoomLabelZoomBehavior();
 
 		if (this.userAdjustedView) return;
 		const transform = this.computeFitTransform();
@@ -1415,21 +1430,41 @@ export class MapEngine {
 		this.host.onFloors?.(this.floors, this.selectedFloor);
 	}
 
+	/**
+	 * Resolves a reported state code into the admin's language.
+	 *
+	 * The adapter writes the `common.states` of `deviceStatus.state` in English (the table in
+	 * `vacuumConstants.ts`), so the strip used to read "Charging" in a German admin. The code
+	 * is therefore translated through `engine/robotStates.ts` first. Everything below that is
+	 * a fallback chain, because an unknown code must never leave the strip empty: the object's
+	 * own text comes next - a B01 already publishes it localized - then the English wording of
+	 * the table, and finally "Unknown (<code>)" for a value nobody has ever seen.
+	 * @param stateCode Value the device reported, or null while none arrived.
+	 */
+	private resolveStateText(stateCode: number | null): string | null {
+		if (stateCode === null) return null;
+
+		const fromObject = this.stateTexts[String(stateCode)] || "";
+		const known = ROBOT_STATES[stateCode];
+		if (known) return this.t(known.key, fromObject || known.en);
+		return fromObject || `${this.t("ui_unknown", "Unknown")} (${stateCode})`;
+	}
+
 	/** Publishes the live device status and refreshes the mode selectors. */
 	private renderStatusBar(): void {
 		const stateCode = this.statusValues.state ?? this.statusValues.status;
 		const errorCode = this.statusValues.errorCode;
 
 		const status: StatusModel = {
-			stateText: stateCode === null ? null : this.stateTexts[String(stateCode)] || `${this.t("ui_unknown", "Unknown")} (${stateCode})`,
+			stateText: this.resolveStateText(stateCode),
 			battery: this.statusValues.battery,
 			cleanArea: this.statusValues.cleanArea,
 			cleanTime: this.statusValues.cleanTime,
 			errorText: errorCode !== null && errorCode > 0 ? this.errorTexts[String(errorCode)] || String(errorCode) : null,
 			connectionChannel: this.connectionChannel,
-			// Start or Pause follows the reported robot state instead of a local guess, so a run
-			// started from the phone app shows up here as well.
-			running: stateCode !== null && RUNNING_STATE_CODES.has(stateCode),
+			// Which controls make sense follows the reported robot state instead of a local guess,
+			// so a run started from the phone app shows up here as well.
+			phase: robotPhase(stateCode),
 		};
 
 		this.host.onStatus?.(status);
@@ -2158,8 +2193,52 @@ export class MapEngine {
 			.attr("fill-rule", "evenodd");
 	}
 
+	/**
+	 * The on-screen height a room name should have, in CSS pixels.
+	 *
+	 * Worked through rather than guessed, because the scaling chain hides the real number:
+	 * a label sits in `roomNameGroup` inside `mainGroup`, and `mainGroup` carries the d3 zoom
+	 * transform with the factor `k = wheelZoom`. {@link applyRoomLabelZoomBehavior} then gives
+	 * the label itself `scale(1 / k)`. A length L drawn inside the label therefore lands on
+	 * screen as `L * (1/k) * k = L` - the two cancel exactly. The renderer's
+	 * `font-size: {@link ROOM_LABEL_BASE_FONT} px` was consequently **12 CSS pixels on screen,
+	 * at every zoom level and on every display**, which is why raising the drawn size alone or
+	 * zooming in never made the names any bigger. The counter-scale is not the bug though - it
+	 * is what keeps the names constant and readable at any zoom - so it stays, and this method
+	 * replaces the constant it cancels down to.
+	 *
+	 * The target is the wording of the Roborock app: readable on a tablet at arm's length,
+	 * which is around 17 px at a normal map size instead of 12. From there:
+	 *
+	 *  - it follows the size the map is really shown at, the shorter edge of the viewport
+	 *    against a {@link ROOM_LABEL_REFERENCE_EDGE} px reference, damped by a square root so a
+	 *    maximised window grows the names noticeably without doubling them;
+	 *  - it is lifted where a CSS pixel is physically small (`devicePixelRatio`, capped at 3);
+	 *  - and it is clamped in CSS pixels, not in map units, so the floor really is a floor on
+	 *    screen: {@link ROOM_LABEL_MIN_PX} px in a narrow tab or a far zoomed-out map,
+	 *    {@link ROOM_LABEL_MAX_PX} px at the top so a name cannot cover its own room.
+	 *
+	 * Measured results: 400 px edge → 14 px (floor); 620 px → 17 px; 900 px → 20.5 px;
+	 * 1400 px → 25.5 px; the same 620 px viewport on a 2x display → 19.6 px.
+	 */
+	private roomLabelScreenFontPx(): number {
+		const container = this.svgContainer.node() as HTMLElement | null;
+		const shortEdge = container ? Math.min(container.clientWidth, container.clientHeight) : 0;
+		const sizeFactor = shortEdge > 0 ? Math.sqrt(shortEdge / ROOM_LABEL_REFERENCE_EDGE) : 1;
+
+		const density = Math.min(Math.max(window.devicePixelRatio || 1, 1), 3);
+		const densityFactor = 1 + (density - 1) * ROOM_LABEL_DENSITY_WEIGHT;
+
+		const wanted = ROOM_LABEL_TARGET_PX * sizeFactor * densityFactor;
+		return Math.min(ROOM_LABEL_MAX_PX, Math.max(ROOM_LABEL_MIN_PX, wanted));
+	}
+
 	private applyRoomLabelZoomBehavior(): void {
-		const zoomScale = 1 / Math.max(this.wheelZoom, 0.001);
+		// One transform, not two: the `1 / wheelZoom` half cancels the map zoom so the label
+		// keeps a fixed size on screen, and the second half turns that fixed size into the
+		// number {@link roomLabelScreenFontPx} asked for, expressed as a multiple of the size
+		// the renderer actually drew.
+		const zoomScale = (1 / Math.max(this.wheelZoom, 0.001)) * (this.roomLabelScreenFontPx() / ROOM_LABEL_BASE_FONT);
 		this.roomNameGroup.selectAll<SVGGElement, unknown>("g.room-label").each(function () {
 			const element = d3.select(this);
 			const x = Number(element.attr("data-x") || 0);

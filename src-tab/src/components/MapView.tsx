@@ -37,7 +37,7 @@ const EMPTY_STATUS: StatusModel = {
 	cleanTime: null,
 	errorText: null,
 	connectionChannel: "",
-	running: false
+	phase: "unknown"
 };
 
 /**
@@ -253,6 +253,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				/>
 				<DockPanel
 					dock={dock}
+					phase={status.phase}
 					onCommand={(command, value) => engineRef.current?.sendDockValue(command, value)}
 				/>
 			</Stack>
@@ -274,7 +275,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 
 				<FloatingSurface sx={{ maxWidth: "100%" }}>
 					<ActionDock
-						running={status.running}
+						phase={status.phase}
 						goToActive={goToActive}
 						rooms={rooms}
 						zones={zones}

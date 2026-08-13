@@ -19,9 +19,18 @@ export interface SelectOption {
 	label: string;
 }
 
+/**
+ * What the robot is currently doing, condensed to the situations the controls tell apart.
+ *
+ * The mapping from the reported state code to one of these lives in `engine/robotStates.ts`,
+ * together with the code list of each phase. `unknown` covers both "no value yet" and a code
+ * the table does not list; the controls answer it with Start rather than with nothing.
+ */
+export type RobotPhase = "cleaning" | "paused" | "returning" | "docked" | "idle" | "unknown";
+
 /** The live device status shown in the status strip. */
 export interface StatusModel {
-	/** Already resolved through `common.states`, or null while unknown. */
+	/** Already translated, or null while unknown. */
 	stateText: string | null;
 	battery: number | null;
 	/** Cleaned area in m². */
@@ -32,8 +41,8 @@ export interface StatusModel {
 	errorText: string | null;
 	/** Transport channel of the local/cloud work package, empty while the device publishes none. */
 	connectionChannel: string;
-	/** True while the robot reports a running job; the shell then offers Pause instead of Start. */
-	running: boolean;
+	/** What the robot is doing; the controls offer only the actions that make sense in it. */
+	phase: RobotPhase;
 }
 
 /** One of the fan / mop / water selectors, built from `commands.*.common.states`. */

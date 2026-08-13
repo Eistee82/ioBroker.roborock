@@ -27,17 +27,6 @@ body,
 	font-feature-settings: "tnum";
 }
 
-/*
- * The signature texture: the fine grid of the app's map themes, used so quietly behind the
- * floating surfaces that it reads as material rather than as decoration.
- */
-.rr-grid-texture {
-	background-image:
-		linear-gradient(to right, var(--rr-grid) 1px, transparent 1px),
-		linear-gradient(to bottom, var(--rr-grid) 1px, transparent 1px);
-	background-size: 16px 16px;
-}
-
 /* --- Map surface (created by MapEngine) --------------------------------------------- */
 
 .rr-map-host {

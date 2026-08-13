@@ -77,8 +77,6 @@ export function themeCssVariables(theme: IobTheme): Record<string, string> {
 		"--rr-surface-float": dark ? "rgba(20, 29, 43, 0.86)" : "rgba(255, 255, 255, 0.86)",
 		"--rr-map-ground": dark ? "#0b111b" : "#dfe9f7",
 		"--rr-border": dark ? "rgba(169, 201, 240, 0.18)" : "rgba(45, 156, 219, 0.22)",
-		// The fine grid of the app's map themes, used as a very quiet texture.
-		"--rr-grid": dark ? "rgba(169, 201, 240, 0.07)" : "rgba(45, 156, 219, 0.07)",
 		"--rr-shadow": dark ? "0 10px 30px rgba(0, 0, 0, 0.55)" : "0 10px 30px rgba(31, 71, 112, 0.16)",
 	};
 }
