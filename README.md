@@ -60,6 +60,8 @@ This feature only works when map creation is enabled in the adapter options. Ope
 -->
 ### **WORK IN PROGRESS**
 
+- (Eistee82) The dock panel now offers only the half of each Start/Stop pair that applies: while the station washes the mop or empties the dust container the robot reports it, so mop washing and dust collection show their Stop button instead of both at once.
+
 - (Eistee82) Fixed the obstacle icons in the map tab showing a broken image placeholder. The artwork lives in the adapter file storage, which the admin serves under a different path than the former web adapter did; the tab now resolves it relative to the admin root so it also survives a reverse proxy.
 - (Eistee82) Fixed the pass selector in the map tab cutting off its label. It had a fixed width that was too narrow for the longest translation and was additionally squeezed by the surrounding row.
 - (Eistee82) Removed the grid texture behind the floating surfaces of the map tab. The surfaces keep their rounding, shadow and translucency; only the pattern is gone, together with its CSS rule and its `--rr-grid` variable.

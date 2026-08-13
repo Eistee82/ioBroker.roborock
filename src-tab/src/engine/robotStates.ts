@@ -17,7 +17,7 @@
  *    always meaningless.
  */
 
-import type { RobotPhase } from "./types";
+import type { DockActivity, RobotPhase } from "./types";
 
 /** One row of the state table. */
 export interface RobotStateInfo {
@@ -88,3 +88,43 @@ export function robotPhase(stateCode: number | null): RobotPhase {
 	if (stateCode === null) return "unknown";
 	return ROBOT_STATES[stateCode]?.phase ?? "unknown";
 }
+
+/**
+ * Which station job the robot reports right now.
+ *
+ * The dock has no separate "is washing" flag we could rely on across models, but the robot
+ * state says it plainly: while the station washes the mop or empties the dust container, the
+ * robot reports that instead of plain charging. That is enough to offer Stop instead of Start
+ * for the job that is actually running, rather than both next to each other.
+ *
+ * `25 Washing duster` counts as washing as well - it is the same wash cycle on the models that
+ * carry a duster, and `app_stop_wash` is what ends it.
+ *
+ * Anything else yields `null`, which the panel reads as "nothing running" and answers with the
+ * Start buttons. An unlisted code must never hide a control.
+ *
+ * @param stateCode Value of `deviceStatus.state` / `deviceStatus.status`, or null while none arrived.
+ */
+export function dockActivity(stateCode: number | null): DockActivity {
+	switch (stateCode) {
+		case 23:
+		case 25:
+			return "washing";
+		case 22:
+			return "emptying";
+		default:
+			return null;
+	}
+}
+
+/**
+ * Station commands that come in a Start/Stop pair, keyed by the job they belong to.
+ *
+ * The adapter publishes them as four independent buttons; only their names tie them together.
+ * Listing the pairs here keeps that knowledge in one place instead of spreading string tests
+ * through the panel.
+ */
+export const DOCK_COMMAND_PAIRS: Readonly<Record<string, { start: string; stop: string }>> = {
+	washing: { start: "app_start_wash", stop: "app_stop_wash" },
+	emptying: { start: "app_start_collect_dust", stop: "app_stop_collect_dust" },
+};

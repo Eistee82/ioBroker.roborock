@@ -7,7 +7,7 @@ import type { B01MapData } from "@adapter/lib/map/b01/types";
 import { Q10_CANVAS_SCALE, Q10MapGeometry } from "@adapter/lib/map/q10/Q10MapGeometry";
 import { floorScopeKey, normalizeMapFlag, normalizeRoomId, roomNameCacheKey } from "@adapter/lib/map/roomKey";
 import { ROOM_LABEL_BASE_FONT, SVGMapRenderer } from "./SVGMapRenderer";
-import { ROBOT_STATES, robotPhase } from "./robotStates";
+import { ROBOT_STATES, dockActivity, robotPhase } from "./robotStates";
 
 /**
  * Base path for the device artwork the AppPluginManager stores in the adapter's file storage
@@ -1465,6 +1465,9 @@ export class MapEngine {
 			// Which controls make sense follows the reported robot state instead of a local guess,
 			// so a run started from the phone app shows up here as well.
 			phase: robotPhase(stateCode),
+			// The station reports its running job through the robot state, so the dock panel can
+			// offer Stop for exactly the job that is under way.
+			dockActivity: dockActivity(stateCode),
 		};
 
 		this.host.onStatus?.(status);

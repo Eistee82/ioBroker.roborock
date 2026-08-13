@@ -28,6 +28,9 @@ export interface SelectOption {
  */
 export type RobotPhase = "cleaning" | "paused" | "returning" | "docked" | "idle" | "unknown";
 
+/** A station job the robot reports as running, or null when the station is idle. */
+export type DockActivity = "washing" | "emptying" | null;
+
 /** The live device status shown in the status strip. */
 export interface StatusModel {
 	/** Already translated, or null while unknown. */
@@ -43,6 +46,8 @@ export interface StatusModel {
 	connectionChannel: string;
 	/** What the robot is doing; the controls offer only the actions that make sense in it. */
 	phase: RobotPhase;
+	/** Station job the robot currently reports, so the dock offers Stop instead of Start for it. */
+	dockActivity: DockActivity;
 }
 
 /** One of the fan / mop / water selectors, built from `commands.*.common.states`. */

@@ -37,7 +37,8 @@ const EMPTY_STATUS: StatusModel = {
 	cleanTime: null,
 	errorText: null,
 	connectionChannel: "",
-	phase: "unknown"
+	phase: "unknown",
+	dockActivity: null
 };
 
 /**
@@ -254,6 +255,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				<DockPanel
 					dock={dock}
 					phase={status.phase}
+					dockActivity={status.dockActivity}
 					onCommand={(command, value) => engineRef.current?.sendDockValue(command, value)}
 				/>
 			</Stack>

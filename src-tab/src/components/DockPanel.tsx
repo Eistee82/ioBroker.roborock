@@ -4,12 +4,15 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import DockIcon from "@mui/icons-material/Dock";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { FloatingSurface } from "./FloatingSurface";
-import type { DockModel, RobotPhase } from "../engine/types";
+import { DOCK_COMMAND_PAIRS } from "../engine/robotStates";
+import type { DockActivity, DockModel, RobotPhase } from "../engine/types";
 
 interface DockPanelProps {
 	dock: DockModel;
 	/** What the robot is doing; station actions need it standing in the dock. */
 	phase: RobotPhase;
+	/** Station job under way, so its Stop button replaces the Start one. */
+	dockActivity: DockActivity;
 	/** `value` is a boolean for switches and buttons, a string for selects. */
 	onCommand: (command: string, value: unknown) => void;
 }
@@ -21,14 +24,25 @@ interface DockPanelProps {
  * that command object, and the object's shape decided whether it became a button, a switch
  * or a value selector.
  */
-export function DockPanel({ dock, phase, onCommand }: DockPanelProps): React.JSX.Element | null {
+export function DockPanel({ dock, phase, dockActivity, onCommand }: DockPanelProps): React.JSX.Element | null {
 	const [open, setOpen] = useState(false);
 
 	if (!dock.controls.length && !dock.status.length) {
 		return null;
 	}
-	const buttons = dock.controls.filter(control => control.kind === "button");
 	const selectors = dock.controls.filter(control => control.kind !== "button");
+
+	// Mop washing and dust collection each publish a Start and a Stop command as two separate
+	// buttons, and one of the two is always pointless. The robot state says which job is
+	// running (`23`/`25` washing, `22` emptying), so only the matching half is offered.
+	//
+	// Buttons outside a known pair - drying, for instance - are left untouched: guessing a
+	// pairing from the command name would break the moment a model publishes something new.
+	const suppressed = new Set<string>();
+	for (const [job, pair] of Object.entries(DOCK_COMMAND_PAIRS)) {
+		suppressed.add(dockActivity === job ? pair.start : pair.stop);
+	}
+	const buttons = dock.controls.filter(control => control.kind === "button" && !suppressed.has(control.command));
 
 	// Washing, drying and dust collection all need the robot standing in its station. While it
 	// is out cleaning, paused somewhere in the flat or still on its way back, the robot answers
