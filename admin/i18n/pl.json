@@ -220,5 +220,6 @@
   "ui_dock_wash_temperature": "Temperatura wody do mycia",
   "ui_dock_back_wash_mode": "Tryb płukania wstecznego",
   "ui_on": "Wł.",
-  "ui_off": "Wył."
+  "ui_off": "Wył.",
+  "ui_no_devices": "Nie znaleziono urządzenia Roborock dla tej instancji."
 }

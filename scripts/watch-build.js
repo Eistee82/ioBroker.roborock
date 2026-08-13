@@ -5,35 +5,35 @@ const chokidar = require("chokidar");
 const SRC_DIR = path.join(__dirname, "..", "src");
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 const DEBOUNCE_MS = 10000; // 10s after last save before building (avoids build on every keystroke)
-const DEBOUNCE_WWW_MS = 1500; // 1.5s for www rebuild (faster feedback for map UI)
+const DEBOUNCE_TAB_MS = 1500; // 1.5s for tab rebuild (faster feedback for map UI)
 const RESTART_DELAY_MS = 3000; // delay before auto-restart after crash/error
 
 let timer = null;
-let timerWww = null;
+let timerTab = null;
 let isBuilding = false;
-let isBuildingWww = false;
+let isBuildingTab = false;
 let watcher = null;
 let restartTimeout = null;
 
-function runBuildWww(isInitial = false) {
-    if (isBuildingWww) return;
-    isBuildingWww = true;
-    const label = isInitial ? "Initial www build" : "www change detected";
-    console.log(`\n🌐 ${label} → building www/app.js + app.js.map...\n`);
+function runBuildTab(isInitial = false) {
+    if (isBuildingTab) return;
+    isBuildingTab = true;
+    const label = isInitial ? "Initial tab build" : "tab change detected";
+    console.log(`\n🌐 ${label} → building admin/tab.html + admin/assets...\n`);
 
     try {
-        const proc = spawn(`${npmCmd} run build:www`, { stdio: "inherit", shell: true });
+        const proc = spawn(`${npmCmd} run build:tab`, { stdio: "inherit", shell: true });
         proc.on("close", (code) => {
-            isBuildingWww = false;
+            isBuildingTab = false;
             if (code === 0) {
-                console.log("\n✅ www build done. Watching for changes...");
+                console.log("\n✅ tab build done. Watching for changes...");
             } else {
-                console.error(`\n❌ build:www failed with code ${code}.`);
+                console.error(`\n❌ build:tab failed with code ${code}.`);
             }
         });
     } catch (e) {
-        console.error("❌ build:www failed to start:", e);
-        isBuildingWww = false;
+        console.error("❌ build:tab failed to start:", e);
+        isBuildingTab = false;
     }
 }
 
@@ -64,9 +64,9 @@ function stopWatching() {
         clearTimeout(timer);
         timer = null;
     }
-    if (timerWww) {
-        clearTimeout(timerWww);
-        timerWww = null;
+    if (timerTab) {
+        clearTimeout(timerTab);
+        timerTab = null;
     }
     if (watcher) {
         try {
@@ -88,7 +88,7 @@ function startWatching() {
 
     console.log(`👀 Watching for changes in: ${SRC_DIR}`);
     console.log("   On save: ci:check = lint + typecheck + unit tests (after 10s debounce).");
-    console.log("   Changes under src/www or src/common → build:www (app.js + app.js.map) after 1.5s.");
+    console.log("   Changes under src/common → build:tab (admin/tab.html + admin/assets) after 1.5s.");
     console.log("   For full CI (incl. integration/package): run 'npm run verify' with JS-Controller stopped.\n");
 
     watcher = chokidar.watch(SRC_DIR, {
@@ -97,9 +97,10 @@ function startWatching() {
         ignoreInitial: true
     });
 
-    const isWwwOrMapDrawing = (filePath) => {
+    // The tab bundles these shared modules, so a change in them has to reach admin/assets too.
+    const isMapDrawing = (filePath) => {
         const normalized = filePath.replace(/\\/g, "/");
-        return normalized.includes("/www/") || normalized.includes("/common/mapDrawing/") || normalized.includes("/common/coordTransformation") || normalized.includes("/common/pathProcessor");
+        return normalized.includes("/common/mapDrawing/") || normalized.includes("/common/coordTransformation") || normalized.includes("/common/pathProcessor");
     };
 
     watcher.on("all", (event, filePath) => {
@@ -108,11 +109,11 @@ function startWatching() {
             timer = setTimeout(() => {
                 runCheck(false);
             }, DEBOUNCE_MS);
-            if (isWwwOrMapDrawing(filePath)) {
-                if (timerWww) clearTimeout(timerWww);
-                timerWww = setTimeout(() => {
-                    runBuildWww(false);
-                }, DEBOUNCE_WWW_MS);
+            if (isMapDrawing(filePath)) {
+                if (timerTab) clearTimeout(timerTab);
+                timerTab = setTimeout(() => {
+                    runBuildTab(false);
+                }, DEBOUNCE_TAB_MS);
             }
         }
     });
@@ -125,7 +126,7 @@ function startWatching() {
     });
 
     runCheck(true);
-    runBuildWww(true);
+    runBuildTab(true);
 }
 
 // Auto-restart on uncaught errors so "watch:all" keeps running

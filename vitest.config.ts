@@ -7,7 +7,7 @@ export default defineConfig({
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "json", "html"],
-			exclude: ["src/**/*.test.ts", "src/lib/mock/**", "src/www/**", "**/*.d.ts"],
+			exclude: ["src/**/*.test.ts", "src/lib/mock/**", "src-tab/**", "**/*.d.ts"],
 			enabled: true,
 			include: ["src/**/*.ts"],
 			reportsDirectory: "./coverage"
@@ -19,6 +19,6 @@ export default defineConfig({
 		reporters: ["default"],
 		silent: false,
 		include: ["test/**/*.test.ts", "src/**/*.test.ts"],
-		exclude: ["node_modules", "dist", ".idea", ".git", ".cache", "build", "src/www/**"]
+		exclude: ["node_modules", "dist", ".idea", ".git", ".cache", "build", "src-tab/**"]
 	},
 });

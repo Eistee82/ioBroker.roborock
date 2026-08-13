@@ -220,5 +220,6 @@
   "ui_dock_wash_temperature": "Waschwassertemperatur",
   "ui_dock_back_wash_mode": "Rückspülmodus",
   "ui_on": "Ein",
-  "ui_off": "Aus"
+  "ui_off": "Aus",
+  "ui_no_devices": "Für diese Instanz wurde kein Roborock-Gerät gefunden."
 }
