@@ -127,6 +127,79 @@ interface ModeControl {
 	field: HTMLElement;
 }
 
+/**
+ * Dock commands the panel offers. Nothing here is a model list: an entry only becomes visible
+ * when the device handler actually published the command object, and the shape of that object
+ * (button, switch or value with `common.states`) decides how it is rendered.
+ */
+const DOCK_COMMANDS: { command: string; key: string; fallback: string }[] = [
+	{ command: "app_start_wash", key: "ui_dock_start_wash", fallback: "Start mop wash" },
+	{ command: "app_stop_wash", key: "ui_dock_stop_wash", fallback: "Stop mop wash" },
+	{ command: "app_start_mop_drying", key: "ui_dock_start_drying", fallback: "Start mop drying" },
+	{ command: "app_stop_mop_drying", key: "ui_dock_stop_drying", fallback: "Stop mop drying" },
+	{ command: "app_start_collect_dust", key: "ui_dock_start_dust", fallback: "Start dust collection" },
+	{ command: "app_stop_collect_dust", key: "ui_dock_stop_dust", fallback: "Stop dust collection" },
+	{ command: "app_set_dryer_status", key: "ui_dock_dryer", fallback: "Mop dryer" },
+	{ command: "app_switch_dock_cool_fan", key: "ui_dock_cool_fan", fallback: "Dock cool fan" },
+	{ command: "set_wash_towel_mode", key: "ui_dock_wash_mode", fallback: "Station cleaning mode" },
+	{ command: "set_wash_water_temperature", key: "ui_dock_wash_temperature", fallback: "Wash water temperature" },
+	{ command: "set_back_wash_mode", key: "ui_dock_back_wash_mode", fallback: "Backwash mode" },
+];
+
+/** Folder the consumable services publish their values in. */
+const CONSUMABLES_FOLDER = "consumables";
+/** Folder the consumable services publish their reset buttons in. */
+const RESET_CONSUMABLES_FOLDER = "resetConsumables";
+/** Folder the station status lives in; absent on devices without a dock. */
+const DOCK_STATUS_FOLDER = "dockingStationStatus";
+
+/** Suffixes the adapter appends to a consumable name, longest first (avoids "_work_time" eating "_work_times"). */
+const CONSUMABLE_SUFFIXES = ["_work_times", "_work_time", "_dirty_time", "_life"];
+
+/** Below this share of the declared lifetime a part counts as due. */
+const CONSUMABLE_WARN_PERCENT = 10;
+
+/** One published value of a consumable, e.g. remaining hours or remaining percent. */
+interface ConsumableMetric {
+	stateId: string;
+	name: string;
+	unit: string;
+	min: number | null;
+	max: number | null;
+	valueElement: HTMLElement;
+}
+
+/** One physical part, grouping every value the adapter publishes for it. */
+interface ConsumablePart {
+	part: string;
+	name: string;
+	metrics: ConsumableMetric[];
+	/** State name inside `resetConsumables`, or null when the device offers no reset. */
+	resetCommand: string | null;
+	root: HTMLElement;
+	dueElement: HTMLElement;
+	meterBar: HTMLElement | null;
+	/** Opens/closes the inline reset confirmation of this part. */
+	setResetPending?: (pending: boolean) => void;
+}
+
+/** One dock command rendered into the panel. */
+interface DockControl {
+	command: string;
+	stateId: string;
+	kind: "button" | "switch" | "select";
+	select: HTMLSelectElement | null;
+}
+
+/** One station state shown in the panel. */
+interface DockStatusRow {
+	stateId: string;
+	states: Record<string, string> | null;
+	unit: string;
+	root: HTMLElement;
+	valueElement: HTMLElement;
+}
+
 const UI_CONSTANTS = {
 	ROBOT_SIZE_BASE: 5,
 	CHARGER_SIZE_BASE: 3,
@@ -329,6 +402,23 @@ class MapApplication {
 	private stateTexts: Record<string, string> = {};
 	private errorTexts: Record<string, string> = {};
 	private modeControls: ModeControl[] = [];
+
+	// Consumable and dock panels. Both are built from the device objects, so a device that
+	// publishes nothing keeps its panel hidden instead of showing an empty box.
+	private consumableParts: ConsumablePart[] = [];
+	private dockControls: DockControl[] = [];
+	private dockStatusRows: DockStatusRow[] = [];
+	/** Ids of every panel state, so the shared state handler can route updates. */
+	private panelStateIds = new Set<string>();
+	/** Last known value of each panel state. */
+	private panelValues: Record<string, unknown> = {};
+	/** Panel states currently subscribed, unsubscribed again on device change. */
+	private panelSubscriptions: string[] = [];
+	/** Part whose reset confirmation is currently open; only one at a time. */
+	private pendingResetPart: string | null = null;
+	/** Dock fault state of this device, or null when the device publishes none. */
+	private dockErrorStateId: string | null = null;
+
 	private messageTimeout: number | null = null;
 	/** True once the user panned/zoomed by hand; a resize then keeps their view. */
 	private userAdjustedView = false;
@@ -367,6 +457,15 @@ class MapApplication {
 	private statusConnection!: HTMLElement;
 	private mapPlaceholder!: HTMLElement;
 	private messageBar!: HTMLElement;
+	private consumablesPanel!: HTMLDetailsElement;
+	private consumablesBadge!: HTMLElement;
+	private consumablesList!: HTMLElement;
+	private dockPanel!: HTMLDetailsElement;
+	private dockBadge!: HTMLElement;
+	private dockActions!: HTMLElement;
+	private dockModes!: HTMLElement;
+	private dockStatusList!: HTMLElement;
+	private dockStatusHint!: HTMLElement;
 
 	constructor() {
 		this.connection = new Connection();
@@ -436,6 +535,15 @@ class MapApplication {
 		this.statusConnection = getElement("statusConnection");
 		this.mapPlaceholder = getElement("mapPlaceholder");
 		this.messageBar = getElement("messageBar");
+		this.consumablesPanel = getElement<HTMLDetailsElement>("consumablesPanel");
+		this.consumablesBadge = getElement("consumablesBadge");
+		this.consumablesList = getElement("consumablesList");
+		this.dockPanel = getElement<HTMLDetailsElement>("dockPanel");
+		this.dockBadge = getElement("dockBadge");
+		this.dockActions = getElement("dockActions");
+		this.dockModes = getElement("dockModes");
+		this.dockStatusList = getElement("dockStatusList");
+		this.dockStatusHint = getElement("dockStatusHint");
 
 		this.modeControls = MODE_COMMANDS.map((mode) => ({
 			command: mode.command,
@@ -805,6 +913,10 @@ class MapApplication {
 			});
 			this.currentMapSubscriptions = [];
 		}
+		this.panelSubscriptions.forEach((id) => this.connection.unsubscribeState(id));
+		this.panelSubscriptions = [];
+		this.clearPanels();
+
 		this.roomNamesRequestedForFloor = null;
 		this.roomNamesFromStates = {};
 
@@ -873,6 +985,13 @@ class MapApplication {
 		];
 
 		this.onStateChange = (id: string, state: any | null | undefined) => {
+			if (this.panelStateIds.has(id)) {
+				this.panelValues[id] = state && state.val !== undefined ? state.val : null;
+				this.updateConsumableValues();
+				this.updateDockValues();
+				return;
+			}
+
 			if (id === connectionPreferredStateId) {
 				const channel = state && state.val !== null && state.val !== undefined ? String(state.val) : "";
 				this.statusConnection.textContent = channel;
@@ -1012,8 +1131,467 @@ class MapApplication {
 
 		await this.populateModeControls(duid, deviceRoot);
 		await this.populateFloors(duid, deviceRoot);
+		await this.populateConsumables(duid, deviceRoot);
+		await this.populateDock(duid, deviceRoot);
+		this.subscribePanelStates(duid);
 
 		if (this.currentRobotDuid === duid) this.renderStatusBar();
+	}
+
+	// -----------------------------------------------------------------------------
+	// Consumable and dock panels
+	// -----------------------------------------------------------------------------
+
+	/** Drops everything the previous device contributed to the two panels. */
+	private clearPanels(): void {
+		this.consumableParts = [];
+		this.dockControls = [];
+		this.dockStatusRows = [];
+		this.panelStateIds.clear();
+		this.panelValues = {};
+		this.pendingResetPart = null;
+		this.dockErrorStateId = null;
+
+		this.consumablesList.replaceChildren();
+		this.consumablesPanel.hidden = true;
+		this.consumablesBadge.hidden = true;
+		this.dockActions.replaceChildren();
+		this.dockModes.replaceChildren();
+		this.dockStatusList.replaceChildren();
+		this.dockPanel.hidden = true;
+		this.dockBadge.hidden = true;
+		this.dockStatusHint.hidden = true;
+	}
+
+	/** Lists the state objects below a path prefix; an unreachable view yields an empty panel, not an error. */
+	private async getStateObjectsBelow(prefix: string): Promise<{ id: string; common: Record<string, any> }[]> {
+		try {
+			const response = await this.connection.getObjectView("system", "state", { startkey: prefix, endkey: `${prefix}\u9999` });
+			return (response?.rows ?? [])
+				.map((row: any) => ({ id: String(row?.id ?? row?.value?._id ?? ""), common: (row?.value?.common ?? {}) as Record<string, any> }))
+				.filter((entry: { id: string }) => entry.id.startsWith(prefix) && entry.id.length > prefix.length);
+		} catch {
+			return [];
+		}
+	}
+
+	/** Resolves `common.name`, which ioBroker allows to be a plain string or a per-language map. */
+	private objectName(name: unknown, fallback: string): string {
+		if (typeof name === "string" && name.trim()) return name;
+		if (name && typeof name === "object") {
+			const translated = name as Record<string, unknown>;
+			const candidate = translated[document.documentElement.lang] ?? translated.en;
+			if (typeof candidate === "string" && candidate.trim()) return candidate;
+		}
+		return fallback;
+	}
+
+	/** Reads a numeric member of an object definition, or null when it is absent. */
+	private numericCommon(common: Record<string, any>, key: string): number | null {
+		const value = Number(common?.[key]);
+		return Number.isFinite(value) ? value : null;
+	}
+
+	/** Strips the value suffix the adapter appends, leaving the part name (e.g. "main_brush"). */
+	private consumablePartName(stateName: string): string {
+		for (const suffix of CONSUMABLE_SUFFIXES) {
+			if (stateName.endsWith(suffix)) return stateName.slice(0, -suffix.length);
+		}
+		return stateName;
+	}
+
+	/**
+	 * Builds one row per consumable part out of the published objects. Everything shown -
+	 * label, unit and lifetime range - comes from the object definitions, so the UI needs no
+	 * model knowledge, exactly like the mode selectors.
+	 * @param duid Device the definitions belong to.
+	 * @param deviceRoot Object path of that device.
+	 */
+	private async populateConsumables(duid: string, deviceRoot: string): Promise<void> {
+		const [values, resets] = await Promise.all([
+			this.getStateObjectsBelow(`${deviceRoot}.${CONSUMABLES_FOLDER}.`),
+			this.getStateObjectsBelow(`${deviceRoot}.${RESET_CONSUMABLES_FOLDER}.`),
+		]);
+		if (this.currentRobotDuid !== duid) return;
+
+		// Reset buttons are named `reset_<part>`; only writable buttons are offered.
+		const resetByPart = new Map<string, { command: string; name: string }>();
+		for (const reset of resets) {
+			const command = reset.id.split(".").pop() ?? "";
+			if (!command.startsWith("reset_") || reset.common?.type !== "boolean" || reset.common?.write !== true) continue;
+			resetByPart.set(command.slice("reset_".length), { command, name: this.objectName(reset.common?.name, command).replace(/^reset\s+/i, "") });
+		}
+
+		const partsByName = new Map<string, ConsumablePart>();
+		for (const value of values) {
+			const stateName = value.id.split(".").pop() ?? "";
+			if (!stateName || value.common?.type !== "number") continue;
+
+			const partName = this.consumablePartName(stateName);
+			let part = partsByName.get(partName);
+			if (!part) {
+				const reset = resetByPart.get(partName) ?? null;
+				part = {
+					part: partName,
+					name: reset?.name || this.objectName(value.common?.name, partName),
+					metrics: [],
+					resetCommand: reset?.command ?? null,
+					root: document.createElement("div"),
+					dueElement: document.createElement("span"),
+					meterBar: null,
+				};
+				partsByName.set(partName, part);
+			}
+
+			part.metrics.push({
+				stateId: value.id,
+				name: this.objectName(value.common?.name, stateName),
+				unit: String(value.common?.unit ?? ""),
+				min: this.numericCommon(value.common, "min"),
+				max: this.numericCommon(value.common, "max"),
+				valueElement: document.createElement("span"),
+			});
+		}
+
+		this.consumableParts = Array.from(partsByName.values()).filter((part) => part.metrics.length > 0);
+
+		// The part name is already the row heading, so it is dropped from the value labels.
+		for (const part of this.consumableParts) {
+			for (const metric of part.metrics) {
+				if (metric.name.length > part.name.length && metric.name.toLowerCase().startsWith(part.name.toLowerCase())) {
+					metric.name = metric.name.slice(part.name.length).trim() || metric.name;
+				}
+			}
+		}
+
+		this.renderConsumablePanel();
+	}
+
+	/** Creates the DOM of the consumable panel once; values are patched in afterwards. */
+	private renderConsumablePanel(): void {
+		this.consumablesList.replaceChildren();
+		this.consumablesPanel.hidden = this.consumableParts.length === 0;
+		if (this.consumableParts.length === 0) return;
+
+		for (const part of this.consumableParts) {
+			part.root.className = "consumable";
+
+			const head = document.createElement("div");
+			head.className = "consumable-head";
+			const name = document.createElement("span");
+			name.className = "consumable-name";
+			name.textContent = part.name;
+			part.dueElement.className = "consumable-due";
+			part.dueElement.hidden = true;
+			head.append(name, part.dueElement);
+
+			const values = document.createElement("div");
+			values.className = "consumable-values";
+			values.append(...part.metrics.map((metric) => metric.valueElement));
+
+			part.root.replaceChildren(head, values);
+
+			// A meter is only honest when a part publishes a range the percentage can refer to.
+			if (part.metrics.some((metric) => this.hasLifetimeRange(metric))) {
+				const meter = document.createElement("div");
+				meter.className = "consumable-meter";
+				part.meterBar = document.createElement("span");
+				meter.appendChild(part.meterBar);
+				part.root.appendChild(meter);
+			} else {
+				part.meterBar = null;
+			}
+
+			if (part.resetCommand) part.root.appendChild(this.createResetControls(part));
+
+			this.consumablesList.appendChild(part.root);
+		}
+
+		this.updateConsumableValues();
+	}
+
+	/**
+	 * Builds the inline reset control. The confirmation lives in the panel instead of a
+	 * `confirm()` dialog: an accidental reset falsifies the maintenance planning for good.
+	 * @param part Part the reset belongs to.
+	 */
+	private createResetControls(part: ConsumablePart): HTMLElement {
+		const wrapper = document.createElement("div");
+
+		const resetButton = document.createElement("button");
+		resetButton.type = "button";
+		resetButton.className = "secondary";
+		resetButton.textContent = this.t("ui_consumable_reset", "Reset");
+
+		const confirm = document.createElement("div");
+		confirm.className = "consumable-confirm";
+		confirm.hidden = true;
+
+		const question = document.createElement("p");
+		question.className = "control-hint";
+		question.textContent = this.t("ui_consumable_reset_confirm", "Really reset the counter for %s?", part.name);
+
+		const confirmButton = document.createElement("button");
+		confirmButton.type = "button";
+		confirmButton.className = "danger";
+		confirmButton.textContent = this.t("ui_consumable_reset_yes", "Reset now");
+
+		const cancelButton = document.createElement("button");
+		cancelButton.type = "button";
+		cancelButton.className = "secondary";
+		cancelButton.textContent = this.t("ui_cancel", "Cancel");
+
+		confirm.append(question, confirmButton, cancelButton);
+
+		const setPending = (pending: boolean): void => {
+			// Only one open confirmation at a time, so a pending question cannot be overlooked.
+			if (pending && this.pendingResetPart && this.pendingResetPart !== part.part) {
+				this.consumableParts.find((other) => other.part === this.pendingResetPart)?.setResetPending?.(false);
+			}
+			this.pendingResetPart = pending ? part.part : null;
+			resetButton.hidden = pending;
+			confirm.hidden = !pending;
+		};
+		part.setResetPending = setPending;
+
+		resetButton.addEventListener("click", () => setPending(true));
+		cancelButton.addEventListener("click", () => setPending(false));
+		confirmButton.addEventListener("click", () => {
+			setPending(false);
+			if (!this.currentRobotDuid || !part.resetCommand) return;
+			void this.sendCommand("reset_consumable", { duid: this.currentRobotDuid, consumable: part.resetCommand });
+		});
+
+		wrapper.append(resetButton, confirm);
+		return wrapper;
+	}
+
+	/** True when the object definition declares a range a remaining percentage can be derived from. */
+	private hasLifetimeRange(metric: ConsumableMetric): boolean {
+		if (metric.unit === "%") return true;
+		return metric.max !== null && metric.max > (metric.min ?? 0);
+	}
+
+	/** Remaining share of the declared lifetime, or null when the definition declares no range. */
+	private consumablePercent(metric: ConsumableMetric, value: number): number | null {
+		if (metric.unit === "%") return Math.max(0, Math.min(100, value));
+		if (metric.max === null) return null;
+		const min = metric.min ?? 0;
+		if (metric.max <= min) return null;
+		return Math.max(0, Math.min(100, ((value - min) / (metric.max - min)) * 100));
+	}
+
+	/**
+	 * True when a part has reached the end of its life. Percentages use a common threshold;
+	 * a remaining time published in hours is due once nothing is left.
+	 */
+	private isConsumableDue(metric: ConsumableMetric, value: number): boolean {
+		const percent = this.consumablePercent(metric, value);
+		if (percent !== null) return percent <= CONSUMABLE_WARN_PERCENT;
+		return metric.unit === "h" && value <= 0;
+	}
+
+	/** Writes the current values into the already built consumable rows. */
+	private updateConsumableValues(): void {
+		let dueParts = 0;
+
+		for (const part of this.consumableParts) {
+			let due = false;
+			let percent: number | null = null;
+
+			for (const metric of part.metrics) {
+				const raw = this.panelValues[metric.stateId];
+				const value = raw === null || raw === undefined ? null : Number(raw);
+				const known = value !== null && Number.isFinite(value);
+
+				metric.valueElement.textContent = known
+					? `${metric.name}: ${value}${metric.unit ? ` ${metric.unit}` : ""}`
+					: `${metric.name}: –`;
+				if (!known) continue;
+
+				if (this.isConsumableDue(metric, value)) due = true;
+				const metricPercent = this.consumablePercent(metric, value);
+				if (metricPercent !== null && (percent === null || metricPercent < percent)) percent = metricPercent;
+			}
+
+			if (part.meterBar) part.meterBar.style.width = `${percent ?? 0}%`;
+			part.dueElement.textContent = this.t("ui_consumable_due", "Replacement due");
+			part.dueElement.hidden = !due;
+			part.root.classList.toggle("is-due", due);
+			if (due) dueParts++;
+		}
+
+		this.consumablesBadge.textContent = String(dueParts);
+		this.consumablesBadge.hidden = dueParts === 0;
+	}
+
+	/**
+	 * Builds the dock panel from the command objects the device handler registered. A device
+	 * without any dock command and without station states keeps the panel hidden entirely.
+	 * @param duid Device the definitions belong to.
+	 * @param deviceRoot Object path of that device.
+	 */
+	private async populateDock(duid: string, deviceRoot: string): Promise<void> {
+		const commandObjects = await Promise.all(
+			DOCK_COMMANDS.map(async (entry) => ({ entry, object: await this.getObjectSafe(`${deviceRoot}.commands.${entry.command}`) }))
+		);
+		const statusObjects = await this.getStateObjectsBelow(`${deviceRoot}.${DOCK_STATUS_FOLDER}.`);
+		// The dock fault lives next to the robot status, but belongs into this panel.
+		const dockErrorId = `${deviceRoot}.deviceStatus.dock_error_status`;
+		const dockErrorObject = await this.getObjectSafe(dockErrorId);
+		if (this.currentRobotDuid !== duid) return;
+
+		this.dockControls = [];
+		this.dockActions.replaceChildren();
+		this.dockModes.replaceChildren();
+
+		for (const { entry, object } of commandObjects) {
+			if (!object?.common) continue;
+			const control = this.createDockControl(entry, object.common, `${deviceRoot}.commands.${entry.command}`);
+			if (control) this.dockControls.push(control);
+		}
+
+		this.dockErrorStateId = dockErrorObject?.common ? dockErrorId : null;
+		this.dockStatusRows = statusObjects.map((status) => this.createDockStatusRow(status.id, status.common));
+		if (dockErrorObject?.common) {
+			this.dockStatusRows.unshift(this.createDockStatusRow(dockErrorId, dockErrorObject.common));
+		}
+		this.dockStatusList.replaceChildren(...this.dockStatusRows.map((row) => row.root));
+		this.dockStatusHint.hidden = this.dockStatusRows.length > 0;
+
+		this.dockPanel.hidden = this.dockControls.length === 0 && this.dockStatusRows.length === 0;
+		this.updateDockValues();
+	}
+
+	/** Turns one command object into the control its definition asks for. */
+	private createDockControl(entry: { command: string; key: string; fallback: string }, common: Record<string, any>, stateId: string): DockControl | null {
+		const label = this.t(entry.key, entry.fallback);
+		const states = this.normalizeStates(common.states);
+
+		if (states) {
+			const field = document.createElement("label");
+			field.className = "field";
+			const caption = document.createElement("span");
+			caption.textContent = label;
+			const select = document.createElement("select");
+			for (const [value, text] of Object.entries(states)) {
+				const option = document.createElement("option");
+				option.value = value;
+				option.text = text;
+				select.appendChild(option);
+			}
+			select.addEventListener("change", () => this.sendDockValue(entry.command, select.value));
+			field.append(caption, select);
+			this.dockModes.appendChild(field);
+			return { command: entry.command, stateId, kind: "select", select };
+		}
+
+		if (common.type !== "boolean") return null;
+
+		// A switch keeps both positions reachable; a button only knows "trigger".
+		if (common.role !== "button") {
+			const field = document.createElement("label");
+			field.className = "field";
+			const caption = document.createElement("span");
+			caption.textContent = label;
+			const select = document.createElement("select");
+			for (const [value, text] of [["true", this.t("ui_on", "On")], ["false", this.t("ui_off", "Off")]]) {
+				const option = document.createElement("option");
+				option.value = value;
+				option.text = text;
+				select.appendChild(option);
+			}
+			select.addEventListener("change", () => this.sendDockValue(entry.command, select.value === "true"));
+			field.append(caption, select);
+			this.dockModes.appendChild(field);
+			return { command: entry.command, stateId, kind: "switch", select };
+		}
+
+		const button = document.createElement("button");
+		button.type = "button";
+		button.textContent = label;
+		button.addEventListener("click", () => this.sendDockValue(entry.command, true));
+		this.dockActions.appendChild(button);
+		return { command: entry.command, stateId, kind: "button", select: null };
+	}
+
+	/** Writes a dock command through the guarded generic writer. */
+	private sendDockValue(command: string, value: unknown): void {
+		if (!this.currentRobotDuid) return;
+		void this.sendCommand("set_state", { duid: this.currentRobotDuid, folder: "commands", command, value });
+	}
+
+	/** Builds one station status line; the label and value texts come from the object definition. */
+	private createDockStatusRow(stateId: string, common: Record<string, any>): DockStatusRow {
+		const root = document.createElement("div");
+		root.className = "dock-status-row";
+
+		const name = document.createElement("span");
+		name.className = "dock-status-name";
+		name.textContent = this.objectName(common?.name, stateId.split(".").pop() ?? stateId);
+
+		const value = document.createElement("span");
+		value.className = "dock-status-value";
+		value.textContent = "–";
+
+		root.append(name, value);
+		return { stateId, states: this.normalizeStates(common?.states), unit: String(common?.unit ?? ""), root, valueElement: value };
+	}
+
+	/** Writes the current values into the dock panel. */
+	private updateDockValues(): void {
+		for (const control of this.dockControls) {
+			if (!control.select) continue;
+			const raw = this.panelValues[control.stateId];
+			if (raw === null || raw === undefined) continue;
+			const value = control.kind === "switch" ? String(raw === true || raw === "true") : String(raw);
+			if (Array.from(control.select.options).some((option) => option.value === value)) control.select.value = value;
+		}
+
+		for (const row of this.dockStatusRows) {
+			const raw = this.panelValues[row.stateId];
+			if (raw === null || raw === undefined) {
+				row.valueElement.textContent = "–";
+				continue;
+			}
+			const text = row.states?.[String(raw)] ?? (typeof raw === "boolean" ? this.t(raw ? "ui_on" : "ui_off", raw ? "On" : "Off") : undefined);
+			row.valueElement.textContent = text ?? `${String(raw)}${row.unit ? ` ${row.unit}` : ""}`;
+		}
+
+		// A collapsed panel would hide a dock fault, so it is flagged on the summary line.
+		const dockError = this.dockErrorStateId === null ? null : Number(this.panelValues[this.dockErrorStateId]);
+		const faulty = dockError !== null && Number.isFinite(dockError) && dockError > 0;
+		this.dockBadge.textContent = this.t("ui_error", "Error");
+		this.dockBadge.hidden = !faulty;
+	}
+
+	/** Subscribes to every state the two panels display and fetches their current values. */
+	private subscribePanelStates(duid: string): void {
+		if (this.currentRobotDuid !== duid) return;
+
+		const ids = new Set<string>();
+		for (const part of this.consumableParts) {
+			for (const metric of part.metrics) ids.add(metric.stateId);
+		}
+		for (const control of this.dockControls) {
+			if (control.select) ids.add(control.stateId);
+		}
+		for (const row of this.dockStatusRows) ids.add(row.stateId);
+
+		this.panelStateIds = ids;
+		this.panelSubscriptions = Array.from(ids);
+		if (this.panelSubscriptions.length === 0) return;
+
+		this.panelSubscriptions.forEach((id) => this.connection.subscribeState(id));
+		this.connection.getStates(this.panelSubscriptions).then((states: Record<string, any | null | undefined>) => {
+			if (this.currentRobotDuid !== duid) return;
+			for (const id of this.panelSubscriptions) {
+				const state = states[id];
+				this.panelValues[id] = state && state.val !== undefined ? state.val : null;
+			}
+			this.updateConsumableValues();
+			this.updateDockValues();
+		});
 	}
 
 	/** Builds the fan/mop/water selectors purely from the command objects' `common.states`. */

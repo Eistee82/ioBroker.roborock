@@ -220,6 +220,202 @@
 				cursor: not-allowed;
 			}
 
+			/* --- Collapsible panels (consumables / dock) --- */
+			.panel {
+				border: 1px solid var(--rr-border);
+				border-radius: 10px;
+				background-color: rgba(255, 255, 255, 0.03);
+			}
+
+			.panel > summary {
+				display: flex;
+				align-items: center;
+				flex-wrap: wrap;
+				gap: 8px;
+				padding: 10px 12px;
+				cursor: pointer;
+				font-size: 12px;
+				font-weight: 700;
+				text-transform: uppercase;
+				letter-spacing: 0.06em;
+				color: var(--rr-text-dim);
+				list-style: none;
+			}
+
+			.panel > summary::-webkit-details-marker {
+				display: none;
+			}
+
+			.panel > summary::before {
+				content: "▸";
+				font-size: 11px;
+				line-height: 1;
+			}
+
+			.panel[open] > summary::before {
+				content: "▾";
+			}
+
+			.panel > summary:hover {
+				color: var(--rr-text);
+			}
+
+			.panel-badge {
+				margin-left: auto;
+				padding: 2px 8px;
+				border-radius: 999px;
+				background-color: var(--rr-error);
+				color: #ffffff;
+				font-size: 11px;
+				letter-spacing: 0;
+			}
+
+			.panel-body {
+				display: flex;
+				flex-direction: column;
+				gap: 10px;
+				padding: 0 12px 12px;
+			}
+
+			/* --- Consumables --- */
+			.consumable {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+				padding-top: 10px;
+				border-top: 1px solid var(--rr-border);
+			}
+
+			.consumable:first-child {
+				border-top: none;
+				padding-top: 0;
+			}
+
+			.consumable-head {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: baseline;
+				gap: 4px 8px;
+			}
+
+			.consumable-name {
+				font-size: 14px;
+				font-weight: 600;
+				min-width: 0;
+				overflow-wrap: anywhere;
+			}
+
+			.consumable-due {
+				margin-left: auto;
+				color: var(--rr-error);
+				font-size: 12px;
+				font-weight: 700;
+			}
+
+			.consumable-values {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 2px 12px;
+				font-size: 12px;
+				color: var(--rr-text-dim);
+			}
+
+			.consumable-meter {
+				height: 6px;
+				border-radius: 999px;
+				background-color: rgba(255, 255, 255, 0.12);
+				overflow: hidden;
+			}
+
+			.consumable-meter > span {
+				display: block;
+				height: 100%;
+				width: 0;
+				border-radius: 999px;
+				background-color: var(--rr-accent);
+				transition: width 0.2s ease-in-out;
+			}
+
+			.consumable.is-due .consumable-meter > span {
+				background-color: var(--rr-error);
+			}
+
+			.consumable-confirm {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 6px;
+			}
+
+			.consumable-confirm > .control-hint {
+				flex: 1 1 100%;
+			}
+
+			.consumable-confirm > button {
+				flex: 1 1 120px;
+			}
+
+			button.secondary {
+				background-color: transparent;
+				color: var(--rr-text-dim);
+			}
+
+			button.secondary:hover:not(:disabled) {
+				background-color: rgba(255, 255, 255, 0.08);
+				color: var(--rr-text);
+			}
+
+			button.danger {
+				background-color: var(--rr-error);
+			}
+
+			button.danger:hover:not(:disabled) {
+				background-color: #ff7a73;
+			}
+
+			/* --- Dock --- */
+			.dock-grid {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 6px;
+			}
+
+			.dock-grid > * {
+				flex: 1 1 130px;
+				min-width: 0;
+			}
+
+			#dockModes,
+			#dockStatusList {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+			}
+
+			#dockModes:empty,
+			#dockStatusList:empty {
+				display: none;
+			}
+
+			.dock-status-row {
+				display: flex;
+				flex-wrap: wrap;
+				justify-content: space-between;
+				gap: 2px 12px;
+				font-size: 13px;
+			}
+
+			.dock-status-row > .dock-status-name {
+				color: var(--rr-text-dim);
+				min-width: 0;
+				overflow-wrap: anywhere;
+			}
+
+			.dock-status-row > .dock-status-value {
+				font-weight: 600;
+				text-align: right;
+			}
+
 			/* --- Interactive SVG elements --- */
 			.zone-rect {
 				fill: rgba(255, 255, 255, 0.5);
@@ -434,6 +630,28 @@
 					<button id="goToButton" data-i18n="ui_goto">Go to point</button>
 					<button id="resetZoomButton" data-i18n="ui_reset_view">Reset view</button>
 				</div>
+
+				<!-- Both panels are filled from the device objects and stay hidden while the device has none. -->
+				<details class="panel" id="consumablesPanel" hidden>
+					<summary>
+						<span data-i18n="ui_consumables">Consumables</span>
+						<span class="panel-badge" id="consumablesBadge" hidden></span>
+					</summary>
+					<div class="panel-body" id="consumablesList"></div>
+				</details>
+
+				<details class="panel" id="dockPanel" hidden>
+					<summary>
+						<span data-i18n="ui_dock_panel">Dock station</span>
+						<span class="panel-badge" id="dockBadge" hidden></span>
+					</summary>
+					<div class="panel-body">
+						<div class="dock-grid" id="dockActions"></div>
+						<div id="dockModes"></div>
+						<div id="dockStatusList"></div>
+						<p class="control-hint" id="dockStatusHint" hidden data-i18n="ui_dock_no_status">No dock status data available for this device.</p>
+					</div>
+				</details>
 			</section>
 		</div>
 

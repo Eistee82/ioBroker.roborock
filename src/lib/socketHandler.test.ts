@@ -192,6 +192,82 @@ describe("socketHandler", () => {
 		});
 	});
 
+	describe("reset_consumable security check", () => {
+		/** Mimics the objects the consumable services publish under `resetConsumables`. */
+		function createResetAdapter(objects: Record<string, unknown>) {
+			return createAdapter({
+				getObjectAsync: vi.fn(async (id: string) => objects[id] ?? null)
+			});
+		}
+
+		const resetButton = {
+			type: "state",
+			common: { name: "Reset Main Brush", type: "boolean", role: "button", write: true }
+		};
+
+		it("presses a reset button the adapter published", async () => {
+			const resetAdapter = createResetAdapter({ "Devices.duid1.resetConsumables.reset_main_brush": resetButton });
+
+			const result = await send(resetAdapter, "reset_consumable", { duid: "duid1", consumable: "reset_main_brush" });
+
+			expect(result).toEqual({ result: "ok" });
+			expect(resetAdapter.setState).toHaveBeenCalledWith("Devices.duid1.resetConsumables.reset_main_brush", { val: true, ack: false });
+		});
+
+		it("refuses a reset button that does not exist", async () => {
+			const resetAdapter = createResetAdapter({});
+
+			const result = await send(resetAdapter, "reset_consumable", { duid: "duid1", consumable: "reset_nothing" });
+
+			expect(result.error).toMatch(/is not a consumable reset button/);
+			expect(resetAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("refuses a state in the folder that is not a writable boolean button", async () => {
+			const resetAdapter = createResetAdapter({
+				"Devices.duid1.resetConsumables.reset_main_brush": { type: "state", common: { type: "number", role: "value", write: false } }
+			});
+
+			const result = await send(resetAdapter, "reset_consumable", { duid: "duid1", consumable: "reset_main_brush" });
+
+			expect(result.error).toMatch(/is not a consumable reset button/);
+			expect(resetAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("refuses path traversal out of the reset folder", async () => {
+			const resetAdapter = createResetAdapter({ "Devices.duid1.resetConsumables.reset_main_brush": resetButton });
+
+			const result = await send(resetAdapter, "reset_consumable", { duid: "duid1", consumable: "../commands/app_start" });
+
+			expect(result.error).toMatch(/illegal characters/);
+			expect(resetAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("refuses a foreign state id smuggled through the duid", async () => {
+			const resetAdapter = createResetAdapter({ "Devices.duid1.resetConsumables.reset_main_brush": resetButton });
+
+			const result = await send(resetAdapter, "reset_consumable", { duid: "duid1.resetConsumables.reset_main_brush", consumable: "reset_main_brush" });
+
+			expect(result.error).toMatch(/illegal characters/);
+			expect(resetAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("rejects unknown devices", async () => {
+			const resetAdapter = createResetAdapter({ "Devices.nope.resetConsumables.reset_main_brush": resetButton });
+
+			const result = await send(resetAdapter, "reset_consumable", { duid: "nope", consumable: "reset_main_brush" });
+
+			expect(result.error).toMatch(/No handler for DUID/);
+			expect(resetAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("requires duid and consumable", async () => {
+			const result = await send(adapter, "reset_consumable", { duid: "duid1" });
+
+			expect(result.error).toMatch(/requires 'duid' and 'consumable'/);
+		});
+	});
+
 	describe("get_translations", () => {
 		it("returns the adapter language and its loaded translations", async () => {
 			const result = await send(adapter, "get_translations", {});

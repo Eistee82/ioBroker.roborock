@@ -17,6 +17,13 @@ type MessageHandler = (message: any, id?: string | number) => Promise<any>;
  */
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9_-]+$/;
 
+/**
+ * Folder the consumable services publish their reset buttons in. It is not a registered
+ * command folder (main.ts routes it to 'reset_consumable' directly), so it gets its own
+ * check instead of being allowed through the generic `set_state` boundary.
+ */
+const RESET_CONSUMABLES_FOLDER = "resetConsumables";
+
 export class socketHandler {
 	private adapter: Roborock;
 
@@ -40,6 +47,7 @@ export class socketHandler {
 		this.commandHandlers.set("app_segment_clean", (msg, id) => this.handleSegmentClean(msg, id));
 		this.commandHandlers.set("load_multi_map", (msg) => this.handleLoadMultiMap(msg));
 		this.commandHandlers.set("set_state", (msg) => this.handleSetState(msg));
+		this.commandHandlers.set("reset_consumable", (msg) => this.handleResetConsumable(msg));
 		this.commandHandlers.set("get_translations", () => this.handleGetTranslations());
 	}
 
@@ -428,6 +436,40 @@ export class socketHandler {
 
 		// Written unacknowledged on purpose: this is the same path a script or the admin UI takes.
 		await this.adapter.setState(stateId, { val: value, ack: false });
+		return { result: "ok" };
+	}
+
+	/**
+	 * Presses one consumable reset button. This is a security boundary of its own: only a state
+	 * the adapter itself published inside the reset folder as a writable boolean button may be
+	 * triggered, and the value is always `true` - the web UI cannot choose it.
+	 */
+	private async handleResetConsumable(message: { duid: string; consumable: string }): Promise<{ result: string }> {
+		const duid = message?.duid;
+		const consumable = message?.consumable;
+
+		if (!duid || !consumable) {
+			throw new Error("Invalid 'reset_consumable' message: requires 'duid' and 'consumable'");
+		}
+		if (!SAFE_PATH_SEGMENT.test(String(duid)) || !SAFE_PATH_SEGMENT.test(String(consumable))) {
+			throw new Error("Invalid 'reset_consumable' message: illegal characters in target");
+		}
+
+		const handler = this.adapter.deviceFeatureHandlers.get(duid);
+		if (!handler) throw new Error(`No handler for DUID ${duid}`);
+
+		const stateId = `Devices.${duid}.${RESET_CONSUMABLES_FOLDER}.${consumable}`;
+		const object = await this.adapter.getObjectAsync(stateId);
+		const common = (object as { common?: Partial<ioBroker.StateCommon> } | null | undefined)?.common;
+
+		if (!object || (object as ioBroker.Object).type !== "state" || common?.type !== "boolean" || common?.role !== "button" || common?.write !== true) {
+			throw new Error(`'${consumable}' is not a consumable reset button of DUID ${duid}`);
+		}
+
+		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'reset_consumable' for ${consumable}`, "info");
+
+		// Unacknowledged on purpose: main.ts turns this write into the reset_consumable request.
+		await this.adapter.setState(stateId, { val: true, ack: false });
 		return { result: "ok" };
 	}
 
