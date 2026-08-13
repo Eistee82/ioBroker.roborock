@@ -16,6 +16,13 @@
 
 This adapter allows you the control, get states, cleaning history and view the map of a Roborock vacuum cleaner which is set up in the Roborock app.
 
+## Documentation
+
+- [English documentation](./docs/en/README.md)
+- [Deutsche Dokumentation](./docs/de/README.md)
+
+The setup instructions, the configuration reference and the complete states reference live there. The reference tables are generated from the source code with `npm run docs`.
+
 - [Requirements](#requirements)
 - [Supported robots](#supported-robots)
 - [Zone cleaning](#zone-cleaning)
@@ -53,6 +60,10 @@ This feature only works when map creation is enabled in the adapter options. Ope
 -->
 ### **WORK IN PROGRESS**
 
+- (Eistee82) Added the missing user documentation `docs/en/README.md` and `docs/de/README.md` with setup instructions (including the cloud free operation with `duid`/`localKey`), a configuration reference, a states reference and an FAQ.
+- (Eistee82) The reference tables of that documentation are generated instead of hand maintained: the model, command and state tables come from the real feature handlers, which are instantiated offline through the model registry, and the configuration tables come from `admin/jsonConfig.json` together with the existing `admin/i18n` translations. Only the parts between the `BEGIN`/`END` marker comments belong to the generator; the prose around them is never touched.
+- (Eistee82) Added a unit test that fails as soon as the generated documentation sections no longer match the code or the admin configuration, so the documentation cannot go stale unnoticed. `npm run docs -- --check` reports the same without writing anything.
+- (Eistee82) Fixed `npm run docs` deleting hand maintained documents: the cleanup step removed every markdown file below `docs/`, which silently dropped `docs/map/Q10_B01_Map_Pipeline.md` on every run. The generator now only deletes files that carry its own generated marker.
 - (Eistee82) Fixed the schedule switch `schedules.<timerId>.enabled` having no effect: writes were never subscribed and were silently dropped. Toggling it now sends `upd_timer` to the robot, and the switch is only acknowledged after the robot confirmed the change.
 - (Eistee82) Fixed the "Load Map" button `floors.<mapFlag>.load` having no effect: like the schedule switch it was never subscribed, so pressing it never reached the floor switch logic.
 - (Eistee82) The `deviceStatus` entries `along_floor`, `green_laser`, `status`, `wind` and `water` are no longer marked writable. They only mirror what the robot reports; the working write surface is the `commands` folder.

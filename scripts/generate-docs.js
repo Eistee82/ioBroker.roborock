@@ -1,6 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { generateUserDocs } = require('./lib/userDocs');
+const { GENERATED_FILE_MARKER, clearGeneratedDocs } = require('./lib/generatedFiles');
+
 const OUTPUT_DIR = path.join(__dirname, '../docs');
 const ROOT_DIR = path.join(__dirname, '..');
 const SCAN_DIRS = [
@@ -80,32 +83,11 @@ function scanFile(filePath) {
     }
 }
 
-function clearDocs(dir) {
-    if (!fs.existsSync(dir)) return;
-
-    const files = fs.readdirSync(dir);
-    for (const file of files) {
-        const filePath = path.join(dir, file);
-        const stat = fs.statSync(filePath);
-
-        if (stat.isDirectory()) {
-            if (file === '_media') continue; // Preserve media folder
-            clearDocs(filePath);
-            if (fs.readdirSync(filePath).length === 0) {
-                fs.rmdirSync(filePath);
-            }
-        } else {
-            if (file === 'README.md') continue; // Preserve main README
-            if (file.endsWith('.md')) {
-                fs.unlinkSync(filePath);
-            }
-        }
-    }
-}
-
 function generateDocs() {
     console.log('📖 Cleaning old documentation...');
-    clearDocs(OUTPUT_DIR);
+    // Only removes what a previous run wrote; hand maintained documents stay.
+    const removed = clearGeneratedDocs(OUTPUT_DIR);
+    console.log(`   ${removed.length} generated file(s) removed.`);
 
     console.log('📖 Scanning directories for documentation tags...');
 
@@ -126,7 +108,7 @@ function generateDocs() {
         const title = baseName.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim();
 
         let fileContent = `# Roborock ${title} Specification\n\n`;
-        fileContent += `> **Auto-Generated**: This document is generated from the source code/tests to ensure 1:1 accuracy with the implementation.\n\n`;
+        fileContent += `${GENERATED_FILE_MARKER}\n\n`;
         fileContent += blocks.join('\n\n---\n\n');
 
         const filePath = path.join(OUTPUT_DIR, filename);
@@ -138,4 +120,32 @@ function generateDocs() {
     });
 }
 
-generateDocs();
+async function main() {
+    const check = process.argv.includes('--check');
+
+    if (!check) {
+        generateDocs();
+    }
+
+    console.log(check ? '📖 Checking generated user documentation...' : '📖 Updating generated user documentation...');
+    const { files, outdated } = await generateUserDocs({ check });
+
+    for (const file of files) {
+        const changed = outdated.includes(file);
+        if (check) {
+            console.log(`   ${changed ? '❌' : '✅'} ${file}${changed ? ' is out of date' : ''}`);
+        } else {
+            console.log(`   ${changed ? '✅' : '➖'} ${file}${changed ? '' : ' (unchanged)'}`);
+        }
+    }
+
+    if (check && outdated.length > 0) {
+        console.error(`\n${outdated.length} user document(s) are out of date. Run "npm run docs" and commit the result.`);
+        process.exit(1);
+    }
+}
+
+main().catch((error) => {
+    console.error(`❌ Documentation generation failed: ${error && error.stack ? error.stack : error}`);
+    process.exit(1);
+});
