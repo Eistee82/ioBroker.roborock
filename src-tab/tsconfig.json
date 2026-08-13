@@ -16,7 +16,6 @@
 		"isolatedModules": true,
 		"useDefineForClassFields": false,
 		"forceConsistentCasingInFileNames": true,
-		"baseUrl": ".",
 		"paths": {
 			"@adapter/*": ["../src/*"],
 			"@i18n/*": ["../admin/i18n/*"]
