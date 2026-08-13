@@ -60,6 +60,8 @@ This feature only works when map creation is enabled in the adapter options. Ope
 -->
 ### **WORK IN PROGRESS**
 
+- (Eistee82) Fixed the water level icons on devices with a vibrating mop. The app keeps two artwork families side by side and picks between them from a model table compiled into its control plugin; the tab now derives the same choice from the model string. Devices such as the S7 MaxV Ultra family previously showed the icons of the other family.
+
 - (Eistee82) The suction, mop and water selectors in the map tab now show the Roborock app's own icons next to each mode. The artwork is not shipped with the adapter: it is the device control plugin the adapter already downloads into the file storage for each user's own account, so nothing is redistributed. The value-to-icon assignment is read out of that plugin rather than guessed - the file names do not follow the mode numbers, `clean0` is Gentle and not Quiet - and any value whose icon is not backed by such a finding stays plain text, because a wrong icon would show a suction level the user did not pick. Mop route Custom, suction Custom and Smart, and the legacy suction values have no icon in the plugin and therefore none here.
 - (Eistee82) The mode icons follow the admin's light/dark choice and switch over the moment the theme changes, without reloading the tab. An installation that never ran against a cloud account has no artwork at all; every icon is verified before it is placed, so a missing file leaves the plain mode name instead of a broken image.
 - (Eistee82) Fixed the map tab flashing a white page in a dark admin while the socket connects, and handed the colour scheme to the browser so the scrollbars it draws itself turn dark with the rest.

@@ -1,0 +1,1461 @@
+{
+	"_meta": {
+		"description": "Karteneditor-Methoden, Nutzlastformate und Enums des Roborock-Gerätesteuerungs-Plugins. Alle Werte sind aus dem Hermes-Bytecode gelesen, nicht geraten. Zeilenangaben beziehen sich auf das Dekompilat, Modulangaben auf die Metro-Modul-ID aus der __d(factory, id, deps)-Registrierung.",
+		"source": {
+			"plugin": "roborock.vacuum.a65_control, pluginLevel 3001, version 5208",
+			"origin": "POST /api/v1/appplugin mit productids:[92]",
+			"file": "index.android.bundle",
+			"bytes": 8161204,
+			"hermesVersion": 96,
+			"sha1": "42FB4C0C7D5C0EF0063F727177B72256901F8DF3",
+			"stringCount": 63321,
+			"decompiled": "_appanalysis/plugins/a65_control_v5208/index.android.bundle.decompiled.js (44772240 Bytes, 1020884 Zeilen)"
+		},
+		"report": "_appanalysis/14-editor-methoden.md",
+		"generated": "2026-08-14",
+		"scope": "Beschreibt, was die Roborock-App tut - nicht zwingend, was der Roboter alles annimmt."
+	},
+
+	"transport": {
+		"summary": "Alle Editor-Methoden sind gewöhnliche JSON-RPC-Aufrufe {id, method, params} an den Roboter. Keine einzige geht per HTTP in die Cloud.",
+		"confidence": "belegt",
+		"sender": {
+			"module": 523,
+			"lines": "227591-227870",
+			"signature": "f(method, params, options) -> Promise"
+		},
+		"paths": [
+			{
+				"condition": "isSpecSupported()",
+				"how": "MIoT-Spec: Base64(JSON.stringify({id, method, params})) -> Service.spec.doAction({did, siid: 7, aiid: 1, in: [payload]})",
+				"lines": "227312-227589, Nutzlast 227330, Aufruf 227390-227391"
+			},
+			{
+				"condition": "sonst",
+				"how": "Service.callMethod(method, params, ...) -> NativeModules.RRPluginSDK.callMethod / callMethodWithObject / callMethodFromLocal",
+				"lines": "227103-227310; Service = Modul 439, callMethod 180390-180474, native Bindung 185233-185234"
+			}
+		],
+		"httpEvidence": {
+			"note": "RRHttpModule.userPost (iotHttpPost) wird im gesamten Bundle genau einmal aufgerufen - für den internen Test-Token /api/v1/auto/s.",
+			"lines": "Definition 179925-179939 / 182446, einziger Aufruf 721390-721392"
+		},
+		"cloudDependency": "Nur die Raumnamen. Sie stammen aus der Host-App (getRoomList, addNewRoomWithName). Der Roboter speichert ausschließlich IDs und Tags."
+	},
+
+	"retryProtocol": {
+		"summary": "Für 13 Methoden hüllt die App die Parameter um und pollt das Ergebnis, sofern die Firmware das unterstützt.",
+		"confidence": "belegt",
+		"featureBit": {
+			"check": "robotNewFeatures & 0x4000000",
+			"bitIndex": 26,
+			"function": "isRPCRetrySupported",
+			"lines": "233822-233851"
+		},
+		"methods": [
+			"save_map",
+			"merge_segment",
+			"split_segment",
+			"name_segment",
+			"set_customize_clean_mode",
+			"load_multi_map",
+			"save_as_multi_map",
+			"set_clean_sequence",
+			"set_lab_status",
+			"set_timer",
+			"set_ignore_identify_area",
+			"set_ignore_carpet_zone",
+			"set_server_timer"
+		],
+		"methodsLine": 231611,
+		"wrapping": {
+			"paramsIsObject": "params.need_retry = 1",
+			"paramsIsArray": "{ data: <array>, need_retry: 1 }",
+			"lines": "227741-227762"
+		},
+		"polling": {
+			"method": "retry_request",
+			"params": {
+				"retry_id": "<id aus der Antwort>",
+				"method": "<ursprüngliche Methode>",
+				"retry_count": "<Zähler ab 1>"
+			},
+			"intervalMs": 2000,
+			"maxAttempts": 8,
+			"trigger": "Antwort { result: 'retry', id: <n> }",
+			"errors": { "reach_max_retry_count": "Zähler >= 8", "retry_id_invalid": "id fehlt in der Retry-Antwort" },
+			"lines": "227656-227740, 227820-227845"
+		}
+	},
+
+	"methods": {
+		"split_segment": {
+			"appFunction": "splitSegment",
+			"methodsEnum": "SplitSegment",
+			"module": 523,
+			"lines": "231139-231154",
+			"params": ["blockID", "x1", "y1", "x2", "y2"],
+			"paramsNote": "Flaches Array aus fünf Zahlen. blockID ist die Segment-ID des zu teilenden Raums; x/y sind Millimeter (Kartenzelle * 50), y gespiegelt über top+height-y. Erzeuger: mapView.getSplitParams().info, Modul 1857, Zeilen 481075-481172.",
+			"limits": { "maxSegments": 32, "refusedAtSegmentCount": 31 },
+			"retry": true,
+			"confidence": "belegt"
+		},
+		"merge_segment": {
+			"appFunction": "mergeSegment",
+			"methodsEnum": "MergeSegment",
+			"module": 523,
+			"lines": "229441-229456",
+			"params": "[segmentId, segmentId, ...]",
+			"paramsNote": "Flaches Array von Segment-IDs, mindestens zwei. Die Segmente müssen zusammenhängen; die App prüft das mit einer Flutfüllung über neighbours() (isMergeValid, Modul 2660, Zeilen 809640-809770).",
+			"retry": true,
+			"confidence": "belegt"
+		},
+		"name_segment": {
+			"appFunction": "nameSegment",
+			"methodsEnum": "NameSegment",
+			"module": 523,
+			"lines": "229473-229488",
+			"params": [
+				{
+					"iotRoomId": "<Cloud-Raum-ID als String>",
+					"robotRoomId": "<Segment-ID>",
+					"robotTagId": "<Raumtyp aus roomTags>"
+				}
+			],
+			"paramsNote": "In der Mi-Home-App heißt das erste Feld miRoomId statt iotRoomId. Der Raumname selbst wird NICHT übertragen - er liegt in der Cloud. Aufbau: Modul 1502, Zeilen 336977-337010 und 337133-337145.",
+			"precondition": "Vorher sync_rooms_info aufrufen (nur bei NewFeatureStrBit.Matter, Bit 67). Danach die Cloud-Zuordnung aktualisieren.",
+			"retry": true,
+			"confidence": "belegt"
+		},
+		"sync_rooms_info": {
+			"appFunction": "syncRoomsInfo",
+			"module": 523,
+			"lines": "231427-231436",
+			"params": [{ "id": "<Cloud-Raum-ID>", "name": "<Raumname>" }],
+			"paramsNote": "Modul 1502, Zeilen 340905-340926. Wird nur gesendet, wenn NewFeatureStrBit.Matter (Bit 67) unterstützt wird.",
+			"retry": false,
+			"confidence": "belegt"
+		},
+		"get_room_mapping": {
+			"appFunction": "getRoomNameMappingInfo",
+			"methodsEnum": "GetRoomMapping",
+			"module": 523,
+			"lines": "228932-228947",
+			"params": [],
+			"confidence": "belegt"
+		},
+		"save_map": {
+			"appFunction": "saveMap",
+			"module": 523,
+			"lines": "229862-229871",
+			"params": "[ <satz>, <satz>, ... ]",
+			"paramsNote": "Array typisierter Sätze. Aufbau in MM.saveMapWallFbzData, Modul 1502, Zeilen 333300-333364: walls.concat(fbz) plus [100, mapFlag] bei Mehrkartenbetrieb plus [200, 0] bei isHome.",
+			"recordTypes": {
+				"0": {
+					"shape": "[0, x0,y0, x1,y1, x2,y2, x3,y3]",
+					"meaning": "Sperrzone (No-Go); denselben Typcode bekommen auch die Klippenzonen aus getEditCliffZones",
+					"label": { "en": "No-Go Zone", "de": "Sperrzone" },
+					"i18nKey": "map_edit_add_forbidden_zone",
+					"lines": "Vergleich 479937, push 479970-479971; Klippenzonen 480015-480031"
+				},
+				"1": {
+					"shape": "[1, xStart,yStart, xEnd,yEnd]",
+					"meaning": "unsichtbare Wand",
+					"label": { "en": "Invisible Wall", "de": "Unsichtbare Wand" },
+					"i18nKey": "map_edit_add_virtual_wall"
+				},
+				"2": {
+					"shape": "[2, x0,y0, x1,y1, x2,y2, x3,y3]",
+					"meaning": "No-Mop-Zone",
+					"label": { "en": "No-Mop Zone", "de": "Wischfreie Zone" },
+					"i18nKey": "map_edit_add_mop_fbz"
+				},
+				"3": {
+					"shape": "[3, x0,y0, x1,y1, x2,y2, x3,y3]",
+					"meaning": "FBZ_TYPE_CLEANING - reinigungsfreie Zone der Garnet-Generation",
+					"i18nKey": "map_edit_add_clean_fbz_garnet",
+					"note": "Der i18n-Schlüssel steht in der Stringtabelle (Index 61589), hat aber in keinem der 23 eingebetteten Wörterbücher einen Wert. Gerätesemantik erschlossen, nicht belegt."
+				},
+				"4": { "shape": "[4, x, y]", "meaning": "KI-Sperrpunkt aus einer Feststeck-Meldung" },
+				"100": { "shape": "[100, mapFlag]", "meaning": "Kartenslot, nur bei Mehrkartenbetrieb" },
+				"200": {
+					"shape": "[200, 0]",
+					"meaning": "nur bei isHome=true; kein Aufrufer im Bundle setzt das. Bedeutung unbekannt."
+				}
+			},
+			"coordinates": {
+				"unit": "Millimeter, ganzzahlig",
+				"formula": "parseInt((50 * wert).toFixed())",
+				"yAxis": "gespiegelt: slamY - y bzw. top + height - y",
+				"cornerOrder": "x0,y0 = (x, y1+h); x1,y1 = (x+w, y1+h); x2,y2 = (x+w, y1); x3,y3 = (x, y1) - danach um -slopeAngle um den Mittelpunkt gedreht",
+				"lines": "Modul 1857, 479278-479385"
+			},
+			"retry": true,
+			"confidence": "belegt",
+			"DANGER": "save_map ersetzt den GESAMTEN Bestand an Wänden und Sperrzonen. Die Nutzlast enthält keine Zonen-ID, keine Operationskennung und keinen Löschsatz; sie wird aus getVisibleWalls() und getVisibleFBZZones() gebildet, also aus dem kompletten sichtbaren Bestand. Wer nur eine neue Zone schickt, löscht alle anderen. Vor jedem save_map den Ist-Bestand lesen, ändern und vollständig zurückschicken."
+		},
+		"save_furnitures": {
+			"appFunction": "saveFurnitureEditZones",
+			"module": 523,
+			"lines": "229842-229851",
+			"params": { "map_flag": "<Karten-ID>", "data": "[ <satz>, ... ]" },
+			"recordTypes": {
+				"1": {
+					"shape": "[1, id, x0,y0, x1,y1, x2,y2, x3,y3, type, subType, direction]",
+					"meaning": "anlegen oder ändern; id = -1 für neu"
+				},
+				"0": { "shape": "[0, id]", "meaning": "löschen" }
+			},
+			"paramsNote": "MM-Hülle Modul 1502, Zeilen 333691-333730. Sätze aus getEditFurnitureParams, Modul 1857, Zeilen 480448-480536. In der Mi-Home-App in Blöcken zu 10 gesendet.",
+			"note": "Anders als save_map ist diese Nutzlast differentiell - sie hat IDs und Operationscodes.",
+			"retry": false,
+			"confidence": "belegt"
+		},
+		"set_clean_sequence": {
+			"appFunction": "setCleanSequence",
+			"module": 523,
+			"lines": "230149-230158",
+			"params": "[segmentId, segmentId, ...]",
+			"paramsNote": "Geordnetes Array von Segment-IDs, identisch zum result von get_clean_sequence. Leeres Array setzt die Reihenfolge zurück; der Roboter bestimmt sie dann selbst.",
+			"retry": true,
+			"confidence": "belegt"
+		},
+		"get_clean_sequence": {
+			"appFunction": "getCleanSequence",
+			"module": 523,
+			"lines": "228375-228384",
+			"params": [],
+			"returns": "result = [segmentId, ...]",
+			"confidence": "belegt"
+		},
+		"set_carpet_clean_mode": {
+			"appFunction": "setCarpetCleanMode",
+			"module": 523,
+			"lines": "230006-230017",
+			"params": { "carpet_clean_mode": "<0..3, siehe carpetCleanMode>" },
+			"retry": false,
+			"confidence": "belegt"
+		},
+		"set_carpet_area": {
+			"appFunction": "saveCarpetAddedZone",
+			"module": 523,
+			"lines": "229782-229791",
+			"params": { "map_index": "<Karten-ID>", "type": 1, "zone_data": "<vom Aufrufer>" },
+			"paramsNote": "MM-Hülle Modul 1502, Zeilen 333557-333610. Der einzige Aufrufer übergibt type fest als 1 (Modul 2661, Zeile 813199). Andere type-Werte sind nicht belegt. Der Aufbau von zone_data wurde nicht bis zum Einzelwert verfolgt.",
+			"retry": false,
+			"confidence": "teilweise belegt"
+		},
+		"set_ignore_carpet_zone": {
+			"appFunction": "saveCarpetIgnoreZone",
+			"module": 523,
+			"lines": "229792-229801",
+			"params": { "map_index": "<Karten-ID>", "zone_data": "<vom Aufrufer>" },
+			"paramsNote": "MM-Hülle Modul 1502, Zeilen 333449-333472.",
+			"retry": true,
+			"confidence": "teilweise belegt"
+		},
+		"set_segment_ground_material": {
+			"appFunction": "saveFloorMaterial",
+			"module": 523,
+			"lines": "229832-229841",
+			"params": { "data": "[[segmentId, material, direction], ...]" },
+			"paramsNote": "Modul 1502, Zeilen 337793-337825 (dort material fest 3) und Modul 2665, Zeile 820051. Der Wertebereich von material ist nicht aufgezählt.",
+			"retry": false,
+			"confidence": "teilweise belegt"
+		},
+		"app_set_beautify_blocks": {
+			"appFunction": "saveEraserZone",
+			"module": 523,
+			"lines": "229822-229831",
+			"params": { "map_index": "<Karten-ID>", "data": "<getEraserParams()>" },
+			"paramsNote": "Aufrufer Modul 2660, Zeilen 806498-806519. Der Aufbau von data wurde nicht aufgelöst.",
+			"retry": false,
+			"confidence": "teilweise belegt"
+		},
+		"manual_segment_map": {
+			"appFunction": "manualSegmentMap",
+			"methodsEnum": "ManualSegmentMap",
+			"module": 523,
+			"lines": "229423-229440",
+			"params": "[] bzw. { map_flag: <Karten-ID> } bei Mehrkartenbetrieb",
+			"paramsNote": "Modul 2660, Zeilen 809171-809187. Automatische Neuaufteilung der Karte in Räume.",
+			"retry": false,
+			"confidence": "belegt"
+		},
+		"start_edit_map": {
+			"appFunction": "startEditMap",
+			"methodsEnum": "StartEditMap",
+			"module": 523,
+			"lines": "231214-231229",
+			"params": [],
+			"confidence": "belegt"
+		},
+		"end_edit_map": {
+			"appFunction": "endEditMap",
+			"methodsEnum": "EndEditMap",
+			"module": 523,
+			"lines": "228217-228232",
+			"params": [],
+			"confidence": "belegt"
+		},
+		"manual_bak_map": {
+			"appFunction": "manualBackupMap",
+			"module": 523,
+			"lines": "229411-229422",
+			"params": { "map_flag": "<Karten-ID>" },
+			"confidence": "belegt"
+		},
+		"app_set_low_space_zones": {
+			"appFunction": "saveLowSpaceZones",
+			"module": 523,
+			"lines": "229852-229861",
+			"params": "durchgereicht",
+			"confidence": "teilweise belegt"
+		},
+		"app_set_door_sill_blocks": {
+			"appFunction": "saveDoorSillBlocks",
+			"module": 523,
+			"lines": "229812-229821",
+			"params": "durchgereicht",
+			"confidence": "teilweise belegt"
+		},
+		"app_set_smart_door_sill": {
+			"appFunction": "saveSmartDoorSills",
+			"module": 523,
+			"lines": "229872-229881",
+			"params": "durchgereicht",
+			"confidence": "teilweise belegt"
+		},
+		"set_ignore_identify_area": {
+			"appFunction": "setIgnoreIdentifyArea",
+			"module": 523,
+			"lines": "230507-230516",
+			"params": "durchgereicht",
+			"retry": true,
+			"confidence": "teilweise belegt"
+		},
+		"set_switch_map_mode": {
+			"appFunction": "setSwitchMapMode",
+			"methodsEnum": "SetSwitchMapMode",
+			"module": 523,
+			"lines": "230805-230822",
+			"params": { "mode": "<Zahl>" },
+			"confidence": "belegt"
+		},
+		"app_update_unsave_map": {
+			"appFunction": "updateUnsaveMap",
+			"module": 523,
+			"lines": "231505-231516",
+			"params": { "update": "<Zahl, siehe unsaveMapHandle>" },
+			"confidence": "belegt"
+		},
+		"reset_map": {
+			"appFunction": "resetMap",
+			"module": 523,
+			"lines": "229635-229644",
+			"params": [],
+			"confidence": "belegt"
+		},
+		"del_map": {
+			"appFunction": "deleteSelectMap",
+			"methodsEnum": "DeleteSelectMap",
+			"module": 523,
+			"lines": "228119-228136",
+			"params": "[<Karten-ID>]",
+			"confidence": "belegt"
+		},
+		"load_multi_map": {
+			"appFunction": "loadMultiMap",
+			"methodsEnum": "LoadMultiMap",
+			"module": 523,
+			"lines": "229393-229410",
+			"params": "[<Karten-ID>]",
+			"retry": true,
+			"confidence": "belegt"
+		},
+		"recover_map": {
+			"appFunction": "recoverMap",
+			"methodsEnum": "RecoverMap",
+			"module": 523,
+			"lines": "229545-229562",
+			"params": "[<Karten-ID>]",
+			"confidence": "belegt",
+			"DANGER": "Warnhinweis der App (recover_map_hint): 'After backup map restoring, all related routines and schedules will need to be recreated.'"
+		},
+		"recover_multi_map": {
+			"appFunction": "recoverMultiMap",
+			"module": 523,
+			"lines": "229563-229574",
+			"params": { "map_flag": "<Karten-ID>" },
+			"confidence": "belegt"
+		},
+		"name_multi_map": {
+			"appFunction": "nameMultiMap",
+			"methodsEnum": "NameMultiMap",
+			"module": 523,
+			"lines": "229457-229472",
+			"params": "durchgereicht",
+			"confidence": "teilweise belegt"
+		},
+		"get_multi_maps_list": {
+			"appFunction": "getMultiMaps",
+			"methodsEnum": "GetMultiMapsList",
+			"module": 523,
+			"lines": "228816-228831",
+			"params": [],
+			"confidence": "belegt"
+		},
+		"set_scenes_segments": {
+			"appFunction": "setScenesSegment",
+			"module": 523,
+			"lines": "230705-230716",
+			"params": { "data": "<vom Aufrufer>" },
+			"confidence": "teilweise belegt"
+		},
+		"set_scenes_zones": {
+			"appFunction": "setScenesZone",
+			"module": 523,
+			"lines": "230717-230728",
+			"params": { "data": "<vom Aufrufer>" },
+			"confidence": "teilweise belegt"
+		},
+		"get_scenes_valid_tids": {
+			"appFunction": "getScenes",
+			"module": 523,
+			"lines": "228948-228957",
+			"returns": "result = [{ tid }, ...]",
+			"note": "Wird nach jeder Kartenänderung abgefragt, um ungültige Routinen zu erkennen.",
+			"confidence": "belegt"
+		},
+		"app_segment_clean_subdivision": {
+			"appFunction": "segmentCleanWithModes",
+			"module": 523,
+			"lines": "229898-229907",
+			"params": {
+				"auto_dustCollection": "0|1",
+				"auto_dry": "0|1",
+				"is_new_clean": "0|1",
+				"clean_order_mode": "0 wenn isFCC(), sonst 1",
+				"repeat": "<Anzahl Durchgänge>",
+				"data": [
+					{
+						"id": "<Segment-ID>",
+						"need_wash": 1,
+						"wash_mode": 2,
+						"segment": "<Segment-ID>",
+						"fan_power": "<siehe fanPower>",
+						"water_box_mode": "<siehe waterBoxMode>",
+						"mop_mode": "<siehe mopMode>",
+						"repeat": "<Anzahl>"
+					}
+				]
+			},
+			"paramsNote": "Aufbau Modul 2500, Zeilen 684681-684710; Modusfelder aus MM.getSegmentCleanMode, Modul 1502, Zeilen 339129-339152; Rahmenfelder aus getExactZoneModesInfo, Modul 2500, Zeilen 676006-676012.",
+			"confidence": "belegt"
+		},
+		"app_zoned_clean_subdivision": {
+			"appFunction": "zoneCleanWithModes",
+			"module": 523,
+			"lines": "231569-231578",
+			"params": "wie app_segment_clean_subdivision",
+			"confidence": "belegt"
+		}
+	},
+
+	"enums": {
+		"carpetCleanMode": {
+			"field": "carpet_clean_mode",
+			"method": "set_carpet_clean_mode / get_carpet_clean_mode",
+			"module": 527,
+			"line": 238213,
+			"confidence": "belegt",
+			"values": {
+				"0": {
+					"name": "CarpetAvoidMode",
+					"i18nKey": "carpet_clean_mode_setting_title1",
+					"en": "Avoid",
+					"de": "Vermeiden",
+					"pag": "carpet_mode_avoid"
+				},
+				"1": {
+					"name": "CarpetSelfAdaptionMode",
+					"i18nKey": "carpet_clean_mode_setting_title2",
+					"en": "Rise",
+					"de": "Anheben",
+					"pag": "carpet_mode_adapt"
+				},
+				"2": {
+					"name": "CarpetIgnoreMode",
+					"i18nKey": "carpet_clean_mode_setting_title3",
+					"en": "Ignore",
+					"de": "Ignorieren",
+					"pag": "carpet_mode_ignore"
+				},
+				"3": {
+					"name": "CarpetDynamicAdaptionMode",
+					"i18nKey": "carpet_clean_mode_setting_title4",
+					"en": "Dynamic Lift",
+					"de": "Dynamischer Hub",
+					"pag": "carpet_mode_adapt"
+				}
+			},
+			"note": "Die Grafik carpet_mode_cross.pag gehört NICHT zu diesem Enum, sondern zum eigenen Schalter app_set_cross_carpet_cleaning_status."
+		},
+		"fanPower": {
+			"field": "fan_power",
+			"module": 1683,
+			"line": 367445,
+			"enumName": "CleanSettingMode",
+			"confidence": "belegt",
+			"values": {
+				"101": {
+					"name": "SilentClean",
+					"i18nKey": "localization_strings_Common_Protocol_0",
+					"en": "Quiet",
+					"de": "Leise"
+				},
+				"102": {
+					"name": "StandardClean",
+					"i18nKey": "localization_strings_Common_Protocol_1",
+					"en": "Balanced",
+					"de": "Normal"
+				},
+				"103": {
+					"name": "StrongClean",
+					"i18nKey": "localization_strings_Common_Protocol_2",
+					"en": "Turbo",
+					"de": "Turbo"
+				},
+				"104": {
+					"name": "MaxClean",
+					"i18nKey": "localization_strings_Common_Protocol_3",
+					"en": "Max",
+					"de": "Max."
+				},
+				"105": {
+					"name": "NoClean",
+					"i18nKey": "localization_strings_Common_Protocol_4",
+					"en": "Gentle",
+					"de": "Schonend",
+					"note": "Intern 'NoClean'/'CleanModeZero' - aber der Regler zeigt 'Gentle'/'Schonend', nicht 'Aus'."
+				},
+				"106": { "name": "CustomCleanMode", "note": "Marker: raumindividuell eingestellt" },
+				"108": {
+					"name": "MaxPlus",
+					"i18nKey": "clean_mode_max_plus",
+					"en": "MAX+",
+					"de": "MAX+",
+					"condition": "isNonePureCleanMopWithMaxPlus()"
+				},
+				"110": { "name": "SmartCleanMode", "note": "SmartPlan" }
+			},
+			"legacyPercentMapping": {
+				"38": 101,
+				"60": 102,
+				"75": 103,
+				"100": 104,
+				"source": "fixCleanMode, Modul 565, Zeile 242821"
+			},
+			"sliderOrder": [105, 101, 102, 103, 104, 108],
+			"notInThisBundle": [107, 109]
+		},
+		"waterBoxMode": {
+			"field": "water_box_mode",
+			"module": 1683,
+			"line": 367449,
+			"enumName": "WaterSettingMode",
+			"confidence": "belegt",
+			"values": {
+				"200": { "name": "NoWater", "i18nKey": "debug_info_close", "en": "Off", "de": "Aus" },
+				"201": {
+					"name": "LowWater",
+					"i18nKey": "water_box_small",
+					"en": "Low",
+					"de": "Niedrig",
+					"shakeMopI18nKey": "tanos_s_mop_mode_weak",
+					"shakeMopEn": "Mild",
+					"shakeMopDe": "Sanft"
+				},
+				"202": {
+					"name": "MediumWater",
+					"i18nKey": "water_box_middle",
+					"en": "Medium",
+					"de": "Mittel",
+					"shakeMopI18nKey": "tanos_s_mop_mode_middle",
+					"shakeMopEn": "Standard",
+					"shakeMopDe": "Standard"
+				},
+				"203": {
+					"name": "HighWater",
+					"i18nKey": "water_box_big",
+					"en": "High",
+					"de": "Hoch",
+					"shakeMopI18nKey": "tanos_s_mop_mode_strong",
+					"shakeMopEn": "Intense",
+					"shakeMopDe": "Intensiv"
+				},
+				"204": { "name": "CustomWaterMode", "note": "Marker: raumindividuell eingestellt" },
+				"207": {
+					"name": "Custom",
+					"i18nKey": "localization_strings_Setting_Timer_Common_4",
+					"en": "Custom",
+					"de": "Benutzerdefiniert",
+					"condition": "isCustomWaterBoxDistanceSupported()"
+				},
+				"208": {
+					"name": "MaxWater",
+					"i18nKey": "tanos_s_mop_mode_max",
+					"en": "Extreme",
+					"de": "Extrem",
+					"condition": "Schwing-Mop und NewFeatureStrBit.MopShakeWaterMax (Bit 45)"
+				},
+				"209": { "name": "SmartWaterMode", "note": "SmartPlan" }
+			},
+			"notInThisBundle": [205, 206]
+		},
+		"mopMode": {
+			"field": "mop_mode",
+			"module": 1683,
+			"line": 367452,
+			"enumName": "MopSettingMode",
+			"confidence": "belegt",
+			"values": {
+				"300": {
+					"name": "Normal",
+					"i18nKey": "tanos_s_mop_mode_general_frag",
+					"en": "Standard",
+					"de": "Standard"
+				},
+				"301": {
+					"name": "Intensive",
+					"i18nKey": "tanos_s_mop_mode_fine_frag",
+					"en": "Deep",
+					"de": "Gründlich"
+				},
+				"302": { "name": "CustomMopMode", "note": "Marker: raumindividuell eingestellt" },
+				"303": {
+					"name": "SlowIntensive",
+					"i18nKey": "mop_method_careful_slow",
+					"en": "Deep+",
+					"de": "Gründlich+",
+					"condition": "isCornerCleanModeSupported()"
+				},
+				"304": {
+					"name": "Fast",
+					"i18nKey": "clean_route_fast_mode_title",
+					"en": "Fast",
+					"de": "Schnell",
+					"condition": "isCleanRouteFastModeSupported()"
+				},
+				"305": {
+					"name": "CleanRouteDeepSlowPearlMode",
+					"i18nKey": "mop_method_careful_slow",
+					"en": "Deep+",
+					"de": "Gründlich+",
+					"condition": "isCleanRouteDeepSlowPlusSupported()"
+				},
+				"306": { "name": "SmartMopMode", "note": "SmartPlan" }
+			},
+			"note": "303 und 305 teilen sich den Anzeigetext; welcher Wert gesendet wird, entscheidet die Firmware-Fähigkeit."
+		},
+		"garnetMopMode": {
+			"module": 1683,
+			"line": 367454,
+			"confidence": "belegt",
+			"values": { "1": "Normal", "2": "Wet", "3": "Dry" }
+		},
+		"inCleaning": {
+			"field": "in_cleaning",
+			"module": 522,
+			"lines": "222455-222468 (Codemap), 222926-222931 (Anwendung)",
+			"confidence": "belegt",
+			"values": {
+				"0": "None",
+				"1": "Global_Clean",
+				"2": "Zone_Clean",
+				"3": "Segment_Clean",
+				"4": "Quick_Build_Map"
+			},
+			"note": "Zweite unabhängige Quelle für 2 = Zone_Clean und 3 = Segment_Clean. Dieses Bundle enthält keinen widersprechenden Kommentar."
+		},
+		"backType": {
+			"field": "back_type",
+			"module": 522,
+			"lines": "222474-222497 (Texte), 222903-222923 (Anwendung)",
+			"confidence": "belegt",
+			"condition": "nur wenn state == BACK_TO_DOCK_WASHING_DUSTER",
+			"values": {
+				"1": "backdock_substate_washing_mop",
+				"2": "backdock_substate_setup_mop",
+				"3": "backdock_substate_teardown_mop",
+				"4": "backdock_substate_collecting_dust"
+			}
+		},
+		"washStatusLayout": {
+			"field": "wash_status",
+			"module": 522,
+			"lines": "223610-223620",
+			"confidence": "belegt",
+			"layout": { "washingTaskStatus": "wash_status & 0xFF", "washingMode": "wash_status >> 8" },
+			"note": "Bestätigt die Zerlegung aus roborock_vacuum_enums.json aus zweiter Quelle. Der Wertebereich des unteren Bytes wird auch hier nirgends aufgezählt."
+		},
+		"dssLayout": {
+			"field": "dss",
+			"module": 522,
+			"lines": "223549-223608",
+			"confidence": "belegt",
+			"fields": {
+				"isAMReady": "(dss & 3) == 2",
+				"clearWaterBoxStatus": "(dss >> 2) & 3",
+				"dirtyWaterBoxStatus": "(dss >> 4) & 3",
+				"dustBagStatus": "(dss >> 6) & 3",
+				"waterBoxFilterStatus": "(dss >> 8) & 3",
+				"cleanFluidStatus": "(dss >> 10) & 3",
+				"hatchDoorStatus": "(dss >> 12) & 7",
+				"dockCoolFanStatus": "(dss >> 15) & 3"
+			}
+		},
+		"furnitureType": {
+			"module": 1507,
+			"line": 342649,
+			"confidence": "belegt",
+			"values": {
+				"0": "FT_UNKNOWN",
+				"43": "FT_TVCABINET",
+				"44": "FT_TOILET",
+				"45": "FT_BED",
+				"46": "FT_SOFA",
+				"47": "FT_DINNERTABLE",
+				"48": "FT_TEATABLE",
+				"49": "FT_SHOECABINET",
+				"50": "FT_NIGHTSTAND",
+				"51": "FT_WARDROBE",
+				"52": "FT_OPENCATTOILET",
+				"53": "FT_CATTOILET",
+				"54": "FT_PETCAGE",
+				"55": "FT_PETWATERLOO",
+				"56": "FT_PETBOWL",
+				"57": "FT_FLOORMIRROR",
+				"58": "FT_CATTREE"
+			},
+			"aiRecognizable": [43, 44, 45, 46, 47, 52, 53, 54, 55, 56, 58]
+		},
+		"roomTags": {
+			"field": "robotTagId (name_segment)",
+			"module": 1507,
+			"lines": "343503-343737",
+			"confidence": "belegt",
+			"values": {
+				"1": {
+					"key": "bedroom",
+					"i18nKey": "map_edit_zone_tag_bedroom",
+					"en": "Bedroom",
+					"de": "Schlafzimmer",
+					"defaultFanPower": 101,
+					"defaultWaterBoxMode": 201
+				},
+				"2": {
+					"key": "masterbedroom",
+					"i18nKey": "map_edit_zone_tag_masterbedroom",
+					"en": "Master bedroom",
+					"de": "Hauptschlafzimmer",
+					"defaultFanPower": 101,
+					"defaultWaterBoxMode": 201
+				},
+				"3": {
+					"key": "geustbedroom",
+					"i18nKey": "map_edit_zone_tag_geustbedroom",
+					"en": "Guest bedroom",
+					"de": "Gästezimmer",
+					"defaultFanPower": 101,
+					"defaultWaterBoxMode": 201
+				},
+				"6": {
+					"key": "livingroom",
+					"i18nKey": "map_edit_zone_tag_livingroom",
+					"en": "Living room",
+					"de": "Wohnzimmer",
+					"defaultFanPower": 102,
+					"defaultWaterBoxMode": 202
+				},
+				"7": {
+					"key": "balcony",
+					"i18nKey": "map_edit_zone_tag_balcony",
+					"en": "Balcony",
+					"de": "Balkon",
+					"defaultFanPower": 102,
+					"defaultWaterBoxMode": 202
+				},
+				"8": {
+					"key": "vestibule",
+					"i18nKey": "map_edit_zone_tag_vestibule",
+					"en": "Corridor",
+					"de": "Flur",
+					"defaultFanPower": 103,
+					"defaultWaterBoxMode": 202
+				},
+				"9": {
+					"key": "study",
+					"i18nKey": "map_edit_zone_tag_study",
+					"en": "Study",
+					"de": "Arbeitszimmer",
+					"defaultFanPower": 102,
+					"defaultWaterBoxMode": 202
+				},
+				"10": {
+					"key": "entryway",
+					"i18nKey": "map_edit_zone_tag_entryway",
+					"en": "Hall",
+					"de": "Flur",
+					"defaultFanPower": 102,
+					"defaultWaterBoxMode": 202
+				},
+				"12": {
+					"key": "other",
+					"defaultFanPower": 102,
+					"defaultWaterBoxMode": 202,
+					"note": "nicht in der Auswahlliste sichtbar"
+				},
+				"13": {
+					"key": "diningroom",
+					"i18nKey": "map_edit_zone_tag_diningroom",
+					"en": "Dining room",
+					"de": "Esszimmer",
+					"defaultFanPower": 103,
+					"defaultWaterBoxMode": 203
+				},
+				"14": {
+					"key": "kitchen",
+					"i18nKey": "map_edit_zone_tag_kitchen",
+					"en": "Kitchen",
+					"de": "Küche",
+					"defaultFanPower": 103,
+					"defaultWaterBoxMode": 203
+				},
+				"15": {
+					"key": "toilet",
+					"i18nKey": "map_edit_zone_tag_toilet",
+					"en": "Bathroom",
+					"de": "Badezimmer",
+					"defaultFanPower": 102,
+					"defaultWaterBoxMode": 203
+				}
+			},
+			"displayOrder": [1, 6, 14, 13, 15, 7, 2, 3, 8, 9, 10],
+			"unused": [0, 4, 5, 11]
+		},
+		"editAction": {
+			"module": 1835,
+			"line": 463612,
+			"confidence": "belegt",
+			"values": {
+				"None": "none",
+				"Merge": "merge",
+				"Split": "split",
+				"Name": "name",
+				"Eraser": "eraser",
+				"Floor": "floor",
+				"Furniture": "furniture",
+				"Custom": "custom",
+				"Order": "order",
+				"AddCarpet": "addCarpet",
+				"Ignore": "ignoreCarpet",
+				"Forbidden": "actionForbidden",
+				"DoorSill": "actionDoorSill",
+				"LowSpace": "actionLowSpace"
+			}
+		},
+		"menuType": {
+			"module": 1835,
+			"line": 463610,
+			"confidence": "belegt",
+			"values": [
+				"menu_forbidden",
+				"menu_zone",
+				"menu_mode",
+				"menu_mode_smart",
+				"menu_order",
+				"menu_order_smart",
+				"menu_carpet",
+				"menu_rotate",
+				"Menu_Floor",
+				"Menu_Ground",
+				"Menu_DoorSill",
+				"Menu_LowSpace"
+			]
+		},
+		"fbzTypeInternal": {
+			"module": 1507,
+			"line": 342561,
+			"confidence": "belegt",
+			"note": "Interne UI-Typen; die Zuordnung zum Drahtformat steht unter methods.save_map.recordTypes.",
+			"values": {
+				"FBZ_TYPE_REGULAR": "fbz_type_regular",
+				"FBZ_TYPE_MOPPING": "fbz_type_mopping",
+				"FBZ_TYPE_CLEANING": "fbz_type_cleaning",
+				"FBZ_TYPE_CARPET": "fbz_type_carpet",
+				"RECT_TYPE_CARPET": "rect_type_carpet",
+				"RECT_TYPE_FBMARK": "rect_type_fbmark"
+			}
+		},
+		"cleanModeTabType": {
+			"module": 565,
+			"line": 243930,
+			"confidence": "belegt",
+			"values": { "NONE": 0, "SMART": 1, "PURE_MOP": 2, "PURE_CLEAN": 3, "CLEAN_MOP": 4, "CUSTOM": 5 }
+		},
+		"cleanTypeCode": {
+			"line": 379691,
+			"confidence": "belegt",
+			"values": {
+				"CLEAN_TYPE_ALL_ZONE": 1,
+				"CLEAN_TYPE_DRAW_ZONE": 2,
+				"CLEAN_TYPE_SELECT_ZONE": 3,
+				"CLEAN_TYPE_QUICK_BUILD": 4,
+				"CLEAN_TYPE_VIDEO_PATROL": 5,
+				"CLEAN_TYPE_PET_PATROL": 6
+			}
+		},
+		"unsaveMapReason": {
+			"module": 522,
+			"line": 222516,
+			"confidence": "belegt",
+			"values": {
+				"0": "Saved",
+				"1": "ChargerOffset",
+				"2": "Relocation",
+				"3": "ReachMaxFloorCount",
+				"4": "Unfinished",
+				"5": "DidNotStartFromCharger",
+				"6": "DidNotReturnToCharger",
+				"7": "MapSaveNoOpen",
+				"8": "MapMess"
+			}
+		},
+		"unsaveMapHandle": {
+			"module": 522,
+			"line": 222518,
+			"confidence": "belegt",
+			"values": { "0": "Ignore", "1": "Update", "2": "Load", "3": "Done" }
+		},
+		"mapStatus": {
+			"module": 522,
+			"lines": "222497-222509",
+			"confidence": "belegt",
+			"values": { "0": "None", "1": "Has_WithoutSegments", "3": "Has_WithSegments" }
+		},
+		"specialInfoType": {
+			"module": 522,
+			"line": 222513,
+			"confidence": "belegt",
+			"values": {
+				"1": "Timer",
+				"2": "DryRemainTime",
+				"3": "PureClean",
+				"4": "PureMop",
+				"5": "WaitCharge",
+				"6": "UnsaveMapReason",
+				"7": "HasNewMap",
+				"8": "CleanMopWithCleanRouteFast",
+				"9": "MaxPlus"
+			}
+		},
+		"washTowelMode": {
+			"module": 527,
+			"line": 238431,
+			"confidence": "belegt",
+			"values": { "0": "Quick", "1": "Daily", "2": "Deep", "8": "SuperDeep", "10": "Smart" }
+		},
+		"backWashMode": {
+			"module": 527,
+			"line": 238470,
+			"confidence": "belegt",
+			"values": { "0": "Smart", "1": "Custom", "2": "Level" }
+		},
+		"hotWashMode": {
+			"module": 527,
+			"line": 238497,
+			"confidence": "belegt",
+			"values": { "0": "Normal", "1": "Warm", "2": "Hot" }
+		},
+		"dustCollectionMode": {
+			"module": 527,
+			"line": 238392,
+			"confidence": "belegt",
+			"values": { "0": "Smart", "1": "Quick", "2": "Daily", "3": "Strong", "4": "Max" }
+		},
+		"avoidMode": {
+			"module": 527,
+			"line": 238472,
+			"confidence": "belegt",
+			"values": { "0": "None", "1": "Normal", "2": "Sensitive" }
+		},
+		"moppingType": {
+			"module": 1507,
+			"line": 342565,
+			"confidence": "belegt",
+			"values": { "0": "BOTH_BOTH", "1": "NONE", "2": "PURE", "6": "BOTH_IN_MOP", "7": "BOTH_IN_CLEAN" }
+		},
+		"newFeatureStrBit": {
+			"module": 525,
+			"line": 231849,
+			"confidence": "belegt",
+			"values": {
+				"TwoKeyRealTimeVideo": 32,
+				"TwoKeyRTVInCharging": 33,
+				"DirtyReplenishClean": 34,
+				"AvoidCollisionMode": 36,
+				"VoiceControl": 37,
+				"NewEndpoint": 38,
+				"CornerMopStrech": 40,
+				"HotWashTowel": 41,
+				"FloorDirCleanAnyTime": 42,
+				"PetSuppliesDeepClean": 43,
+				"MopShakeWaterMax": 45,
+				"ExactCustomMode": 47,
+				"CarpetCustomClean": 49,
+				"PetSnapshot": 50,
+				"CustomCleanModeCount": 51,
+				"NewAIRecognition": 52,
+				"AutoCollection2": 53,
+				"RightBrushStretch": 54,
+				"SmartCleanModeSet": 55,
+				"DirtyObjectDetect": 56,
+				"NoNeedCarpetPressSet": 57,
+				"VoiceControlLed": 58,
+				"WaterLeakCheck": 60,
+				"MinBattery15ToCleanTask": 62,
+				"GapDeepClean": 63,
+				"ObjectDetectCheck": 64,
+				"IdentifyRoom": 66,
+				"Matter": 67,
+				"workdayHoliday": 69,
+				"CleanDirectStatus": 70,
+				"MapEraser": 71,
+				"OptimizeBattery": 72,
+				"ActivateVideoChargingAndStandby": 73,
+				"CarpetLongHaired": 75,
+				"CleanHistoryTimeLine": 76,
+				"MaxZoneOpened": 77,
+				"ExhibitionFunction": 78,
+				"LdsLifting": 79,
+				"AutoTearDownMop": 80,
+				"SamllSideMop": 81,
+				"SupportSideBrushUpDown": 82,
+				"DryIntervalTimer": 83,
+				"UVCSterilize": 84,
+				"MidwayBackToDock": 85,
+				"SupportMainBrushUpDown": 86,
+				"EggDanceMode": 87
+			}
+		}
+	},
+
+	"limits": {
+		"module": 1507,
+		"confidence": "belegt",
+		"MAX_BLOCK_NO": { "value": 32, "line": 342533, "meaning": "höchste Segment-ID / maximale Raumzahl" },
+		"MAX_COUNT_WALL_OR_FBZ": {
+			"value": 10,
+			"line": 342527,
+			"meaning": "je Zonenart (Sperrzone, No-Mop, Clean-FBZ) und für Wände"
+		},
+		"MAX_COUNT_ZONE_RECT": { "value": 5, "line": 342528 },
+		"MAX_COUNT_EXTRA_ZONE": { "value": 1, "line": 342529 },
+		"MAX_FURNITURE_EDIT_MIAPP": { "value": 10, "line": 342555 },
+		"DEFAULT_FBZ_WIDTH": { "value": 10, "line": 342521 },
+		"DEFAULT_FBZ_HEIGHT": { "value": 10, "line": 342522 },
+		"DOCK_FORBIDDEN_R": { "value": 10, "line": 342523 },
+		"ROBOT_FORBIDDEN_R": { "value": 5, "line": 342525 }
+	},
+
+	"warnings": {
+		"saveMapReplacesEverything": {
+			"claim": "save_map verwirft alle Zonen und Wände, die nicht mitgeschickt werden.",
+			"status": "BESTÄTIGT",
+			"evidence": [
+				"save_map reicht sein einziges Argument unverändert durch (Modul 523, Zeilen 229862-229871).",
+				"Das Argument ist walls.concat(fbz) plus Marker - ohne Zonen-ID, ohne Operationskennung, ohne Löschsatz (Modul 1502, Zeilen 333320-333347).",
+				"walls und fbz stammen aus getVisibleWalls() und getVisibleFBZZones(), also aus dem kompletten sichtbaren Bestand (Modul 1857, Zeilen 480819/479911; Modul 1938, Zeilen 532122/532453).",
+				"Gegenprobe: save_furnitures HAT Operationscodes und IDs (Modul 1857, Zeilen 480473-480532). Roborock nutzt differentielle Nutzlasten dort, wo es gewollt ist."
+			],
+			"consequence": "Vor jedem save_map den vollständigen Ist-Bestand lesen, die Änderung darauf anwenden und alles zurückschicken."
+		},
+		"splitMergeInvalidatesSettings": {
+			"claim": "Teilen und Zusammenlegen entwerten zugehörige Einstellungen und Zeitpläne.",
+			"status": "BESTÄTIGT",
+			"appText": {
+				"i18nKey": "map_edit_segment_prompt",
+				"en": "After combining or dividing rooms, all related settings and schedules become invalid.",
+				"de": "Nach dem Kombinieren oder Aufteilen von Räumen werden alle zugehörigen Einstellungen und Zeitpläne ungültig."
+			},
+			"evidence": [
+				"Der Text wird von showSegmentEditPrompt() gesetzt (Modul 2660, Zeilen 808046-808094).",
+				"Ausgelöst über checkSegmentEdit() (Modul 2660, Zeilen 807789-807817), sobald hasCustomMode(), hasCustomOrder() oder hasSegmentTimer() zutrifft.",
+				"Segment-IDs ändern sich: das Ereignis RoomIdDidChanged liefert [{oldId, newId}, ...] (Modul 2662, Zeilen 818148-818169; Modul 2665, Zeilen 820174-820194), und die App rechnet gespeicherte Raum-IDs darüber um (Modul 2665, Zeilen 820013-820048).",
+				"Nach Erfolg feuert notifyMapZoneEdited() die Ereignisse MapSegmentsDidChange, SegmentCustomModeDidChange und CleanSequenceDidChange (Modul 2660, Zeilen 808870-808916) und syncSmartSceneIfNeeded() prüft die Routinen über get_scenes_valid_tids nach (Modul 1835, Zeilen 460851-460975)."
+			],
+			"consequence": "Nach split_segment/merge_segment die raumbezogenen Modi (get_customize_clean_mode), die Reinigungsreihenfolge (get_clean_sequence), die Raumzuordnung (get_room_mapping) und die Zeitpläne neu einlesen."
+		},
+		"relatedAppTexts": {
+			"recover_map_hint": {
+				"en": "After backup map restoring, all related routines and schedules will need to be recreated.",
+				"de": "Nach dem Wiederherstellen der Ersatzkarte müssen alle damit verbundenen Programme und Zeitpläne neu erstellt werden."
+			},
+			"map_edit_map_edit_reset_remind": {
+				"en": "After a map is deleted, any scheduling related to the map will be invalid.",
+				"de": "Nach dem Löschen einer Karte werden alle Pläne im Zusammenhang mit der Karte ungültig."
+			},
+			"command_invalid_title": {
+				"en": "The map has changed and the routines are invalid. Please edit and enable it.",
+				"de": "Die Karte hat sich geändert und die Programme sind ungültig. Bitte bearbeite und aktiviere sie."
+			},
+			"map_edit_map_lab_close_warn": { "en": "If disabled, all current maps and settings will be deleted." },
+			"smart_scene_edit_switch_map_warning_title": {
+				"en": "Changing the map will delete all Routines and Schedules."
+			}
+		}
+	},
+
+	"correctionsToVacuumEnums": {
+		"_note": "Abweichungen zu lib/protocols/roborock_vacuum_enums.json und src/lib/features/vacuum/vacuumConstants.ts. Hier nur dokumentiert - die Zieldateien wurden bewusst nicht angefasst.",
+		"roborock_vacuum_enums.json": [
+			{
+				"path": "fanPower.notInBundle",
+				"was": [101, 103, 104, 107],
+				"shouldBe": [107],
+				"reason": "101, 103 und 104 sind in diesem Bundle als CleanSettingMode belegt (Modul 1683, Zeile 367445) und über fixCleanMode (Zeile 242821) zweitbelegt."
+			},
+			{
+				"path": "waterBoxMode.notInBundle",
+				"was": [203, 205, 206, 208],
+				"shouldBe": [205, 206],
+				"reason": "203 = HighWater und 208 = MaxWater sind als WaterSettingMode belegt (Modul 1683, Zeile 367449)."
+			},
+			{
+				"path": "fanPower.values.105",
+				"was": "vacuuming off",
+				"shouldBe": "Anzeigetext Gentle / Schonend ergänzen",
+				"reason": "Der Regler beschriftet 105 mit localization_strings_Common_Protocol_4 = Gentle/Schonend."
+			},
+			{
+				"path": "inCleaning.warning",
+				"was": "Widerspruch im Quellcode, vor Verwendung am Gerät prüfen",
+				"shouldBe": "abgeschwächt",
+				"reason": "Dieses Bundle bildet 2 -> Zone_Clean und 3 -> Segment_Clean ab und enthält keinen widersprechenden Kommentar - zweite unabhängige Bestätigung."
+			}
+		],
+		"vacuumConstants.ts": [
+			{ "line": 183, "was": "208: 'Custom'", "shouldBe": "208: 'Extreme' (MaxWater)", "severity": "falsch" },
+			{ "line": 183, "was": "209: 'Custom'", "shouldBe": "209: 'Smart' (SmartWaterMode)", "severity": "falsch" },
+			{
+				"line": 183,
+				"was": "202: 'Moderate'",
+				"shouldBe": "'Medium' bzw. 'Standard'",
+				"severity": "Beschriftung; 'Moderate' kommt in keiner Variante vor"
+			},
+			{
+				"lines": "149, 181, 524",
+				"was": "105: 'Off'",
+				"shouldBe": "'Gentle'",
+				"severity": "Beschriftung irreführend, Wert korrekt"
+			},
+			{
+				"line": 529,
+				"was": "water_box_mode ohne 207/208/209",
+				"shouldBe": "207 Custom, 208 Extreme, 209 Smart ergänzen",
+				"severity": "unvollständig"
+			},
+			{
+				"line": 184,
+				"was": "mop_mode ohne 302/305/306",
+				"shouldBe": "302 Custom-Marker, 305 Deep+ (Pearl), 306 Smart ergänzen",
+				"severity": "unvollständig"
+			}
+		]
+	},
+
+	"notProven": [
+		"fan_power 107 und 109 - kommen in diesem Bundle weder als Konstante noch in einer Reglerliste noch in einem Objektliteral vor.",
+		"water_box_mode 205 und 206 - dito.",
+		"Wertebereich des unteren Bytes von wash_status (washingTaskStatus).",
+		"seq_type - weder in der Stringtabelle (63321 Einträge) noch im Dekompilat.",
+		"Rückgabeformate von split_segment / merge_segment / save_map - die App wertet nur response.result bzw. response.data.error.code aus und liest die Karte danach neu.",
+		"Gerätesemantik von save_map-Satztyp 3 (FBZ_TYPE_CLEANING). Interner Name, Referenzfeld, Erzeuger und Button-Handler sind belegt; der i18n-Schlüssel map_edit_add_clean_fbz_garnet hat in keinem der 23 Wörterbücher einen Wert.",
+		"type-Werte von set_carpet_area außer 1.",
+		"Aufbau von zone_data bei set_carpet_area und set_ignore_carpet_zone.",
+		"Satzstruktur der data-Felder von app_set_low_space_zones, app_set_door_sill_blocks, app_set_smart_door_sill, set_ignore_identify_area und app_set_beautify_blocks.",
+		"Bedeutung von [200, 0] in save_map - kein Aufrufer im Bundle setzt isHome=true.",
+		"Ob Teppichzonen über save_map mitgeführt werden. FBZ_TYPE_CARPET existiert im Enum, wird in getFBZParams aber in keinen Satztyp übersetzt. Erschlossen: nein."
+	],
+
+	"localization": {
+		"strings_json_present": false,
+		"note": "Dieses ZIP enthält keine strings.json. Die Übersetzungen liegen als Objektliterale im Bytecode - 23 Wörterbücher mit je rund 1800 Schlüsseln, ein Metro-Modul je Sprache.",
+		"modules": {
+			"488": "zh-CN",
+			"489": "en",
+			"490": "zh-TW",
+			"491": "zh-HK",
+			"492": "zh-MO",
+			"493": "ko",
+			"494": "ru",
+			"495": "ja",
+			"496": "de",
+			"497": "es",
+			"498": "fr",
+			"499": "it",
+			"500": "he",
+			"501": "id",
+			"502": "pl",
+			"503": "ro",
+			"504": "th",
+			"505": "uk",
+			"506": "vi",
+			"507": "pt",
+			"508": "ms",
+			"509": "tr",
+			"510": "es-LA",
+			"511": "ar"
+		},
+		"lookupTool": "_appanalysis/plugins/_tools/i18n.js"
+	},
+
+	"modeIcons": {
+		"_note": "Zuordnung Enum-Wert -> Original-Icon der Roborock-App. Die Reglerlisten tragen neben 'strength' die Theme-Felder; das Theme löst sie auf Asset-Dateinamen auf. Aufgelöst mit _appanalysis/plugins/_tools/themeassets.js.",
+		"themeModules": { "light": 741, "dark": 1121 },
+		"themeDepsLine": { "light": 303871, "dark": 313716 },
+		"confidence": "belegt",
+		"assetSuffix": "_light bzw. _dark je nach Theme-Modul; Feldnamen sind in beiden identisch",
+		"fanPower": {
+			"indexWarning": "Der Icon-Index ist NICHT die Saugstufen-Reihenfolge - Index 0 ist 105 (Gentle), nicht die kleinste Stufe.",
+			"themeLines": { "slider": "302061-302105", "tile": "302205-302249" },
+			"map": {
+				"105": {
+					"index": 0,
+					"slider": "mode_setting_clean0_{normal,selected}",
+					"tile": "ic_home_mode_clean0",
+					"tileSmall": "ic_home_mode_clean0_small",
+					"line": 243042
+				},
+				"101": {
+					"index": 1,
+					"slider": "mode_setting_clean1_{normal,selected}",
+					"tile": "ic_home_mode_clean1",
+					"tileSmall": "ic_home_mode_clean1_small",
+					"line": 243062
+				},
+				"102": {
+					"index": 2,
+					"slider": "mode_setting_clean2_{normal,selected}",
+					"tile": "ic_home_mode_clean2",
+					"tileSmall": "ic_home_mode_clean2_small",
+					"line": 243081
+				},
+				"103": {
+					"index": 3,
+					"slider": "mode_setting_clean3_{normal,selected}",
+					"tile": "ic_home_mode_clean3",
+					"tileSmall": "ic_home_mode_clean3_small",
+					"line": 243100
+				},
+				"104": {
+					"index": 4,
+					"slider": "mode_setting_clean4_{normal,selected}",
+					"tile": "ic_home_mode_clean4",
+					"tileSmall": "ic_home_mode_clean4_small",
+					"line": 243119
+				},
+				"108": {
+					"index": 5,
+					"slider": "mode_setting_clean5_{normal,selected}",
+					"tile": "ic_home_mode_clean5",
+					"tileSmall": "ic_home_mode_clean5_small",
+					"line": 243154
+				}
+			},
+			"noIcon": [106, 110],
+			"noIconReason": "106 = CustomCleanMode und 110 = SmartCleanMode sind Marker, keine wählbaren Stufen - sie haben in der Reglerliste keinen Eintrag."
+		},
+		"waterBoxMode": {
+			"twoFamilies": "Jeder Eintrag trägt beide Familien nebeneinander; welche gezogen wird, entscheidet das Schwing-Mop-Prädikat (Verzweigungen ab Zeile 243330). Siehe shakeMopPredicate.",
+			"shakeMopPredicate": {
+				"confidence": "belegt",
+				"expression": "DM.support(MF.Mop_ShakeModule)",
+				"predicateLines": "Modul 565, 243294-243310",
+				"featureConstant": {
+					"name": "MF.Mop_ShakeModule",
+					"value": "mf.mop_shake_module",
+					"descCn": "拖地方式--震动模组擦地",
+					"descDe": "Wischart - Wischen mit Vibrationsmodul (SonicMop)",
+					"module": 515,
+					"lines": "215680-215681"
+				},
+				"neighbours": {
+					"Mop_ElectronicModule": "mf.mop_electronic_module (elektronischer Wassertank), Modul 515 Zeilen 215678-215679",
+					"Mop_SpinModule": "mf.mop_spin_module (rotierendes Wischen), Modul 515 Zeilen 215682-215683"
+				},
+				"supportImplementation": {
+					"code": "support(feature) { return !!this.currentDeviceConfig?.features?.includes(feature); }",
+					"module": 517,
+					"lines": "218004-218032"
+				},
+				"deviceModelSource": {
+					"how": "currentDeviceConfig = erster deviceConfigs-Eintrag, dessen models den currentDeviceModel enthält",
+					"lines": "217074-217097",
+					"currentDeviceModel": "NativeModules.RRPluginSDK.deviceModel, Rückfall 'unknown' (Zeilen 217042-217064)",
+					"modelsBuild": "shortModels x modelPrefix (Vorgabe 'roborock.vacuum') in mehreren Schreibweisen, Zeilen 217119-217121 und 217134-217185"
+				},
+				"notDerivableFrom": "Weder get_status noch new_feature_info noch firmwareFeatures - die Feature-Liste steht ausschließlich in der plugin-internen Modelltabelle (Modul 516, Zeilen 215900-216784, 43 Einträge).",
+				"derivableFrom": "Dem Modellstring, den der Adapter ohnehin hat. Die vollständige Liste steht unter shakeMopModels.",
+				"shakeMopModels": {
+					"_note": "Momentaufnahme aus Plugin-Version 5208. Unbekannte Modelle sollten auf die Standardfamilie (mode_setting_water{N}) zurückfallen.",
+					"Ultron": { "models": ["roborock.vacuum.a50", "roborock.vacuum.a51"], "line": 216217 },
+					"UltronSV": { "models": ["roborock.vacuum.a96", "roborock.vacuum.a97"], "line": 216335 },
+					"TopazS": {
+						"models": ["roborock.vacuum.a29", "roborock.vacuum.a30", "roborock.vacuum.a76"],
+						"line": 216377
+					},
+					"TopazSPlus": {
+						"models": ["roborock.vacuum.a46", "roborock.vacuum.a47", "roborock.vacuum.a66"],
+						"line": 216415
+					},
+					"TopazSPower": { "models": ["roborock.vacuum.a62"], "line": 216441 },
+					"TopazSC": {
+						"models": ["roborock.vacuum.a64", "roborock.vacuum.a65"],
+						"line": 216463,
+						"note": "Testgerät des Nutzers (S7 Max Ultra, Produkt-ID 92). features = [CleanMode_MaxPlus, Mop_ShakeModule].concat(SingleLineCameraFeatures), Zeilen 216473-216483."
+					},
+					"TopazSV": { "models": ["roborock.vacuum.a26", "roborock.vacuum.a27"], "line": 216486 },
+					"TanosS": { "models": ["roborock.vacuum.a14", "roborock.vacuum.a15"], "line": 216514 },
+					"TanosSMax": { "models": ["roborock.vacuum.a52"], "line": 216620 }
+				},
+				"allShakeMopModels": [
+					"roborock.vacuum.a14",
+					"roborock.vacuum.a15",
+					"roborock.vacuum.a26",
+					"roborock.vacuum.a27",
+					"roborock.vacuum.a29",
+					"roborock.vacuum.a30",
+					"roborock.vacuum.a46",
+					"roborock.vacuum.a47",
+					"roborock.vacuum.a50",
+					"roborock.vacuum.a51",
+					"roborock.vacuum.a52",
+					"roborock.vacuum.a62",
+					"roborock.vacuum.a64",
+					"roborock.vacuum.a65",
+					"roborock.vacuum.a66",
+					"roborock.vacuum.a76",
+					"roborock.vacuum.a96",
+					"roborock.vacuum.a97"
+				],
+				"otherModels": "Die übrigen 34 Einträge der Tabelle führen Mop_ShakeModule nicht und bekommen mode_setting_water{N}.",
+				"rawTable": "_appanalysis/plugins/a65_control_v5208/model_features.tsv (Werkzeug _appanalysis/plugins/_tools/modelfeatures.js)"
+			},
+			"themeLines": { "slider": "302109-302169", "tile": "302253-302269, 302289-302341" },
+			"map": {
+				"200": {
+					"index": 0,
+					"slider": "mode_setting_water0_{normal,selected}",
+					"sliderShakeMop": "mode_setting_shaked_water0_{normal,selected}",
+					"line": 243357
+				},
+				"201": {
+					"index": 1,
+					"slider": "mode_setting_water1_{normal,selected}",
+					"sliderShakeMop": "mode_setting_shaked_water1_{normal,selected}",
+					"tile": "ic_home_mode_mop_strength1",
+					"line": 243422
+				},
+				"202": {
+					"index": 2,
+					"slider": "mode_setting_water2_{normal,selected}",
+					"sliderShakeMop": "mode_setting_shaked_water2_{normal,selected}",
+					"tile": "ic_home_mode_mop_strength2",
+					"line": 243487
+				},
+				"203": {
+					"index": 3,
+					"slider": "mode_setting_water3_{normal,selected}",
+					"sliderShakeMop": "mode_setting_shaked_water3_{normal,selected}",
+					"tile": "ic_home_mode_mop_strength3",
+					"line": 243552
+				},
+				"207": {
+					"index": "custom",
+					"slider": "custom_water_mode_{normal,selected}",
+					"tile": "ic_home_mode_customwater",
+					"line": 243573
+				},
+				"208": {
+					"index": 3,
+					"sliderShakeMop": "mode_setting_shaked_water3_{normal,selected}",
+					"line": 243589,
+					"note": "208 hat KEIN eigenes Icon - der Eintrag greift auf shakedWaterModeSelected3/Normal3 zu, also exakt die Bilder von 203."
+				}
+			},
+			"noIcon": [204, 209],
+			"noIconReason": "204 = CustomWaterMode und 209 = SmartWaterMode sind Marker, keine wählbaren Stufen."
+		},
+		"mopMode": {
+			"indexWarning": "Der Icon-Index folgt NICHT der Modusreihenfolge: mopMethod*0 = Fast, *1 = Daily, *2 = Subtly, *3 = Deep+.",
+			"themeLines": { "slider": "302173-302201" },
+			"map": {
+				"300": {
+					"index": 1,
+					"asset": "clean_route_daily_{normal,selected}",
+					"fieldLine": 243692,
+					"valueLine": 243696
+				},
+				"301": {
+					"index": 2,
+					"asset": "clean_route_subtly_{normal,selected}",
+					"fieldLine": 243722,
+					"valueLine": 243726
+				},
+				"303": {
+					"index": 3,
+					"asset": "clean_route_deep_slow_{normal,selected}",
+					"fieldLine": 243754,
+					"valueLine": 243762
+				},
+				"305": {
+					"index": 3,
+					"asset": "clean_route_deep_slow_{normal,selected}",
+					"fieldLine": 243754,
+					"valueLine": 243781,
+					"note": "teilt Icon und Anzeigetext mit 303"
+				},
+				"304": {
+					"index": 0,
+					"asset": "clean_route_fast_{normal,selected}",
+					"fieldLine": 243811,
+					"valueLine": 243815
+				}
+			},
+			"noIcon": [302, 306],
+			"noIconReason": "302 = CustomMopMode und 306 = SmartMopMode sind Marker, keine wählbaren Routen."
+		},
+		"icMopModeFamily": {
+			"assets": [
+				"ic_mop_mode_normal_{normal,selected}",
+				"ic_mop_mode_wet_{normal,selected}",
+				"ic_mop_mode_dry_{normal,selected}",
+				"ic_mop_mode_custom_{normal,selected}"
+			],
+			"themeFields": [
+				"mopModeNormal0/Selected0",
+				"mopModeNormal1/Selected1",
+				"mopModeNormal2/Selected2",
+				"mopModeNormalCustom/SelectedCustom"
+			],
+			"themeLines": "302365-302393",
+			"belongsToMopMode": false,
+			"reader": "keiner - außerhalb der beiden Theme-Module referenziert nichts im Bundle diese Felder",
+			"guess": "Die Reihenfolge normal/wet/dry legt GarnetMopMode ({Normal: 1, Wet: 2, Dry: 3}, Modul 1683 Zeile 367454) nahe, also ein anderes Datenfeld als mop_mode.",
+			"confidence": "Existenz und Auflösung belegt; die Zuordnung zu GarnetMopMode ist erschlossen, nicht belegt - deshalb nicht verwenden."
+		},
+		"consumer": "src-tab/src/engine/modeIcons.ts (Branch feature/mode-icons)"
+	}
+}

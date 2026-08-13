@@ -65,6 +65,53 @@ const ASSET_PREFIX = "projects_comroborocktanos";
 export const ASSET_DENSITY_FOLDER = "drawable-mdpi";
 
 /**
+ * Models whose water levels use the vibrating-mop artwork.
+ *
+ * The app does not ask the robot about this. It evaluates `DM.support(MF.Mop_ShakeModule)`
+ * against a model table compiled into the control plugin: module 516 lists 43 device configs,
+ * each with a `shortModels` array and a `features` array; the test device sits in the `TopazSC`
+ * entry (`shortModels: ['a64','a65']`, features include `Mop_ShakeModule`). The feature is
+ * `mf.mop_shake_module`, described there as wiping with a vibration module - Roborock's SonicMop.
+ *
+ * It is therefore **not** derivable from `get_status`, `firmwareFeatures` or `new_feature_info`,
+ * but it is derivable from the model string, which the adapter already publishes.
+ *
+ * The list is a snapshot of plugin version 5208. A model that is not in it falls back to the
+ * standard artwork - newer devices may well belong here, and showing the established icons is
+ * the safer error.
+ */
+const SHAKE_MOP_MODELS: ReadonlySet<string> = new Set([
+	"roborock.vacuum.a14",
+	"roborock.vacuum.a15",
+	"roborock.vacuum.a26",
+	"roborock.vacuum.a27",
+	"roborock.vacuum.a29",
+	"roborock.vacuum.a30",
+	"roborock.vacuum.a46",
+	"roborock.vacuum.a47",
+	"roborock.vacuum.a50",
+	"roborock.vacuum.a51",
+	"roborock.vacuum.a52",
+	"roborock.vacuum.a62",
+	"roborock.vacuum.a64",
+	"roborock.vacuum.a65",
+	"roborock.vacuum.a66",
+	"roborock.vacuum.a76",
+	"roborock.vacuum.a96",
+	"roborock.vacuum.a97",
+]);
+
+/**
+ * Whether this model draws its water levels from the vibrating-mop artwork.
+ *
+ * @param model Model string as the adapter publishes it, e.g. `roborock.vacuum.a65`.
+ * @returns True when the shaking-mop family applies.
+ */
+export function usesShakeMopIcons(model: string | null | undefined): boolean {
+	return !!model && SHAKE_MOP_MODELS.has(model.trim().toLowerCase());
+}
+
+/**
  * Builds the file name of one icon.
  *
  * @param ref Which image is wanted.
@@ -72,13 +119,21 @@ export const ASSET_DENSITY_FOLDER = "drawable-mdpi";
  * @param state Whether this option is the current one.
  * @returns The plain file name inside the density folder.
  */
-export function modeIconFileName(ref: ModeIconRef, themeType: IconThemeType, state: IconState): string {
+export function modeIconFileName(
+	ref: ModeIconRef,
+	themeType: IconThemeType,
+	state: IconState,
+	shakeMop = false,
+): string {
 	const themed = `${ASSET_PREFIX}_theme_${themeType}_resources`;
 	switch (ref.family) {
 		case "cleanMode":
 			return `${themed}_mode_setting_clean${ref.index}_${state}_${themeType}.png`;
 		case "waterMode":
-			return `${themed}_mode_setting_water${ref.index}_${state}_${themeType}.png`;
+			// Two families exist side by side; the app picks by device, not by value.
+			return shakeMop
+				? `${themed}_mode_setting_shaked_water${ref.index}_${state}_${themeType}.png`
+				: `${themed}_mode_setting_water${ref.index}_${state}_${themeType}.png`;
 		case "waterCustom":
 			return `${themed}_custom_water_mode_${state}_${themeType}.png`;
 		case "cleanRoute":
@@ -165,5 +220,9 @@ export function modeIconUrl(
 	if (!ref) {
 		return null;
 	}
-	return `${assetBaseUrl}/${ASSET_DENSITY_FOLDER}/${modeIconFileName(ref, themeType, state)}`;
+	// The base url ends in the model folder the AppPluginManager unpacked into, so the model is
+	// already here - no extra plumbing needed to decide the water artwork.
+	const model = assetBaseUrl.split("/").pop() ?? null;
+	const fileName = modeIconFileName(ref, themeType, state, usesShakeMopIcons(model));
+	return `${assetBaseUrl}/${ASSET_DENSITY_FOLDER}/${fileName}`;
 }
