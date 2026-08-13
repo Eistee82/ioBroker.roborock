@@ -238,7 +238,10 @@ export class RoborockRequest {
 		}
 
 		if (protocol == 101 && !mqttConnectionState) {
-			const errorMsg = `Cloud connection not available. Not sending for method ${this.method} request!`;
+			// "Local only" must fail loudly instead of quietly reaching for the cloud.
+			const errorMsg = this.adapter.connectionStatus?.isLocalOnly()
+				? `Local-only mode is active: "${this.method}" would need the Roborock cloud and is not executed.`
+				: `Cloud connection not available. Not sending for method ${this.method} request!`;
 			this.adapter.rLog("System", this.duid, "Debug", "N/A", undefined, errorMsg, "debug");
 			this.reject(new Error(errorMsg));
 			return this.promise;

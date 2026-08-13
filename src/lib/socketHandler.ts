@@ -23,6 +23,7 @@ export class socketHandler {
 		// Initialize command map
 		this.commandHandlers = new Map<string, MessageHandler>();
 		this.commandHandlers.set("getDeviceList", () => this.handleGetDeviceList());
+		this.commandHandlers.set("scanLocalDevices", (msg) => this.handleScanLocalDevices(msg));
 
 		this.commandHandlers.set("app_start", (msg, id) => this.handleSimpleCommand(msg.duid, "app_start", id));
 		this.commandHandlers.set("app_pause", (msg, id) => this.handleSimpleCommand(msg.duid, "app_pause", id));
@@ -206,6 +207,35 @@ export class socketHandler {
 			this.adapter.rLog("System", duid, "Error", undefined, undefined, `get_room_names failed: ${error.message}`, "error");
 			if (msg.callback) this.adapter.sendTo(msg.from, msg.command, { error: error.message || "Failed" }, msg.callback);
 		}
+	}
+
+	/**
+	 * Admin diagnostics: lists devices announcing themselves on UDP 58866.
+	 * Cloud-free setups need the duid before a manual device entry can be created.
+	 * Never returns a localKey.
+	 * @param message Optional { timeout: number } in milliseconds.
+	 */
+	private async handleScanLocalDevices(message?: { timeout?: number }): Promise<{ result: string; devices: { duid: string; ip: string; pv: string; known: boolean }[] }> {
+		const requested = Number(message?.timeout);
+		const timeoutMs = Number.isFinite(requested) && requested > 0 ? Math.min(requested, 60_000) : 16_000;
+
+		const scan = await this.adapter.local_api.scanForDevices(timeoutMs);
+		const devices = scan.devices.map((device) => ({ duid: device.duid, ip: device.ip, pv: device.version, known: device.known }));
+
+		const lines: string[] = [];
+		if (devices.length === 0) {
+			lines.push("No devices found.");
+		} else {
+			lines.push(`${devices.length} device(s) found:`);
+			for (const device of devices) {
+				lines.push(`- duid: ${device.duid} | ip: ${device.ip} | pv: ${device.pv}${device.known ? " | localKey known" : " | localKey missing"}`);
+			}
+		}
+		if (scan.hint) lines.push(scan.hint);
+		if (!scan.discoveryEnabled) lines.push("Discovery is currently switched off.");
+
+		this.adapter.rLog("UDP", null, "Info", undefined, undefined, `Network scan finished: ${devices.length} device(s).`, "info");
+		return { result: lines.join("\n"), devices };
 	}
 
 	/**

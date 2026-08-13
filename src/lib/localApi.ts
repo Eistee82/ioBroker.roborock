@@ -20,8 +20,18 @@ function nextSocketRandom(): number {
 // Interfaces & Types
 // --------------------
 
-type LocalEndpointSource = "udp" | "udp_peer" | "network_info" | "probe";
+type LocalEndpointSource = "udp" | "udp_peer" | "network_info" | "probe" | "manual";
 type UdpDiscoveryRole = "leader" | "follower";
+
+/** Endpoint observed on the wire, independent of whether we hold a localKey for it. */
+export interface ObservedLocalDevice {
+	duid: string;
+	ip: string;
+	version: string;
+	lastSeenAt: number;
+	/** True when the adapter has a localKey (cloud or manual) for this device. */
+	known: boolean;
+}
 
 interface LocalDevice {
 	ip: string;
@@ -160,6 +170,10 @@ export class local_api {
 	private udpDiscoveryLeadershipEpoch = 0;
 	private endpointRefreshPromises = new Map<string, Promise<boolean>>();
 	private endpointRefreshLastStartedAt = new Map<string, number>();
+	/** duid -> statically configured IP. Discovery must not override a user decision. */
+	private manualEndpoints = new Map<string, string>();
+	/** Everything seen on UDP 58866, also devices we have no key for (config diagnostics). */
+	private observedDevices = new Map<string, ObservedLocalDevice>();
 	private tcpKeepaliveInterval: ioBroker.Interval | undefined = undefined;
 	private static readonly TCP_KEEPALIVE_MS = 10_000;
 	private static readonly TCP_KEEPALIVE_GRACE_MS = 1_000;
@@ -406,6 +420,7 @@ export class local_api {
 			connectedDev.lastSeenAt = Date.now();
 		}
 		this.cloudDevices.delete(duid);
+		this.adapter.connectionStatus?.schedule(duid);
 	}
 
 	/** Sends app-style PINGREQ frames so the socket session stays alive. */
@@ -470,6 +485,7 @@ export class local_api {
 			old.removeAllListeners();
 			if (!old.destroyed) old.destroy();
 			delete this.deviceSockets[duid];
+			this.adapter.connectionStatus?.schedule(duid);
 		}
 	}
 
@@ -707,8 +723,42 @@ export class local_api {
 		});
 	}
 
+	/**
+	 * Registers statically configured endpoints and connects to them.
+	 * With a static IP the adapter can run completely without UDP discovery.
+	 * @param devices Manually configured devices; entries without IP are ignored.
+	 * @param connectTimeoutMs TCP connect timeout per device.
+	 */
+	public async applyManualEndpoints(devices: { duid: string; ip?: string; pv: string }[], connectTimeoutMs = 5000): Promise<void> {
+		const targets = devices.filter((device): device is { duid: string; ip: string; pv: string } => typeof device.ip === "string" && device.ip.length > 0);
+		this.manualEndpoints.clear();
+		for (const device of targets) {
+			this.manualEndpoints.set(device.duid, device.ip);
+		}
+		if (targets.length === 0) return;
+
+		for (const device of targets) {
+			this.updateLocalEndpoint(device.duid, device.ip, device.pv, "manual");
+		}
+
+		await Promise.all(targets.map((device) => this.initiateClient(device.duid, true, connectTimeoutMs).catch((e: unknown) => {
+			this.adapter.rLog("TCP", device.duid, "Debug", device.pv, undefined, `Static endpoint ${device.ip} not reachable: ${this.adapter.errorMessage(e)}`, "debug");
+		})));
+	}
+
+	/** All endpoints observed via UDP discovery, newest information wins. */
+	public getObservedDevices(): ObservedLocalDevice[] {
+		return [...this.observedDevices.values()].sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+	}
+
 	public updateLocalEndpoint(duid: string, ip: string, version: string, source: LocalEndpointSource = "network_info"): boolean {
 		if (!duid || typeof duid !== "string" || !ip || isIP(ip) === 0 || !version) return false;
+
+		const manualIp = this.manualEndpoints.get(duid);
+		if (manualIp && source !== "manual" && manualIp !== ip) {
+			this.adapter.rLog("TCP", duid, "Debug", version, undefined, `Ignoring ${source} endpoint ${ip}; a static IP (${manualIp}) is configured.`, "debug");
+			return false;
+		}
 
 		const now = Date.now();
 		const existing = this.localDevices[duid];
@@ -782,8 +832,11 @@ export class local_api {
 	}
 
 	private async fetchNetworkInfoEndpoint(duid: string, reason: string, timeoutMs = 5000): Promise<{ ip: string; version: string; method: string } | null> {
-		if (!this.adapter.requestsHandler?.sendRequest || !this.adapter.mqtt_api?.isConnected?.()) {
-			this.adapter.rLog("TCP", duid, "Debug", undefined, undefined, `Skipping endpoint refresh after ${reason}: MQTT unavailable.`, "debug");
+		// get_network_info needs a transport. Cloud is the usual one, but an already established
+		// local session works too - important for cloud-free operation.
+		const transportAvailable = this.adapter.mqtt_api?.isConnected?.() === true || this.isConnected(duid);
+		if (!this.adapter.requestsHandler?.sendRequest || !transportAvailable) {
+			this.adapter.rLog("TCP", duid, "Debug", undefined, undefined, `Skipping endpoint refresh after ${reason}: no transport available.`, "debug");
 			return null;
 		}
 
@@ -846,6 +899,11 @@ export class local_api {
 	 * @see test/unit/transport_specification.test.ts for the UDP discovery protocol.
 	 */
 	async startUdpDiscovery(timeoutMs = 10_000): Promise<void> {
+		if (!this.isUdpDiscoveryEnabled()) {
+			this.adapter.rLog("UDP", null, "Info", undefined, undefined, `UDP discovery is disabled in the adapter configuration. Only statically configured IP addresses are used.`, "info");
+			return;
+		}
+
 		this.discoveryStopping = false;
 		await this.ensureUdpDiscoveryCoordinationStarted();
 		await this.runUdpDiscoveryCoordination("startup");
@@ -1050,8 +1108,30 @@ export class local_api {
 		return valid[0] ?? null;
 	}
 
+	/** UDP discovery can be switched off completely; static IPs then carry the whole setup. */
+	public isUdpDiscoveryEnabled(): boolean {
+		return this.adapter.config?.udpDiscoveryEnabled !== false;
+	}
+
+	/**
+	 * Interface the UDP socket binds to. Empty means "all interfaces", which is what caused the
+	 * recurring LXC / multi-NIC problems, so the user can pin it explicitly.
+	 */
+	public getUdpBindAddress(): string | undefined {
+		const configured = this.adapter.config?.udpBindAddress;
+		if (typeof configured !== "string") return undefined;
+		const trimmed = configured.trim();
+		if (trimmed === "" || trimmed === "0.0.0.0") return undefined;
+		if (isIP(trimmed) === 0) {
+			this.adapter.rLog("UDP", null, "Warn", "N/A", undefined, `Configured UDP bind address "${trimmed}" is not a valid IP address. Binding to all interfaces instead.`, "warn");
+			return undefined;
+		}
+		return trimmed;
+	}
+
 	private ensureUdpDiscoveryServer(reason = "coordination"): void {
 		if (this.discoveryServer || this.udpDiscoveryBindPending) return;
+		if (!this.isUdpDiscoveryEnabled()) return;
 
 		const socketOptions: dgram.SocketOptions = process.platform === "win32" ? { type: "udp4", reuseAddr: true } : { type: "udp4", reusePort: true };
 		const server = dgram.createSocket(socketOptions);
@@ -1089,7 +1169,12 @@ export class local_api {
 		server.on("close", () => this.handleUdpDiscoverySocketClose(server));
 
 		try {
-			server.bind(UDP_DISCOVERY_PORT);
+			const bindAddress = this.getUdpBindAddress();
+			if (bindAddress) {
+				server.bind(UDP_DISCOVERY_PORT, bindAddress);
+			} else {
+				server.bind(UDP_DISCOVERY_PORT);
+			}
 		} catch (e: unknown) {
 			this.handleUdpDiscoverySocketError(server, e);
 		}
@@ -1279,6 +1364,10 @@ export class local_api {
 				cleanup();
 				const freshDuids = this.getFreshDiscoveryDuids(startedAt);
 				this.adapter.rLog("UDP", null, "Info", undefined, undefined, `UDP discovery window finished (${finishReason}). Fresh devices: [${freshDuids.join(", ")}]. Listener remains active.`, "info");
+				if (finishReason === "timeout" && freshDuids.length === 0) {
+					// Devices broadcast unsolicited every ~5s, so silence points at the network, not the robot.
+					this.adapter.rLog("UDP", null, "Warn", "N/A", undefined, `No device broadcast received on UDP ${UDP_DISCOVERY_PORT} within ${timeoutMs}ms. Devices broadcast every ~5s, so the robot is offline or the broadcast is filtered (VLAN, WLAN client isolation, LXC/Docker bridge). Configure the network interface to bind to, or set a static IP per device and switch discovery off.`, "warn");
+				}
 				resolve();
 			};
 
@@ -1370,6 +1459,10 @@ export class local_api {
 			const localKeys = this.adapter.http_api.getMatchedLocalKeys();
 			const localKey = localKeys.get(duid);
 
+			// Record everything for the configuration diagnostics, also unknown devices:
+			// without a cloud account the user needs the duid to create the manual entry.
+			this.observedDevices.set(duid, { duid, ip, version, lastSeenAt: Date.now(), known: !!localKey });
+
 			// Only track devices we have a key for
 			if (!localKey) return;
 
@@ -1393,6 +1486,39 @@ export class local_api {
 			if (!dev?.lastSeenAt || dev.lastSeenAt < startedAt) return false;
 			return !onlyOwned || !this.adapter.http_api.isSharedDevice(duid);
 		});
+	}
+
+	/**
+	 * Collects devices announcing themselves on UDP 58866.
+	 * Used by the admin configuration page: without a cloud account the user has to know the
+	 * duid before a manual entry can be created.
+	 * @param timeoutMs How long to listen. Devices broadcast every ~5s.
+	 */
+	public async scanForDevices(timeoutMs = 16_000): Promise<{ devices: ObservedLocalDevice[]; discoveryEnabled: boolean; hint: string }> {
+		const discoveryEnabled = this.isUdpDiscoveryEnabled();
+		if (!discoveryEnabled) {
+			return {
+				devices: this.getObservedDevices(),
+				discoveryEnabled,
+				hint: "UDP discovery is switched off in the adapter configuration. Enable it temporarily to search for devices.",
+			};
+		}
+
+		const startedAt = Date.now();
+		await this.startUdpDiscovery(0);
+
+		const deadline = startedAt + Math.max(0, timeoutMs);
+		while (Date.now() < deadline) {
+			const fresh = this.getObservedDevices().filter((device) => device.lastSeenAt >= startedAt);
+			if (fresh.length > 0 && Date.now() - startedAt >= 6_000) break;
+			await this.adapter.delay(500);
+		}
+
+		const devices = this.getObservedDevices();
+		const hint = devices.length === 0
+			? `No device answered on UDP ${UDP_DISCOVERY_PORT}. Devices broadcast every ~5s, so check for VLAN/WLAN isolation or a container bridge, pin the network interface, or configure a static IP per device.`
+			: "";
+		return { devices, discoveryEnabled, hint };
 	}
 
 	stopUdpDiscovery(): void {
