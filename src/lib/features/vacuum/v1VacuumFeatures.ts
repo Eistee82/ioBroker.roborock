@@ -6,6 +6,7 @@ import { V1ConsumableService } from "./services/V1ConsumableService";
 import { V1MapService } from "./services/V1MapService";
 import { getLocalizedErrorStates } from "./adapterErrorMapping";
 import { VACUUM_CONSTANTS } from "./vacuumConstants";
+import { floorFolderId, normalizeMapFlag, normalizeRoomId } from "../../map/roomKey";
 
 // --- Shared Constants ---
 export const BASE_FAN = { 101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max" };
@@ -38,6 +39,9 @@ export const DEFAULT_PROFILE: VacuumProfile = {
 
 export class V1VacuumFeatures extends BaseDeviceFeatures {
 	private static readonly autoEmptyDockStartCommand = "app_start_collect_dust";
+
+	/** State names below `floors.<mapFlag>` that carry metadata instead of a room switch. */
+	private static readonly nonRoomStateNames = new Set(["add_time", "load", "mapFlag", "map_id", "name"]);
 
 	protected profile: VacuumProfile;
 	protected consumableService: V1ConsumableService;
@@ -340,25 +344,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 				return params;
 			}
 
-			// Gather selected rooms from floors
-			const namespace = this.deps.adapter.namespace;
-			// Pattern to find states under floors. Structure: Devices.<duid>.floors.<floorID>.<roomID>
-			const pattern = `${namespace}.Devices.${this.duid}.floors.*.*`;
-			const states = await this.deps.adapter.getStatesAsync(pattern);
-			const roomIds: number[] = [];
-
-			if (states) {
-				for (const [id, state] of Object.entries(states)) {
-					if (state && (state.val === true || state.val === "true" || state.val === 1)) {
-						// Extract Room ID directly from the state path (last segment)
-						const parts = id.split(".");
-						const rid = Number(parts[parts.length - 1]);
-						if (!isNaN(rid)) {
-							roomIds.push(rid);
-						}
-					}
-				}
-			}
+			// Gather selected rooms – restricted to the currently loaded map (see collectSelectedRoomIds).
+			const roomIds = await this.collectSelectedRoomIds();
 
 			if (roomIds.length > 0) {
 				this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined, `Starting segment cleaning for rooms: ${roomIds.join(", ")} with repeat ${repeat}`, "info");
@@ -414,6 +401,69 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		}
 
 		return params;
+	}
+
+	/**
+	 * Collects the room switches the user has turned on, restricted to the currently loaded map.
+	 *
+	 * Room ids are only unique **within one stored map**: robots that keep several maps (floors)
+	 * reuse the same segment ids across them (see src/lib/map/roomKey.ts). Collecting over
+	 * `floors.*.*` therefore mixes rooms of different floors into one cleaning job, which makes
+	 * the robot clean arbitrary rooms of the map that happens to be loaded. Only the rooms of the
+	 * active map may be sent to `app_segment_clean`.
+	 * @returns Ascending, duplicate-free room ids of the active map; empty when nothing is selected.
+	 */
+	private async collectSelectedRoomIds(): Promise<number[]> {
+		const activeMapFlag = normalizeMapFlag(this.getCurrentMapIndex());
+		const namespace = this.deps.adapter.namespace;
+		// Structure: Devices.<duid>.floors.<mapFlag>.<roomID>
+		const pattern = activeMapFlag !== null
+			? `${namespace}.${floorFolderId(this.duid, activeMapFlag)}.*`
+			: `${namespace}.Devices.${this.duid}.floors.*.*`;
+
+		const states = await this.deps.adapter.getStatesAsync(pattern);
+		if (!states) return [];
+
+		const selectedByMapFlag = new Map<number, Set<number>>();
+		for (const [stateId, state] of Object.entries(states)) {
+			if (!state || (state.val !== true && state.val !== "true" && state.val !== 1)) continue;
+
+			const parts = stateId.split(".");
+			const lastSegment = parts[parts.length - 1];
+			if (!lastSegment || V1VacuumFeatures.nonRoomStateNames.has(lastSegment)) continue;
+
+			const roomId = normalizeRoomId(lastSegment);
+			const mapFlag = normalizeMapFlag(parts[parts.length - 2]);
+			if (roomId === null || mapFlag === null) continue;
+
+			let rooms = selectedByMapFlag.get(mapFlag);
+			if (!rooms) {
+				rooms = new Set<number>();
+				selectedByMapFlag.set(mapFlag, rooms);
+			}
+			rooms.add(roomId);
+		}
+
+		if (selectedByMapFlag.size === 0) return [];
+
+		if (activeMapFlag !== null) {
+			return this.sortRoomIds(selectedByMapFlag.get(activeMapFlag));
+		}
+
+		// The active map slot is not known yet (no map_status seen so far). Falling back to all
+		// floors would be exactly the bug described above, so only an unambiguous selection is used.
+		if (selectedByMapFlag.size > 1) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined, `Rooms of ${selectedByMapFlag.size} different floors are selected while the active map is unknown – refusing to mix floors into one cleaning job`, "warn");
+			return [];
+		}
+
+		const [onlyMapFlag, onlyRooms] = [...selectedByMapFlag.entries()][0];
+		this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined, `Active map unknown; using floor ${onlyMapFlag} as it is the only one with selected rooms`, "debug");
+		return this.sortRoomIds(onlyRooms);
+	}
+
+	private sortRoomIds(roomIds: Set<number> | undefined): number[] {
+		return roomIds ? [...roomIds].sort((left, right) => left - right) : [];
 	}
 
 	private normalizeCleanRepeat(value: unknown): number | null {
@@ -782,6 +832,13 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		}
 	}
 
+	/**
+	 * Publishes the robot schedules as `schedules.<timerId>.{enabled,cron}`.
+	 *
+	 * `enabled` is writable; writes are picked up in main.ts (`handleScheduleToggle`) and sent to
+	 * the robot as `upd_timer [timerId, "on"|"off"]`. `cron` stays read-only – changing a
+	 * schedule's time needs `set_timer`, which rewrites the whole timer and is not implemented.
+	 */
 	public async updateTimers(): Promise<void> {
 		try {
 			const timers = await this.deps.adapter.requestsHandler.sendRequest(this.duid, "get_timer", []);
