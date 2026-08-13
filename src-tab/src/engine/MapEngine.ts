@@ -391,6 +391,8 @@ export class MapEngine {
 	private selectedObstacleID: any;
 	private model: string | null = null;
 	private robotModels: Record<string, string> = {};
+	/** Last asset folder handed to the shell; kept so the callback only fires on a real change. */
+	private lastAssetBase: string | null = null;
 	private rects: Rect[] = [];
 	private zones: number[][] = [];
 	private rectCounter = 0;
@@ -827,6 +829,7 @@ export class MapEngine {
 							// Re-trigger listeners if we have a model now (refresh overlays with correct asset URLs)
 							if (this.currentRobotDuid && this.robotModels[this.currentRobotDuid]) {
 								this.model = this.robotModels[this.currentRobotDuid];
+								this.publishAssetBase();
 								if (this.map) this.drawOverlaysFromMap();
 							}
 						} catch (e) {
@@ -978,6 +981,7 @@ export class MapEngine {
 							this.mapImage = undefined;
 							this.drawOverlaysFromMap();
 						}
+						this.publishAssetBase();
 						this.updateMapPlaceholder();
 						this.syncFloorSelection();
 					} catch (e) {
@@ -1010,10 +1014,11 @@ export class MapEngine {
 		void this.connection.getStates(this.currentMapSubscriptions).then((states: Record<string, any | null | undefined>) => {
 			if (!this.onStateChange) return;
 
-			// Try to resolve model from map if already populated
-			if (this.robotModels[duid]) {
-				this.model = this.robotModels[duid];
-			}
+			// Try to resolve model from map if already populated. Assigning unconditionally also
+			// clears the previous robot's model on a device switch - its assets are a different
+			// folder, and the map data arriving below fills the value back in when it knows better.
+			this.model = this.robotModels[duid] ?? null;
+			this.publishAssetBase();
 
 			for (const id of this.currentMapSubscriptions) {
 				this.onStateChange(id, states[id]);
@@ -1388,8 +1393,27 @@ export class MapEngine {
 		this.publishModes();
 	}
 
+	/**
+	 * Publishes the folder the current robot's Roborock graphics live in, so React can show the
+	 * app's own mode icons next to the mode names.
+	 *
+	 * Unlike the map drawing code this deliberately has **no** fallback model. The map falls back
+	 * because a map without a robot sprite is useless; a selector without an icon is merely plain
+	 * text and therefore still correct. Guessing a model here would point at another device's
+	 * artwork, so an unknown model publishes null and the shell keeps showing text.
+	 */
+	private publishAssetBase(): void {
+		const modelFolder = this.model || (this.currentRobotDuid ? this.robotModels[this.currentRobotDuid] : null) || null;
+		const base = modelFolder ? `${ASSET_BASE}/${modelFolder}` : null;
+		if (base === this.lastAssetBase) return;
+		this.lastAssetBase = base;
+		this.host.onAssetBase?.(base);
+	}
+
 	/** Publishes the mode selectors together with the value the robot currently reports. */
 	private publishModes(): void {
+		// The model often arrives after the selectors do, so this rides along with every update.
+		this.publishAssetBase();
 		const models: ModeModel[] = this.modeControls
 			.filter((control) => control.options.length > 0)
 			.map((control) => {

@@ -83,6 +83,8 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [selectedFloor, setSelectedFloor] = useState<string>("");
 	const [status, setStatus] = useState<StatusModel>(EMPTY_STATUS);
 	const [modes, setModes] = useState<ModeModel[]>([]);
+	// Folder of the Roborock graphics of the selected robot; null means "no icons, text only".
+	const [assetBase, setAssetBase] = useState<string | null>(null);
 	const [rooms, setRooms] = useState<RoomSelectionModel>({ selected: 0, available: 0 });
 	const [zones, setZones] = useState<ZoneModel>({ count: 0, max: 5, atLimit: false });
 	const [cleanCount, setCleanCount] = useState(1);
@@ -118,6 +120,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			},
 			onStatus: setStatus,
 			onModes: setModes,
+			onAssetBase: setAssetBase,
 			onFloors: (list, selected) => {
 				setFloors(list);
 				setSelectedFloor(selected ?? "");
@@ -270,6 +273,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 					<FloatingSurface>
 						<ModeBar
 							modes={modes}
+							assetBase={assetBase}
 							onChange={(command, value) => engineRef.current?.setMode(command, value)}
 						/>
 					</FloatingSurface>

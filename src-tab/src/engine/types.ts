@@ -140,6 +140,12 @@ export interface MapEngineHost {
 	onRobots?: (robots: RobotEntry[], selected: string | null) => void;
 	onStatus?: (status: StatusModel) => void;
 	onModes?: (modes: ModeModel[]) => void;
+	/**
+	 * Folder the current robot's Roborock graphics live in, e.g.
+	 * `../../files/roborock/assets/roborock.vacuum.a65`, or null while the model is unknown.
+	 * The shell builds the mode icon URLs from it; null simply means "show text only".
+	 */
+	onAssetBase?: (baseUrl: string | null) => void;
 	onFloors?: (floors: SelectOption[], selected: string | null) => void;
 	onRooms?: (rooms: RoomSelectionModel) => void;
 	onZones?: (zones: ZoneModel) => void;

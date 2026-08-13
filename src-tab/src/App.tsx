@@ -77,6 +77,14 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 			return (
 				<StyledEngineProvider injectFirst>
 					<ThemeProvider theme={theme}>
+						{/*
+						 * `CssBaseline` belongs here and not only below: it is what paints the document
+						 * body in the theme's colour. Without it the tab shows the browser's white page
+						 * until the socket is up, which in a dark admin is a bright flash on every open.
+						 * `enableColorScheme` additionally hands the mode to the browser, so the parts
+						 * it draws itself - scrollbars above all - turn dark with the rest.
+						 */}
+						<CssBaseline enableColorScheme />
 						<Loader themeType={this.state.themeType} />
 					</ThemeProvider>
 				</StyledEngineProvider>
@@ -86,7 +94,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 		return (
 			<StyledEngineProvider injectFirst>
 				<ThemeProvider theme={theme}>
-					<CssBaseline />
+					<CssBaseline enableColorScheme />
 					<Box
 						sx={{ width: "100%", height: "100%" }}
 						style={themeCssVariables(theme)}
