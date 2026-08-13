@@ -5,6 +5,7 @@ import { MapBuilder as MapBuilderB01 } from "./b01/MapBuilder";
 import { B01DeviceStatus, B01MapData, Q10RuntimeDebugSummary } from "./b01/types";
 import { Q10MapBuilder } from "./q10/Q10MapBuilder";
 import { Q10MapCreator } from "./q10/Q10MapCreator";
+import { enrichSegmentNamesFromRoomStates, normalizeMapFlag } from "./roomKey";
 import { applyQ10PathOnlyToB01, applyQ10RuntimeStatePatch, mergeQ10RuntimeState } from "./q10/Q10YxMapParser";
 import type { Q10RuntimeStatePatch, Q10SourcePathPoint } from "./q10/types";
 import { MapBuilder as MapBuilderV1 } from "./v1/MapBuilder";
@@ -112,17 +113,24 @@ export class MapManager {
 				// V1 parser returns ParsedMapData OR empty object
 				const mapData = await this.mapParser.parsedata(mapBuf, mappedRooms, { isHistoryMap: false, duid: duid ?? undefined });
 
-				// For cloud robots mappedRooms may be empty; enrich segment names from room states when possible
+				// For cloud robots mappedRooms may be empty; enrich segment names from room states when possible.
+				// Rooms are keyed by (mapFlag, roomId): different maps of one robot reuse the same room ids,
+				// so the names may only be read from the floor the map actually belongs to.
 				if (mapData && Object.keys(mapData).length > 0 && duid != null && "IMAGE" in mapData) {
-					const floor = (currentMapIndex != null && currentMapIndex >= 0) ? currentMapIndex : 0;
+					const mapFlag = normalizeMapFlag(currentMapIndex);
+					if (mapFlag !== null) {
+						// Expose the map flag so consumers (web UI, room name lookups) can key rooms correctly.
+						mapData.mapFlag = mapFlag;
+					}
 					const list = mapData.IMAGE?.segments?.list;
 					if (Array.isArray(list) && (!mappedRooms || mappedRooms.length === 0)) {
-						for (const seg of list) {
-							if (seg.id != null && !seg.name) {
-								const obj = await this.adapter.getObjectAsync(`Devices.${duid}.floors.${floor}.${seg.id}`);
-								const name = (obj as any)?.common?.name;
-								if (name && String(name).trim()) seg.name = String(name).trim();
-							}
+						if (mapFlag === null) {
+							this.adapter.rLog("MapManager", duid, "Debug", version, 301, `Skipping room name enrichment: active map flag unknown (rooms are keyed by (mapFlag, roomId))`, "debug");
+						} else {
+							await enrichSegmentNamesFromRoomStates(list, duid, mapFlag, async (stateId) => {
+								const obj = await this.adapter.getObjectAsync(stateId);
+								return (obj as any)?.common?.name;
+							});
 						}
 					}
 				}

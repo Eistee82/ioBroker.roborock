@@ -124,6 +124,8 @@ interface NonceData {
 }
 export interface ParsedMapData {
 	metaData: MapMetaData;
+	/** Active map/floor this map belongs to. Rooms are keyed by the composite (mapFlag, roomId). */
+	mapFlag?: number;
 	ROBOT_POSITION?: PositionBlock;
 	CHARGER_LOCATION?: PositionBlock;
 	IMAGE?: ImageBlock;
