@@ -1,0 +1,126 @@
+/*
+ * Styles of the imperative map surface and of the floating controls above it.
+ *
+ * Every colour comes from a CSS variable that `themeCssVariables()` fills from the MUI theme,
+ * so nothing in here breaks when the admin switches to dark mode.
+ */
+
+html,
+body,
+#root {
+	height: 100%;
+	margin: 0;
+}
+
+.rr-root {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	color: var(--rr-text);
+	background-color: var(--rr-map-ground);
+}
+
+/* Numbers must not dance while they update. */
+.rr-numeric {
+	font-variant-numeric: tabular-nums;
+	font-feature-settings: "tnum";
+}
+
+/*
+ * The signature texture: the fine grid of the app's map themes, used so quietly behind the
+ * floating surfaces that it reads as material rather than as decoration.
+ */
+.rr-grid-texture {
+	background-image:
+		linear-gradient(to right, var(--rr-grid) 1px, transparent 1px),
+		linear-gradient(to bottom, var(--rr-grid) 1px, transparent 1px);
+	background-size: 16px 16px;
+}
+
+/* --- Map surface (created by MapEngine) --------------------------------------------- */
+
+.rr-map-host {
+	position: absolute;
+	inset: 0;
+}
+
+.rr-map-surface {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+}
+
+.rr-map-svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+	cursor: grab;
+}
+
+.rr-map-svg:active {
+	cursor: grabbing;
+}
+
+/* --- Interactive SVG elements ------------------------------------------------------- */
+
+.zone-rect {
+	fill: rgba(46, 196, 192, 0.28);
+	stroke: var(--rr-turquoise);
+	stroke-width: 1.5;
+	cursor: move;
+}
+
+.zone-handle {
+	fill: var(--rr-accent);
+	stroke: #ffffff;
+	stroke-width: 1;
+	vector-effect: non-scaling-stroke;
+	cursor: nwse-resize;
+}
+
+.obstacle-marker {
+	fill: rgba(45, 156, 219, 0.7);
+	stroke: #ffffff;
+	stroke-width: 0.5;
+	vector-effect: non-scaling-stroke;
+	cursor: pointer;
+	transition: r 0.1s ease-in-out;
+}
+
+.obstacle-marker:hover {
+	fill: rgba(46, 196, 192, 0.9);
+}
+
+.room-label.selectable {
+	cursor: pointer;
+}
+
+.go-to-pin {
+	cursor: crosshair;
+}
+
+/* --- Obstacle hover preview (follows the zoom transform) ---------------------------- */
+
+.rr-map-popup {
+	display: none;
+	position: absolute;
+	background-color: var(--rr-surface);
+	border: 1px solid var(--rr-border);
+	border-radius: 10px;
+	padding: 4px;
+	box-shadow: var(--rr-shadow);
+	transform: translate(-50%, -100%);
+	margin-top: -15px;
+	z-index: 10;
+}
+
+.rr-map-popup-image {
+	display: block;
+	width: 104px;
+	height: 104px;
+	border-radius: 7px;
+	object-fit: cover;
+	cursor: zoom-in;
+}

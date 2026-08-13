@@ -220,5 +220,6 @@
   "ui_dock_wash_temperature": "洗涤水温",
   "ui_dock_back_wash_mode": "反冲洗模式",
   "ui_on": "开",
-  "ui_off": "关"
+  "ui_off": "关",
+  "ui_no_devices": "未找到此实例的 Roborock 设备。"
 }

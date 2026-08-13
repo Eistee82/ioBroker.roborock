@@ -220,5 +220,6 @@
   "ui_dock_wash_temperature": "Temperatura del agua de lavado",
   "ui_dock_back_wash_mode": "Modo de retrolavado",
   "ui_on": "Encendido",
-  "ui_off": "Apagado"
+  "ui_off": "Apagado",
+  "ui_no_devices": "No se encontró ningún dispositivo Roborock para esta instancia."
 }

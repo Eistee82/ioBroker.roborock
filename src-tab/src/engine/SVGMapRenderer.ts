@@ -13,8 +13,8 @@ import type {
 	DrawZoneRectInput,
 	IMapRenderer,
 	PathLayer,
-} from "../common/mapDrawing/types";
-import { VISUAL_BLOCK_SIZE } from "../common/mapDrawing/constants";
+} from "@adapter/common/mapDrawing/types";
+import { VISUAL_BLOCK_SIZE } from "@adapter/common/mapDrawing/constants";
 
 const PATH_LAYER_CLASS: Record<PathLayer, string> = {
 	mop: "mop-path",
@@ -159,7 +159,7 @@ export class SVGMapRenderer implements IMapRenderer {
 			.style("stroke-width", `${strokeWidth}px`)
 			.style("stroke-linecap", "round")
 			.style("stroke-linejoin", "round")
-			.style("stroke-dasharray", input.dashed ? "4, 8" : null);
+			.style("stroke-dasharray", input.dashed ? "4, 8" : "");
 	}
 
 	drawRobot(input: { x: number; y: number; angle: number }): void {
@@ -276,7 +276,7 @@ export class SVGMapRenderer implements IMapRenderer {
 				img.src = primaryUrl;
 			});
 
-		enter.merge(groups as d3.Selection<SVGGElement, DrawObstacleInput, SVGGElement, unknown>).attr("transform", (d) => `translate(${d.x}, ${d.y})`);
+		enter.merge(groups as unknown as d3.Selection<SVGGElement, DrawObstacleInput, SVGGElement, unknown>).attr("transform", (d) => `translate(${d.x}, ${d.y})`);
 	}
 
 	drawRoomLabels(labels: DrawRoomLabelInput[]): void {
@@ -316,7 +316,7 @@ export class SVGMapRenderer implements IMapRenderer {
 			.style("font-weight", "900")
 			.style("font-size", "9px");
 
-		const merged = enter.merge(sel as d3.Selection<SVGGElement, DrawRoomLabelInput, SVGGElement, unknown>)
+		const merged = enter.merge(sel as unknown as d3.Selection<SVGGElement, DrawRoomLabelInput, SVGGElement, unknown>)
 			.attr("data-x", (d) => String(d.x))
 			.attr("data-y", (d) => String(d.y))
 			.attr("data-segment-id", (d) => String(d.segmentId))
@@ -335,7 +335,7 @@ export class SVGMapRenderer implements IMapRenderer {
 			const badgeCenterY = d.badgeCenterOffsetY ?? 12;
 
 			label.select<SVGCircleElement>("circle.room-label-bubble")
-				.style("display", hasBubble ? null : "none")
+				.style("display", hasBubble ? "" : "none")
 				.attr("cx", bubbleCenterX)
 				.attr("cy", 0)
 				.attr("r", bubbleRadius)
@@ -344,7 +344,7 @@ export class SVGMapRenderer implements IMapRenderer {
 				.style("stroke-width", "1px");
 
 			label.select<SVGImageElement>("image.room-label-icon")
-				.style("display", d.iconHref ? null : "none")
+				.style("display", d.iconHref ? "" : "none")
 				.attr("href", d.iconHref || null)
 				.attr("x", bubbleCenterX - iconSize / 2)
 				.attr("y", -iconSize / 2)
@@ -361,14 +361,14 @@ export class SVGMapRenderer implements IMapRenderer {
 				.style("stroke", "white");
 
 			label.select<SVGCircleElement>("circle.room-label-badge")
-				.style("display", badgeText ? null : "none")
+				.style("display", badgeText ? "" : "none")
 				.attr("cx", badgeCenterX)
 				.attr("cy", badgeCenterY)
 				.attr("r", 5)
 				.style("fill", "rgba(111,111,116,0.95)");
 
 			label.select<SVGTextElement>("text.room-label-badge-text")
-				.style("display", badgeText ? null : "none")
+				.style("display", badgeText ? "" : "none")
 				.text(badgeText)
 				.attr("x", badgeCenterX)
 				.attr("y", badgeCenterY)
@@ -387,7 +387,7 @@ export class SVGMapRenderer implements IMapRenderer {
 			const left = hasBubble ? bubbleCenterX - bubbleRadius : -textWidth / 2;
 			const right = hasBubble ? textX + textWidth : textWidth / 2;
 			label.select<SVGRectElement>("rect.room-label-selection")
-				.style("display", selectedSegmentIds?.has(d.segmentId) ? null : "none")
+				.style("display", selectedSegmentIds?.has(d.segmentId) ? "" : "none")
 				.attr("x", left - 4)
 				.attr("y", -10)
 				.attr("width", Math.max(right - left, 0) + 8)

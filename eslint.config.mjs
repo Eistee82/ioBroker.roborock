@@ -9,7 +9,9 @@ const projectIgnores = [
 	"**/build/**",
 	"**/admin/**",
 	"**/test/**",
-	"**/www/**",
+	// The React tab is its own project with its own tsconfig; the adapter rules (node globals,
+	// JSDoc on every function) do not fit JSX. It is covered by `npm run typecheck:tab`.
+	"**/src-tab/**",
 	"**/scripts/**",
 	"**/.antigravityignore/**",
 	"**/.AppPlugins/**",
@@ -27,7 +29,7 @@ const legacyRuleIgnores = [
 	"**/admin/**",
 	"**/test/**",
 	"www/**",
-	"src/www/**",
+	"src-tab/**",
 	"scripts/**",
 	"**/.antigravityignore/**",
 	"**/.agent/**",
@@ -111,7 +113,7 @@ export default [
 	},
 	{
 		files: ["src/**/*.ts"],
-		ignores: ["src/www/**", "**/test/**", "**/*.test.ts"],
+		ignores: ["src-tab/**", "**/test/**", "**/*.test.ts"],
 		languageOptions: {
 			parserOptions: {
 				projectService: true

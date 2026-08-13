@@ -36,5 +36,5 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable"]
   },
   "include": ["src/**/*.ts", "src/**/*.json"],
-  "exclude": ["node_modules", "src/www"]
+  "exclude": ["node_modules", "src-tab"]
 }

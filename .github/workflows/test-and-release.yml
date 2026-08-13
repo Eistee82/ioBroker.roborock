@@ -39,6 +39,14 @@ jobs:
           lint: true
       - name: TypeScript check
         run: npm run typecheck
+      # The admin tab is its own Vite project, so it is installed, type checked and built once
+      # here instead of in every cell of the adapter test matrix.
+      - name: Install admin tab dependencies
+        run: npm run install:tab
+      - name: TypeScript check (admin tab)
+        run: npm run typecheck:tab
+      - name: Build admin tab
+        run: npm run build:tab
 
   # Runs adapter tests on all supported node versions and OSes
   adapter-tests:
@@ -66,7 +74,8 @@ jobs:
           os: ${{ matrix.os }}
           package-cache: 'npm'
           build: true
-          build-command: 'npm run clean && npm run build:www && npm run docs'
+          # admin/tab.html and admin/assets are committed, so the matrix only regenerates the docs.
+          build-command: 'npm run docs'
 
   # Deploys the final package to NPM
   deploy:

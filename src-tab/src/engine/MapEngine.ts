@@ -1,13 +1,24 @@
 import * as d3 from "d3";
-import { localCoordsToRobotCoords, robotCoordsToLocalCoords } from "../common/coordTransformation";
-import { drawMapV1 } from "../common/mapDrawing/drawMapV1";
-import { IMG_CHARGER, IMG_GO_TO_PIN, IMG_ROBOT_ORIGINAL } from "../common/images";
-import type { DrawObstacleInput, DrawRoomLabelInput, DrawVirtualWallInput } from "../common/mapDrawing/types";
-import type { B01MapData } from "../lib/map/b01/types";
-import { Q10_CANVAS_SCALE, Q10MapGeometry } from "../lib/map/q10/Q10MapGeometry";
-import { floorScopeKey, normalizeMapFlag, normalizeRoomId, roomNameCacheKey } from "../lib/map/roomKey";
-import { Connection } from "./conn.js";
+import { localCoordsToRobotCoords, robotCoordsToLocalCoords } from "@adapter/common/coordTransformation";
+import { drawMapV1 } from "@adapter/common/mapDrawing/drawMapV1";
+import { IMG_CHARGER, IMG_GO_TO_PIN, IMG_ROBOT_ORIGINAL } from "@adapter/common/images";
+import type { DrawObstacleInput, DrawRoomLabelInput, DrawVirtualWallInput } from "@adapter/common/mapDrawing/types";
+import type { B01MapData } from "@adapter/lib/map/b01/types";
+import { Q10_CANVAS_SCALE, Q10MapGeometry } from "@adapter/lib/map/q10/Q10MapGeometry";
+import { floorScopeKey, normalizeMapFlag, normalizeRoomId, roomNameCacheKey } from "@adapter/lib/map/roomKey";
 import { SVGMapRenderer } from "./SVGMapRenderer";
+import type {
+	ConsumablePartModel,
+	DockControlModel,
+	DockStatusModel,
+	EngineConnection,
+	MapEngineHost,
+	ModeModel,
+	ObstaclePhotoModel,
+	RobotEntry,
+	SelectOption,
+	StatusModel,
+} from "./types";
 
 // Interfaces
 // -----------------------------------------------------------------------------
@@ -49,11 +60,6 @@ interface SegmentInfo {
 	center: [number, number]; // Robot coordinates
 }
 
-interface Robot {
-	duid: string;
-	name: string;
-}
-
 interface Point {
 	x: number;
 	y: number;
@@ -73,16 +79,6 @@ interface Q10OverlayObstacleData {
 	x: number;
 	y: number;
 	obstacleId?: string | number;
-}
-
-interface ConnCallbacks {
-	onConnChange?: (isConnected: boolean) => void;
-	onUpdate?: (id: string, state: any | null | undefined) => void;
-	onRefresh?: ((...args: any[]) => any) | null;
-	onAuth?: ((...args: any[]) => any) | null;
-	onCommand?: (instance: string, command: string, data: any) => any;
-	onError?: (err: any) => void;
-	onObjectChange?: (id: string, obj: any) => void;
 }
 
 interface MapParams {
@@ -113,18 +109,19 @@ const RUNNING_STATE_CODES = new Set([5, 6, 11, 16, 17, 18]);
 
 /** Command objects the mode selectors are built from; all values come from `common.states`. */
 const MODE_COMMANDS = [
-	{ command: "set_custom_mode", statusKey: "fanPower", selectId: "fanPowerSelect", fieldId: "fanPowerField" },
-	{ command: "set_mop_mode", statusKey: "mopMode", selectId: "mopModeSelect", fieldId: "mopModeField" },
-	{ command: "set_water_box_custom_mode", statusKey: "waterBoxMode", selectId: "waterFlowSelect", fieldId: "waterFlowField" },
+	{ command: "set_custom_mode", statusKey: "fanPower", labelKey: "ui_fan_power" },
+	{ command: "set_mop_mode", statusKey: "mopMode", labelKey: "ui_mop_mode" },
+	{ command: "set_water_box_custom_mode", statusKey: "waterBoxMode", labelKey: "ui_water_flow" },
 ] as const;
 
 type ModeStatusKey = (typeof MODE_COMMANDS)[number]["statusKey"];
 
+/** One mode selector. `options` stays empty while the device publishes no `common.states`. */
 interface ModeControl {
 	command: string;
 	statusKey: ModeStatusKey;
-	select: HTMLSelectElement;
-	field: HTMLElement;
+	labelKey: string;
+	options: SelectOption[];
 }
 
 /**
@@ -166,7 +163,6 @@ interface ConsumableMetric {
 	unit: string;
 	min: number | null;
 	max: number | null;
-	valueElement: HTMLElement;
 }
 
 /** One physical part, grouping every value the adapter publishes for it. */
@@ -176,28 +172,23 @@ interface ConsumablePart {
 	metrics: ConsumableMetric[];
 	/** State name inside `resetConsumables`, or null when the device offers no reset. */
 	resetCommand: string | null;
-	root: HTMLElement;
-	dueElement: HTMLElement;
-	meterBar: HTMLElement | null;
-	/** Opens/closes the inline reset confirmation of this part. */
-	setResetPending?: (pending: boolean) => void;
 }
 
-/** One dock command rendered into the panel. */
+/** One dock command the device published; the shell decides how it looks. */
 interface DockControl {
 	command: string;
 	stateId: string;
+	label: string;
 	kind: "button" | "switch" | "select";
-	select: HTMLSelectElement | null;
+	options: SelectOption[];
 }
 
 /** One station state shown in the panel. */
 interface DockStatusRow {
 	stateId: string;
+	name: string;
 	states: Record<string, string> | null;
 	unit: string;
-	root: HTMLElement;
-	valueElement: HTMLElement;
 }
 
 const UI_CONSTANTS = {
@@ -303,11 +294,27 @@ function isQ10MapData(map: FrontendMapData | undefined): map is Q10FrontendMapDa
 // Map Application Class
 // -----------------------------------------------------------------------------
 
-class MapApplication {
+/**
+ * Draws the robot map and drives every command the tab offers.
+ *
+ * The drawing, zooming and hit-testing logic is the one the standalone page used; only the
+ * edges moved: the ioBroker access arrives as {@link EngineConnection} (the admin socket of
+ * `GenericApp`) and every piece of UI state leaves through {@link MapEngineHost} instead of
+ * being written into a fixed HTML document.
+ */
+export class MapEngine {
 	// State
-	private connection: Connection;
+	private connection: EngineConnection;
+	private host: MapEngineHost;
 	private instanceId: string = "";
 	private currentRobotDuid: string | null = null;
+	private robots: RobotEntry[] = [];
+	private floors: SelectOption[] = [];
+	private selectedFloor: string | null = null;
+	/** Repeat count of a zoned run; the shell owns the input, the engine only stores it. */
+	private cleanCount = 1;
+	private connectionChannel = "";
+	private destroyed = false;
 	private onStateChange: ((id: string, state: any | null | undefined) => void) | null = null;
 	private currentMapSubscriptions: string[] = [];
 
@@ -369,8 +376,8 @@ class MapApplication {
 	/** Guard: "duid.mapFlag" of the floor whose room names have already been requested. */
 	private roomNamesRequestedForFloor: string | null = null;
 
-	// Localization: labels come from the adapter's admin/i18n files via 'get_translations'.
-	private translations: Record<string, string> = {};
+	/** Admin language, used to resolve the per-language `common.name` of an object. */
+	private language: string = "en";
 
 	// Room selection (segment ids of the currently displayed map).
 	private selectedRoomIds = new Set<number>();
@@ -414,61 +421,29 @@ class MapApplication {
 	private panelValues: Record<string, unknown> = {};
 	/** Panel states currently subscribed, unsubscribed again on device change. */
 	private panelSubscriptions: string[] = [];
-	/** Part whose reset confirmation is currently open; only one at a time. */
-	private pendingResetPart: string | null = null;
 	/** Dock fault state of this device, or null when the device publishes none. */
 	private dockErrorStateId: string | null = null;
 
-	private messageTimeout: number | null = null;
 	/** True once the user panned/zoomed by hand; a resize then keeps their view. */
 	private userAdjustedView = false;
 	/** Pointer position when the current gesture started, to tell a click from a pan. */
 	private pointerDownAt: { x: number; y: number } | null = null;
 
-	// DOM Elements
-	private popup!: HTMLElement;
+	// The only DOM the engine owns: the map surface and the small hover preview above it.
+	// Everything else is React, but this preview follows the zoom transform pixel by pixel,
+	// so keeping it next to the SVG is simpler and steadier than syncing it into React state.
+	private popup!: HTMLDivElement;
 	private popupImage!: HTMLImageElement;
-	private triangle!: HTMLElement;
-	private largePhoto!: HTMLElement;
-	private largePhotoImage!: HTMLImageElement;
-	private largePhotoBBox!: HTMLElement;
-	private robotSelect!: HTMLSelectElement;
-	private deleteButton!: HTMLButtonElement;
-	private addButton!: HTMLButtonElement;
-	private startButton!: HTMLButtonElement;
-	private pauseButton!: HTMLButtonElement;
-	private stopButton!: HTMLButtonElement;
-	private dockButton!: HTMLButtonElement;
-	private goToButton!: HTMLButtonElement;
-	private resetZoomButton!: HTMLButtonElement;
-	private floorField!: HTMLElement;
-	private floorSelect!: HTMLSelectElement;
-	private modeGroup!: HTMLElement;
-	private cleanRoomsButton!: HTMLButtonElement;
-	private clearRoomsButton!: HTMLButtonElement;
-	private roomHint!: HTMLElement;
-	private zoneHint!: HTMLElement;
-	private statusState!: HTMLElement;
-	private statusBattery!: HTMLElement;
-	private statusArea!: HTMLElement;
-	private statusDuration!: HTMLElement;
-	private statusError!: HTMLElement;
-	private statusConnectionItem!: HTMLElement;
-	private statusConnection!: HTMLElement;
-	private mapPlaceholder!: HTMLElement;
-	private messageBar!: HTMLElement;
-	private consumablesPanel!: HTMLDetailsElement;
-	private consumablesBadge!: HTMLElement;
-	private consumablesList!: HTMLElement;
-	private dockPanel!: HTMLDetailsElement;
-	private dockBadge!: HTMLElement;
-	private dockActions!: HTMLElement;
-	private dockModes!: HTMLElement;
-	private dockStatusList!: HTMLElement;
-	private dockStatusHint!: HTMLElement;
+	private resizeObserver: ResizeObserver | null = null;
+	private windowResizeHandler: (() => void) | null = null;
+	/** One handler per subscription, so `unsubscribeState` can drop exactly this listener. */
+	private readonly stateHandler = (id: string, state: any): void => {
+		if (this.onStateChange) this.onStateChange(id, state);
+	};
 
-	constructor() {
-		this.connection = new Connection();
+	constructor(connection: EngineConnection, host: MapEngineHost) {
+		this.connection = connection;
+		this.host = host;
 		// Initialize D3 selections with empty selections initially or in init()
 		// We will initialize them properly in init() after DOM is ready
 		this.svg = d3.select(null) as any;
@@ -490,72 +465,83 @@ class MapApplication {
 		this.zoom = d3.zoom();
 	}
 
-	public async init() {
-		this.bindDomElements();
-		this.setupD3();
-		this.setupConnection();
-		this.bindUiEvents();
-	}
-
-	private bindDomElements() {
-		const getElement = <T extends HTMLElement>(id: string): T => {
-			const el = document.getElementById(id);
-			if (!el) throw new Error(`Missing DOM element: ${id}`);
-			return el as T;
-		};
-
-		this.popup = getElement("popup");
-		this.popupImage = getElement("popup-image");
-		this.triangle = getElement("triangle");
-		this.largePhoto = getElement("largePhoto");
-		this.largePhotoImage = getElement("largePhoto-image");
-		this.largePhotoBBox = getElement("largePhoto-bbox");
-		this.robotSelect = getElement("robotSelect");
-		this.deleteButton = getElement("deleteButton");
-		this.addButton = getElement("addButton");
-		this.startButton = getElement("startButton");
-		this.pauseButton = getElement("pauseButton");
-		this.stopButton = getElement("stopButton");
-		this.dockButton = getElement("dockButton");
-		this.goToButton = getElement("goToButton");
-		this.resetZoomButton = getElement("resetZoomButton");
-		this.floorField = getElement("floorField");
-		this.floorSelect = getElement("floorSelect");
-		this.modeGroup = getElement("modeGroup");
-		this.cleanRoomsButton = getElement("cleanRoomsButton");
-		this.clearRoomsButton = getElement("clearRoomsButton");
-		this.roomHint = getElement("roomHint");
-		this.zoneHint = getElement("zoneHint");
-		this.statusState = getElement("statusState");
-		this.statusBattery = getElement("statusBattery");
-		this.statusArea = getElement("statusArea");
-		this.statusDuration = getElement("statusDuration");
-		this.statusError = getElement("statusError");
-		this.statusConnectionItem = getElement("statusConnectionItem");
-		this.statusConnection = getElement("statusConnection");
-		this.mapPlaceholder = getElement("mapPlaceholder");
-		this.messageBar = getElement("messageBar");
-		this.consumablesPanel = getElement<HTMLDetailsElement>("consumablesPanel");
-		this.consumablesBadge = getElement("consumablesBadge");
-		this.consumablesList = getElement("consumablesList");
-		this.dockPanel = getElement<HTMLDetailsElement>("dockPanel");
-		this.dockBadge = getElement("dockBadge");
-		this.dockActions = getElement("dockActions");
-		this.dockModes = getElement("dockModes");
-		this.dockStatusList = getElement("dockStatusList");
-		this.dockStatusHint = getElement("dockStatusHint");
-
+	/**
+	 * Starts the engine for one adapter instance.
+	 * @param instanceId Adapter instance the tab talks to, e.g. `roborock.0`.
+	 */
+	public async init(instanceId: string): Promise<void> {
+		this.instanceId = instanceId;
 		this.modeControls = MODE_COMMANDS.map((mode) => ({
 			command: mode.command,
 			statusKey: mode.statusKey,
-			select: getElement<HTMLSelectElement>(mode.selectId),
-			field: getElement(mode.fieldId),
+			labelKey: mode.labelKey,
+			options: [],
 		}));
+
+		this.buildDom();
+		this.setupD3();
+		this.fetchRobotList();
+	}
+
+	/**
+	 * Sets the language used to resolve a per-language `common.name` of an object.
+	 * @param language Admin language, e.g. `de`.
+	 */
+	public setLanguage(language: string): void {
+		this.language = language || "en";
+	}
+
+	/** Drops every subscription, observer and DOM node the engine created. */
+	public destroy(): void {
+		this.destroyed = true;
+		for (const id of this.currentMapSubscriptions) this.connection.unsubscribeState(id, this.stateHandler);
+		for (const id of this.panelSubscriptions) this.connection.unsubscribeState(id, this.stateHandler);
+		this.currentMapSubscriptions = [];
+		this.panelSubscriptions = [];
+		this.onStateChange = null;
+
+		this.resizeObserver?.disconnect();
+		this.resizeObserver = null;
+		if (this.windowResizeHandler) {
+			window.removeEventListener("resize", this.windowResizeHandler);
+			this.windowResizeHandler = null;
+		}
+		if (this.popupTimeout) {
+			clearTimeout(this.popupTimeout);
+			this.popupTimeout = null;
+		}
+		this.host.container.replaceChildren();
+	}
+
+	/**
+	 * Creates the map surface. React owns everything around it, but the SVG and the small
+	 * obstacle preview above it are drawn imperatively, exactly as before.
+	 */
+	private buildDom(): void {
+		const container = document.createElement("div");
+		container.className = "rr-map-surface";
+
+		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		svg.setAttribute("class", "rr-map-svg");
+		container.appendChild(svg);
+
+		this.popupImage = document.createElement("img");
+		this.popupImage.className = "rr-map-popup-image";
+		this.popupImage.alt = "";
+		this.popupImage.addEventListener("click", () => this.openObstaclePhoto());
+
+		this.popup = document.createElement("div");
+		this.popup.className = "rr-map-popup";
+		this.popup.appendChild(this.popupImage);
+
+		container.appendChild(this.popup);
+		this.host.container.replaceChildren(container);
+
+		this.svgContainer = d3.select(container) as any;
+		this.svg = d3.select(svg) as any;
 	}
 
 	private setupD3() {
-		this.svgContainer = d3.select("#mapSvgContainer");
-		this.svg = d3.select("#mapSvg");
 		this.mainGroup = this.svg.append("g").attr("class", "main-group");
 		this.mapImageElement = this.mainGroup.append("image").attr("class", "map-image");
 
@@ -612,9 +598,11 @@ class MapApplication {
 		this.updateSvgSize();
 		const container = this.svgContainer.node() as HTMLElement | null;
 		if (container && typeof ResizeObserver !== "undefined") {
-			new ResizeObserver(() => this.updateSvgSize()).observe(container);
+			this.resizeObserver = new ResizeObserver(() => this.updateSvgSize());
+			this.resizeObserver.observe(container);
 		} else {
-			window.addEventListener("resize", () => this.updateSvgSize());
+			this.windowResizeHandler = () => this.updateSvgSize();
+			window.addEventListener("resize", this.windowResizeHandler);
 		}
 	}
 
@@ -666,74 +654,16 @@ class MapApplication {
 		this.userAdjustedView = false;
 	}
 
-	private setupConnection() {
-		const instance = this.getQueryParam("instance");
-		if (instance === null) {
-			const heading = document.createElement("h1");
-			heading.textContent = this.t("ui_no_instance", "No instance specified in the URL.");
-			document.body.replaceChildren(heading);
-			return;
-		}
-		this.instanceId = `roborock.${instance}`;
-
-		const connCallbacks: ConnCallbacks = {
-			onConnChange: async (isConnected: boolean) => {
-				if (isConnected) {
-					await this.loadTranslations();
-					this.fetchRobotList();
-				}
-			},
-			onUpdate: (id, state) => {
-				if (this.onStateChange) this.onStateChange(id, state as any);
-			},
-			onError: (err) => {
-				console.error("Connection error:", err);
-				this.showError(this.t("ui_command_failed", "Command failed: %s", this.errorText(err)));
-			},
-		};
-
-		const socketUrl = `${window.location.protocol}//${window.location.hostname}:${window.location.port}`;
-		this.connection.init({ name: this.instanceId, connLink: socketUrl }, connCallbacks, true);
-	}
-
 	// -----------------------------------------------------------------------------
 	// Localization and user feedback
 	// -----------------------------------------------------------------------------
 
-	/** Fetches the adapter language and its admin translations, then relabels the page. */
-	private async loadTranslations(): Promise<void> {
-		try {
-			const response = await this.connection.sendTo(this.instanceId, "get_translations", {});
-			if (response && typeof response === "object" && !response.error && response.translations) {
-				this.translations = response.translations as Record<string, string>;
-				document.documentElement.lang = String(response.language || "en");
-			}
-		} catch (err) {
-			// Labels stay in the English fallback that is already in the HTML.
-			console.warn("Could not load translations:", err);
-		}
-		this.applyStaticTranslations();
-		this.renderRoomSelection();
-		this.renderZoneHint();
-	}
-
-	/** Translates a key, falling back to the English literal used in the source. */
+	/**
+	 * Translates a key. The admin already loaded `admin/i18n/<lang>.json` into `I18n`, so the
+	 * tab no longer fetches a second translation store over the socket.
+	 */
 	private t(key: string, fallback: string, ...args: (string | number)[]): string {
-		let text = this.translations[key] || fallback;
-		for (const arg of args) {
-			text = text.replace("%s", String(arg));
-		}
-		return text;
-	}
-
-	/** Replaces the text of every element carrying a data-i18n key. */
-	private applyStaticTranslations(): void {
-		document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((element) => {
-			const key = element.dataset.i18n;
-			if (!key) return;
-			const text = this.translations[key];
-			if (text) element.textContent = text;
-		});
+		return this.host.t(key, fallback, ...args);
 	}
 
 	private errorText(error: unknown): string {
@@ -744,13 +674,7 @@ class MapApplication {
 
 	/** Shows a failure in the page instead of hiding it in the browser console. */
 	private showError(message: string): void {
-		this.messageBar.textContent = message;
-		this.messageBar.hidden = false;
-		if (this.messageTimeout) clearTimeout(this.messageTimeout);
-		this.messageTimeout = window.setTimeout(() => {
-			this.messageBar.hidden = true;
-			this.messageTimeout = null;
-		}, 10000);
+		this.host.onError?.(message);
 	}
 
 	/** Sends a command to the adapter and surfaces failures in the UI. */
@@ -818,54 +742,36 @@ class MapApplication {
 		const endKey = `${this.instanceId}.Devices.\u9999`;
 
 		this.connection
-			.getObjectView("system", "device", { startkey: startKey, endkey: endKey })
-			.then((res: { rows: { id: string; value: any }[] }) => {
-				const robots: Robot[] = [];
-				if (res && res.rows) {
-					res.rows.forEach((row) => {
-						const idParts = row.id.split(".");
-						const duid = idParts[idParts.length - 1];
-						const name = row.value && row.value.common && row.value.common.name ? row.value.common.name : duid;
-						// Extract model from native object
-						const model = row.value?.native?.model || row.value?.native?.deviceInfo?.model || null;
+			.getObjectViewSystem("device", startKey, endKey)
+			.then((objects: Record<string, any>) => {
+				const robots: RobotEntry[] = [];
+				for (const [id, value] of Object.entries(objects ?? {})) {
+					const idParts = id.split(".");
+					const duid = idParts[idParts.length - 1];
+					const name = value?.common?.name ? String(value.common.name) : duid;
+					// Extract model from native object
+					const model = value?.native?.model || value?.native?.deviceInfo?.model || null;
 
-						if (duid) {
-							robots.push({ duid: duid, name: name });
-							if (model) {
-								this.robotModels[duid] = model;
-							}
+					if (duid) {
+						robots.push({ duid: duid, name: name });
+						if (model) {
+							this.robotModels[duid] = model;
 						}
-					});
+					}
 				}
 
+				this.robots = robots;
 				if (robots.length === 0) {
-					const instanceDuid = this.getQueryParam("instance");
-					if (instanceDuid) {
-						this.robotSelect.innerHTML = "";
-						const option = document.createElement("option");
-						option.value = instanceDuid;
-						option.text = `Roborock (Instance ${instanceDuid})`;
-						this.robotSelect.appendChild(option);
-						this.currentRobotDuid = instanceDuid;
-						this.setupSocketListeners(instanceDuid);
-					}
+					// Nothing to select; the shell shows its "no device" hint instead of an empty list.
+					this.currentRobotDuid = null;
+					this.host.onRobots?.([], null);
 					return;
 				}
 
-				this.robotSelect.innerHTML = "";
-				robots.forEach((robot: Robot) => {
-					const option = document.createElement("option");
-					option.value = robot.duid;
-					option.text = robot.name;
-					this.robotSelect.appendChild(option);
-				});
-
-				if (robots.length > 0) {
-					const duid = robots[0].duid;
-					this.currentRobotDuid = duid;
-					this.robotSelect.value = duid;
-					this.setupSocketListeners(duid);
-				}
+				const duid = robots[0].duid;
+				this.currentRobotDuid = duid;
+				this.host.onRobots?.(robots, duid);
+				this.setupSocketListeners(duid);
 
 				// Fetch HomeData to resolve models reliably
 				const homeDataId = `${this.instanceId}.HomeData`;
@@ -907,13 +813,9 @@ class MapApplication {
 	}
 
 	private setupSocketListeners(duid: string) {
-		if (this.onStateChange && this.currentMapSubscriptions.length > 0) {
-			this.currentMapSubscriptions.forEach((id) => {
-				this.connection.unsubscribeState(id);
-			});
-			this.currentMapSubscriptions = [];
-		}
-		this.panelSubscriptions.forEach((id) => this.connection.unsubscribeState(id));
+		this.currentMapSubscriptions.forEach((id) => this.connection.unsubscribeState(id, this.stateHandler));
+		this.currentMapSubscriptions = [];
+		this.panelSubscriptions.forEach((id) => this.connection.unsubscribeState(id, this.stateHandler));
 		this.panelSubscriptions = [];
 		this.clearPanels();
 
@@ -936,8 +838,6 @@ class MapApplication {
 		this.pureCleanPathGroup.selectAll("*").remove();
 		this.rects = [];
 		this.drawZones();
-		this.deleteButton.disabled = true;
-		this.addButton.disabled = false;
 		this.currentMapBase64Clean = null;
 		this.q10Status = null;
 		this.q10CleaningInfo = null;
@@ -945,7 +845,7 @@ class MapApplication {
 		this.selectedRoomIds.clear();
 		this.roomLabelCount = 0;
 		this.userAdjustedView = false;
-		this.statusConnectionItem.hidden = true;
+		this.connectionChannel = "";
 		this.resetStatusValues();
 		this.updateMapPlaceholder();
 		this.renderRoomSelection();
@@ -960,7 +860,7 @@ class MapApplication {
 
 		// Status bar and mode selectors. deviceStatus.state is the V1 robot state that the UI
 		// used to guess locally; deviceStatus.status is its B01/Q10 counterpart.
-		const statusKeyByStateId = new Map<string, keyof MapApplication["statusValues"]>([
+		const statusKeyByStateId = new Map<string, keyof MapEngine["statusValues"]>([
 			[`${deviceRoot}.deviceStatus.state`, "state"],
 			[`${deviceRoot}.deviceStatus.battery`, "battery"],
 			[`${deviceRoot}.deviceStatus.error_code`, "errorCode"],
@@ -993,9 +893,8 @@ class MapApplication {
 			}
 
 			if (id === connectionPreferredStateId) {
-				const channel = state && state.val !== null && state.val !== undefined ? String(state.val) : "";
-				this.statusConnection.textContent = channel;
-				this.statusConnectionItem.hidden = !channel;
+				this.connectionChannel = state && state.val !== null && state.val !== undefined ? String(state.val) : "";
+				this.renderStatusBar();
 				return;
 			}
 
@@ -1044,12 +943,12 @@ class MapApplication {
 					try {
 						this.map = typeof state.val === "string" ? JSON.parse(state.val) : state.val;
 						if (this.map && "IMAGE" in this.map && this.map.IMAGE) {
-							this.model = this.map.model ?? this.robotModels[this.currentRobotDuid] ?? null;
+							this.model = this.map.model ?? (this.currentRobotDuid ? this.robotModels[this.currentRobotDuid] : null) ?? null;
 							this.mapImage = this.map.IMAGE;
 							this.updateMapImageSize();
 							this.drawOverlaysFromMap();
 						} else if (isQ10MapData(this.map)) {
-							this.model = this.map.model ?? this.robotModels[this.currentRobotDuid] ?? null;
+							this.model = this.map.model ?? (this.currentRobotDuid ? this.robotModels[this.currentRobotDuid] : null) ?? null;
 							this.mapImage = undefined;
 							this.drawOverlaysFromMap();
 						}
@@ -1080,9 +979,9 @@ class MapApplication {
 			}
 		};
 
-		this.currentMapSubscriptions.forEach((id) => this.connection.subscribeState(id));
+		this.currentMapSubscriptions.forEach((id) => void this.connection.subscribeState(id, this.stateHandler));
 
-		this.connection.getStates(this.currentMapSubscriptions).then((states: Record<string, any | null | undefined>) => {
+		void this.connection.getStates(this.currentMapSubscriptions).then((states: Record<string, any | null | undefined>) => {
 			if (!this.onStateChange) return;
 
 			// Try to resolve model from map if already populated
@@ -1103,7 +1002,7 @@ class MapApplication {
 	// -----------------------------------------------------------------------------
 
 	private resetStatusValues(): void {
-		for (const key of Object.keys(this.statusValues) as (keyof MapApplication["statusValues"])[]) {
+		for (const key of Object.keys(this.statusValues) as (keyof MapEngine["statusValues"])[]) {
 			this.statusValues[key] = null;
 		}
 		this.stateTexts = {};
@@ -1149,27 +1048,19 @@ class MapApplication {
 		this.dockStatusRows = [];
 		this.panelStateIds.clear();
 		this.panelValues = {};
-		this.pendingResetPart = null;
 		this.dockErrorStateId = null;
 
-		this.consumablesList.replaceChildren();
-		this.consumablesPanel.hidden = true;
-		this.consumablesBadge.hidden = true;
-		this.dockActions.replaceChildren();
-		this.dockModes.replaceChildren();
-		this.dockStatusList.replaceChildren();
-		this.dockPanel.hidden = true;
-		this.dockBadge.hidden = true;
-		this.dockStatusHint.hidden = true;
+		this.host.onConsumables?.([]);
+		this.host.onDock?.({ controls: [], status: [], faulty: false });
 	}
 
 	/** Lists the state objects below a path prefix; an unreachable view yields an empty panel, not an error. */
 	private async getStateObjectsBelow(prefix: string): Promise<{ id: string; common: Record<string, any> }[]> {
 		try {
-			const response = await this.connection.getObjectView("system", "state", { startkey: prefix, endkey: `${prefix}\u9999` });
-			return (response?.rows ?? [])
-				.map((row: any) => ({ id: String(row?.id ?? row?.value?._id ?? ""), common: (row?.value?.common ?? {}) as Record<string, any> }))
-				.filter((entry: { id: string }) => entry.id.startsWith(prefix) && entry.id.length > prefix.length);
+			const objects = await this.connection.getObjectViewSystem("state", prefix, `${prefix}\u9999`);
+			return Object.entries(objects ?? {})
+				.map(([id, value]) => ({ id: String(id), common: ((value as any)?.common ?? {}) as Record<string, any> }))
+				.filter((entry) => entry.id.startsWith(prefix) && entry.id.length > prefix.length);
 		} catch {
 			return [];
 		}
@@ -1180,7 +1071,7 @@ class MapApplication {
 		if (typeof name === "string" && name.trim()) return name;
 		if (name && typeof name === "object") {
 			const translated = name as Record<string, unknown>;
-			const candidate = translated[document.documentElement.lang] ?? translated.en;
+			const candidate = translated[this.language] ?? translated.en;
 			if (typeof candidate === "string" && candidate.trim()) return candidate;
 		}
 		return fallback;
@@ -1236,9 +1127,6 @@ class MapApplication {
 					name: reset?.name || this.objectName(value.common?.name, partName),
 					metrics: [],
 					resetCommand: reset?.command ?? null,
-					root: document.createElement("div"),
-					dueElement: document.createElement("span"),
-					meterBar: null,
 				};
 				partsByName.set(partName, part);
 			}
@@ -1249,7 +1137,6 @@ class MapApplication {
 				unit: String(value.common?.unit ?? ""),
 				min: this.numericCommon(value.common, "min"),
 				max: this.numericCommon(value.common, "max"),
-				valueElement: document.createElement("span"),
 			});
 		}
 
@@ -1264,106 +1151,7 @@ class MapApplication {
 			}
 		}
 
-		this.renderConsumablePanel();
-	}
-
-	/** Creates the DOM of the consumable panel once; values are patched in afterwards. */
-	private renderConsumablePanel(): void {
-		this.consumablesList.replaceChildren();
-		this.consumablesPanel.hidden = this.consumableParts.length === 0;
-		if (this.consumableParts.length === 0) return;
-
-		for (const part of this.consumableParts) {
-			part.root.className = "consumable";
-
-			const head = document.createElement("div");
-			head.className = "consumable-head";
-			const name = document.createElement("span");
-			name.className = "consumable-name";
-			name.textContent = part.name;
-			part.dueElement.className = "consumable-due";
-			part.dueElement.hidden = true;
-			head.append(name, part.dueElement);
-
-			const values = document.createElement("div");
-			values.className = "consumable-values";
-			values.append(...part.metrics.map((metric) => metric.valueElement));
-
-			part.root.replaceChildren(head, values);
-
-			// A meter is only honest when a part publishes a range the percentage can refer to.
-			if (part.metrics.some((metric) => this.hasLifetimeRange(metric))) {
-				const meter = document.createElement("div");
-				meter.className = "consumable-meter";
-				part.meterBar = document.createElement("span");
-				meter.appendChild(part.meterBar);
-				part.root.appendChild(meter);
-			} else {
-				part.meterBar = null;
-			}
-
-			if (part.resetCommand) part.root.appendChild(this.createResetControls(part));
-
-			this.consumablesList.appendChild(part.root);
-		}
-
 		this.updateConsumableValues();
-	}
-
-	/**
-	 * Builds the inline reset control. The confirmation lives in the panel instead of a
-	 * `confirm()` dialog: an accidental reset falsifies the maintenance planning for good.
-	 * @param part Part the reset belongs to.
-	 */
-	private createResetControls(part: ConsumablePart): HTMLElement {
-		const wrapper = document.createElement("div");
-
-		const resetButton = document.createElement("button");
-		resetButton.type = "button";
-		resetButton.className = "secondary";
-		resetButton.textContent = this.t("ui_consumable_reset", "Reset");
-
-		const confirm = document.createElement("div");
-		confirm.className = "consumable-confirm";
-		confirm.hidden = true;
-
-		const question = document.createElement("p");
-		question.className = "control-hint";
-		question.textContent = this.t("ui_consumable_reset_confirm", "Really reset the counter for %s?", part.name);
-
-		const confirmButton = document.createElement("button");
-		confirmButton.type = "button";
-		confirmButton.className = "danger";
-		confirmButton.textContent = this.t("ui_consumable_reset_yes", "Reset now");
-
-		const cancelButton = document.createElement("button");
-		cancelButton.type = "button";
-		cancelButton.className = "secondary";
-		cancelButton.textContent = this.t("ui_cancel", "Cancel");
-
-		confirm.append(question, confirmButton, cancelButton);
-
-		const setPending = (pending: boolean): void => {
-			// Only one open confirmation at a time, so a pending question cannot be overlooked.
-			if (pending && this.pendingResetPart && this.pendingResetPart !== part.part) {
-				this.consumableParts.find((other) => other.part === this.pendingResetPart)?.setResetPending?.(false);
-			}
-			this.pendingResetPart = pending ? part.part : null;
-			resetButton.hidden = pending;
-			confirm.hidden = !pending;
-		};
-		part.setResetPending = setPending;
-
-		resetButton.addEventListener("click", () => setPending(true));
-		cancelButton.addEventListener("click", () => setPending(false));
-		confirmButton.addEventListener("click", () => {
-			setPending(false);
-			if (!this.currentRobotDuid || !part.resetCommand) return;
-			void this.sendCommand("reset_consumable", { duid: this.currentRobotDuid, consumable: part.resetCommand });
-		});
-
-		wrapper.append(resetButton, confirm);
-		return wrapper;
 	}
 
 	/** True when the object definition declares a range a remaining percentage can be derived from. */
@@ -1391,38 +1179,39 @@ class MapApplication {
 		return metric.unit === "h" && value <= 0;
 	}
 
-	/** Writes the current values into the already built consumable rows. */
+	/** Publishes the current consumable values as view models for the shell. */
 	private updateConsumableValues(): void {
-		let dueParts = 0;
-
-		for (const part of this.consumableParts) {
+		const models: ConsumablePartModel[] = this.consumableParts.map((part) => {
 			let due = false;
 			let percent: number | null = null;
-
-			for (const metric of part.metrics) {
+			const metrics = part.metrics.map((metric) => {
 				const raw = this.panelValues[metric.stateId];
 				const value = raw === null || raw === undefined ? null : Number(raw);
 				const known = value !== null && Number.isFinite(value);
+				if (known) {
+					if (this.isConsumableDue(metric, value)) due = true;
+					const metricPercent = this.consumablePercent(metric, value);
+					if (metricPercent !== null && (percent === null || metricPercent < percent)) percent = metricPercent;
+				}
+				return {
+					name: metric.name,
+					text: known ? `${value}${metric.unit ? ` ${metric.unit}` : ""}` : "–",
+				};
+			});
 
-				metric.valueElement.textContent = known
-					? `${metric.name}: ${value}${metric.unit ? ` ${metric.unit}` : ""}`
-					: `${metric.name}: –`;
-				if (!known) continue;
+			// A meter is only honest when a part publishes a range the percentage can refer to.
+			const hasRange = part.metrics.some((metric) => this.hasLifetimeRange(metric));
+			return {
+				part: part.part,
+				name: part.name,
+				metrics,
+				percent: hasRange ? (percent ?? 0) : null,
+				due,
+				resetCommand: part.resetCommand,
+			};
+		});
 
-				if (this.isConsumableDue(metric, value)) due = true;
-				const metricPercent = this.consumablePercent(metric, value);
-				if (metricPercent !== null && (percent === null || metricPercent < percent)) percent = metricPercent;
-			}
-
-			if (part.meterBar) part.meterBar.style.width = `${percent ?? 0}%`;
-			part.dueElement.textContent = this.t("ui_consumable_due", "Replacement due");
-			part.dueElement.hidden = !due;
-			part.root.classList.toggle("is-due", due);
-			if (due) dueParts++;
-		}
-
-		this.consumablesBadge.textContent = String(dueParts);
-		this.consumablesBadge.hidden = dueParts === 0;
+		this.host.onConsumables?.(models);
 	}
 
 	/**
@@ -1442,8 +1231,6 @@ class MapApplication {
 		if (this.currentRobotDuid !== duid) return;
 
 		this.dockControls = [];
-		this.dockActions.replaceChildren();
-		this.dockModes.replaceChildren();
 
 		for (const { entry, object } of commandObjects) {
 			if (!object?.common) continue;
@@ -1456,10 +1243,7 @@ class MapApplication {
 		if (dockErrorObject?.common) {
 			this.dockStatusRows.unshift(this.createDockStatusRow(dockErrorId, dockErrorObject.common));
 		}
-		this.dockStatusList.replaceChildren(...this.dockStatusRows.map((row) => row.root));
-		this.dockStatusHint.hidden = this.dockStatusRows.length > 0;
 
-		this.dockPanel.hidden = this.dockControls.length === 0 && this.dockStatusRows.length === 0;
 		this.updateDockValues();
 	}
 
@@ -1469,100 +1253,69 @@ class MapApplication {
 		const states = this.normalizeStates(common.states);
 
 		if (states) {
-			const field = document.createElement("label");
-			field.className = "field";
-			const caption = document.createElement("span");
-			caption.textContent = label;
-			const select = document.createElement("select");
-			for (const [value, text] of Object.entries(states)) {
-				const option = document.createElement("option");
-				option.value = value;
-				option.text = text;
-				select.appendChild(option);
-			}
-			select.addEventListener("change", () => this.sendDockValue(entry.command, select.value));
-			field.append(caption, select);
-			this.dockModes.appendChild(field);
-			return { command: entry.command, stateId, kind: "select", select };
+			const options = Object.entries(states).map(([value, text]) => ({ value, label: text }));
+			return { command: entry.command, stateId, label, kind: "select", options };
 		}
 
 		if (common.type !== "boolean") return null;
 
 		// A switch keeps both positions reachable; a button only knows "trigger".
 		if (common.role !== "button") {
-			const field = document.createElement("label");
-			field.className = "field";
-			const caption = document.createElement("span");
-			caption.textContent = label;
-			const select = document.createElement("select");
-			for (const [value, text] of [["true", this.t("ui_on", "On")], ["false", this.t("ui_off", "Off")]]) {
-				const option = document.createElement("option");
-				option.value = value;
-				option.text = text;
-				select.appendChild(option);
-			}
-			select.addEventListener("change", () => this.sendDockValue(entry.command, select.value === "true"));
-			field.append(caption, select);
-			this.dockModes.appendChild(field);
-			return { command: entry.command, stateId, kind: "switch", select };
+			return {
+				command: entry.command,
+				stateId,
+				label,
+				kind: "switch",
+				options: [
+					{ value: "true", label: this.t("ui_on", "On") },
+					{ value: "false", label: this.t("ui_off", "Off") },
+				],
+			};
 		}
 
-		const button = document.createElement("button");
-		button.type = "button";
-		button.textContent = label;
-		button.addEventListener("click", () => this.sendDockValue(entry.command, true));
-		this.dockActions.appendChild(button);
-		return { command: entry.command, stateId, kind: "button", select: null };
+		return { command: entry.command, stateId, label, kind: "button", options: [] };
 	}
 
 	/** Writes a dock command through the guarded generic writer. */
-	private sendDockValue(command: string, value: unknown): void {
+	public sendDockValue(command: string, value: unknown): void {
 		if (!this.currentRobotDuid) return;
 		void this.sendCommand("set_state", { duid: this.currentRobotDuid, folder: "commands", command, value });
 	}
 
-	/** Builds one station status line; the label and value texts come from the object definition. */
+	/** Describes one station status line; the label and value texts come from the object definition. */
 	private createDockStatusRow(stateId: string, common: Record<string, any>): DockStatusRow {
-		const root = document.createElement("div");
-		root.className = "dock-status-row";
-
-		const name = document.createElement("span");
-		name.className = "dock-status-name";
-		name.textContent = this.objectName(common?.name, stateId.split(".").pop() ?? stateId);
-
-		const value = document.createElement("span");
-		value.className = "dock-status-value";
-		value.textContent = "–";
-
-		root.append(name, value);
-		return { stateId, states: this.normalizeStates(common?.states), unit: String(common?.unit ?? ""), root, valueElement: value };
+		return {
+			stateId,
+			name: this.objectName(common?.name, stateId.split(".").pop() ?? stateId),
+			states: this.normalizeStates(common?.states),
+			unit: String(common?.unit ?? ""),
+		};
 	}
 
-	/** Writes the current values into the dock panel. */
+	/** Publishes the current dock values as a view model for the shell. */
 	private updateDockValues(): void {
-		for (const control of this.dockControls) {
-			if (!control.select) continue;
+		const controls: DockControlModel[] = this.dockControls.map((control) => {
 			const raw = this.panelValues[control.stateId];
-			if (raw === null || raw === undefined) continue;
-			const value = control.kind === "switch" ? String(raw === true || raw === "true") : String(raw);
-			if (Array.from(control.select.options).some((option) => option.value === value)) control.select.value = value;
-		}
-
-		for (const row of this.dockStatusRows) {
-			const raw = this.panelValues[row.stateId];
-			if (raw === null || raw === undefined) {
-				row.valueElement.textContent = "–";
-				continue;
+			let value: string | null = null;
+			if (raw !== null && raw !== undefined) {
+				const candidate = control.kind === "switch" ? String(raw === true || raw === "true") : String(raw);
+				if (control.options.some((option) => option.value === candidate)) value = candidate;
 			}
+			return { command: control.command, label: control.label, kind: control.kind, options: control.options, value };
+		});
+
+		const status: DockStatusModel[] = this.dockStatusRows.map((row) => {
+			const raw = this.panelValues[row.stateId];
+			if (raw === null || raw === undefined) return { stateId: row.stateId, name: row.name, text: "–" };
 			const text = row.states?.[String(raw)] ?? (typeof raw === "boolean" ? this.t(raw ? "ui_on" : "ui_off", raw ? "On" : "Off") : undefined);
-			row.valueElement.textContent = text ?? `${String(raw)}${row.unit ? ` ${row.unit}` : ""}`;
-		}
+			return { stateId: row.stateId, name: row.name, text: text ?? `${String(raw)}${row.unit ? ` ${row.unit}` : ""}` };
+		});
 
 		// A collapsed panel would hide a dock fault, so it is flagged on the summary line.
 		const dockError = this.dockErrorStateId === null ? null : Number(this.panelValues[this.dockErrorStateId]);
 		const faulty = dockError !== null && Number.isFinite(dockError) && dockError > 0;
-		this.dockBadge.textContent = this.t("ui_error", "Error");
-		this.dockBadge.hidden = !faulty;
+
+		this.host.onDock?.({ controls, status, faulty });
 	}
 
 	/** Subscribes to every state the two panels display and fetches their current values. */
@@ -1574,7 +1327,8 @@ class MapApplication {
 			for (const metric of part.metrics) ids.add(metric.stateId);
 		}
 		for (const control of this.dockControls) {
-			if (control.select) ids.add(control.stateId);
+			// A push button has no value to display, so it needs no subscription either.
+			if (control.kind !== "button") ids.add(control.stateId);
 		}
 		for (const row of this.dockStatusRows) ids.add(row.stateId);
 
@@ -1582,8 +1336,8 @@ class MapApplication {
 		this.panelSubscriptions = Array.from(ids);
 		if (this.panelSubscriptions.length === 0) return;
 
-		this.panelSubscriptions.forEach((id) => this.connection.subscribeState(id));
-		this.connection.getStates(this.panelSubscriptions).then((states: Record<string, any | null | undefined>) => {
+		this.panelSubscriptions.forEach((id) => void this.connection.subscribeState(id, this.stateHandler));
+		void this.connection.getStates(this.panelSubscriptions).then((states: Record<string, any | null | undefined>) => {
 			if (this.currentRobotDuid !== duid) return;
 			for (const id of this.panelSubscriptions) {
 				const state = states[id];
@@ -1601,22 +1355,28 @@ class MapApplication {
 			if (this.currentRobotDuid !== duid) return;
 
 			const states = this.normalizeStates(object?.common?.states);
-			control.select.replaceChildren();
-			if (!states) {
-				control.field.hidden = true;
-				continue;
-			}
-
-			for (const [value, label] of Object.entries(states)) {
-				const option = document.createElement("option");
-				option.value = value;
-				option.text = label;
-				control.select.appendChild(option);
-			}
-			control.field.hidden = false;
+			// An empty option list hides the selector; the device simply does not offer that mode.
+			control.options = states ? Object.entries(states).map(([value, label]) => ({ value, label })) : [];
 		}
 
-		this.modeGroup.hidden = this.modeControls.every((control) => control.field.hidden);
+		this.publishModes();
+	}
+
+	/** Publishes the mode selectors together with the value the robot currently reports. */
+	private publishModes(): void {
+		const models: ModeModel[] = this.modeControls
+			.filter((control) => control.options.length > 0)
+			.map((control) => {
+				const value = this.statusValues[control.statusKey];
+				const option = value === null ? null : String(value);
+				return {
+					command: control.command,
+					labelKey: control.labelKey,
+					options: control.options,
+					value: option !== null && control.options.some((entry) => entry.value === option) ? option : null,
+				};
+			});
+		this.host.onModes?.(models);
 	}
 
 	/** Fills the floor selector from the `load_multi_map` command object the adapter maintains. */
@@ -1625,80 +1385,49 @@ class MapApplication {
 		if (this.currentRobotDuid !== duid) return;
 
 		const states = this.normalizeStates(object?.common?.states);
-		this.floorSelect.replaceChildren();
 
-		if (!states || Object.keys(states).length < 2) {
-			this.floorField.hidden = true;
-			return;
-		}
-
-		for (const [mapFlag, name] of Object.entries(states)) {
-			const option = document.createElement("option");
-			option.value = mapFlag;
-			option.text = name;
-			this.floorSelect.appendChild(option);
-		}
-		this.floorField.hidden = false;
+		// A single floor is not a choice, so the selector stays away entirely.
+		this.floors = !states || Object.keys(states).length < 2 ? [] : Object.entries(states).map(([mapFlag, name]) => ({ value: mapFlag, label: name }));
+		this.selectedFloor = null;
 		this.syncFloorSelection();
 	}
 
 	/** Marks the floor the currently displayed map belongs to. */
 	private syncFloorSelection(): void {
-		if (this.floorField.hidden) return;
-		const mapFlag = normalizeMapFlag((this.map as { mapFlag?: unknown } | undefined)?.mapFlag);
-		if (mapFlag === null) return;
-		const value = String(mapFlag);
-		if (Array.from(this.floorSelect.options).some((option) => option.value === value)) {
-			this.floorSelect.value = value;
-		}
-	}
-
-	/** Writes the live device status into the header line and the mode selectors. */
-	private renderStatusBar(): void {
-		const stateCode = this.statusValues.state ?? this.statusValues.status;
-		this.statusState.textContent =
-			stateCode === null ? "–" : this.stateTexts[String(stateCode)] || `${this.t("ui_unknown", "Unknown")} (${stateCode})`;
-
-		this.statusBattery.textContent = this.statusValues.battery === null ? "–" : `${this.statusValues.battery} %`;
-		this.statusArea.textContent = this.statusValues.cleanArea === null ? "–" : `${this.statusValues.cleanArea} m²`;
-		this.statusDuration.textContent = this.statusValues.cleanTime === null ? "–" : `${this.statusValues.cleanTime} min`;
-
-		const errorCode = this.statusValues.errorCode;
-		if (errorCode !== null && errorCode > 0) {
-			const errorLabel = this.errorTexts[String(errorCode)] || String(errorCode);
-			this.statusError.textContent = `${this.t("ui_error", "Error")}: ${errorLabel}`;
-			this.statusError.hidden = false;
-		} else {
-			this.statusError.textContent = "";
-			this.statusError.hidden = true;
-		}
-
-		for (const control of this.modeControls) {
-			const value = this.statusValues[control.statusKey];
-			if (value === null || control.field.hidden) continue;
-			const option = String(value);
-			if (Array.from(control.select.options).some((entry) => entry.value === option)) {
-				control.select.value = option;
+		if (this.floors.length) {
+			const mapFlag = normalizeMapFlag((this.map as { mapFlag?: unknown } | undefined)?.mapFlag);
+			if (mapFlag !== null) {
+				const value = String(mapFlag);
+				if (this.floors.some((floor) => floor.value === value)) this.selectedFloor = value;
 			}
 		}
-
-		this.updateActionButtons(stateCode);
+		this.host.onFloors?.(this.floors, this.selectedFloor);
 	}
 
-	/**
-	 * Shows Start or Pause based on the reported robot state instead of guessing locally.
-	 * A run started from the phone app therefore shows up here as well.
-	 * @param stateCode Current robot state code, or null when unknown.
-	 */
-	private updateActionButtons(stateCode: number | null): void {
-		const running = stateCode !== null && RUNNING_STATE_CODES.has(stateCode);
-		this.startButton.hidden = running;
-		this.pauseButton.hidden = !running;
+	/** Publishes the live device status and refreshes the mode selectors. */
+	private renderStatusBar(): void {
+		const stateCode = this.statusValues.state ?? this.statusValues.status;
+		const errorCode = this.statusValues.errorCode;
+
+		const status: StatusModel = {
+			stateText: stateCode === null ? null : this.stateTexts[String(stateCode)] || `${this.t("ui_unknown", "Unknown")} (${stateCode})`,
+			battery: this.statusValues.battery,
+			cleanArea: this.statusValues.cleanArea,
+			cleanTime: this.statusValues.cleanTime,
+			errorText: errorCode !== null && errorCode > 0 ? this.errorTexts[String(errorCode)] || String(errorCode) : null,
+			connectionChannel: this.connectionChannel,
+			// Start or Pause follows the reported robot state instead of a local guess, so a run
+			// started from the phone app shows up here as well.
+			running: stateCode !== null && RUNNING_STATE_CODES.has(stateCode),
+		};
+
+		this.host.onStatus?.(status);
+		this.publishModes();
 	}
 
-	/** Hides the "waiting for map" hint as soon as any map content arrived. */
+	/** Tells the shell whether any map content arrived, so it can hide its waiting hint. */
 	private updateMapPlaceholder(): void {
-		this.mapPlaceholder.hidden = !!this.currentMapBase64Clean || !!this.map;
+		this.host.onMapPresence?.(!!this.currentMapBase64Clean || !!this.map);
 	}
 	// -----------------------------------------------------------------------------
 	// Drawing Methods (single source: drawMapV1 + SVGMapRenderer)
@@ -1878,13 +1607,8 @@ class MapApplication {
 					}
 					this.popupImage.src = imageData;
 					this.popup.style.display = "block";
-					this.triangle.style.display = "block";
 					this.updatePopupPosition();
-					this.popupTimeout = window.setTimeout(() => {
-						this.popup.style.display = "none";
-						this.triangle.style.display = "none";
-						this.popupTimeout = null;
-					}, 3000);
+					this.popupTimeout = window.setTimeout(() => this.hideObstaclePopup(), 3000);
 				}
 		})
 			.catch((err) => {
@@ -1997,12 +1721,12 @@ class MapApplication {
 		className: string,
 		stroke: string,
 		lineWidth: number,
-		dash?: number[],
+		dash?: readonly number[],
 		dashOffset = 0
 	): void {
 		if (!pathData) return;
 
-		group
+		const path = group
 			.append("path")
 			.attr("class", className)
 			.attr("d", pathData)
@@ -2010,9 +1734,11 @@ class MapApplication {
 			.style("stroke", stroke)
 			.style("stroke-width", `${lineWidth}px`)
 			.style("stroke-linecap", "round")
-			.style("stroke-linejoin", "round")
-			.style("stroke-dasharray", dash ? dash.join(",") : null)
-			.style("stroke-dashoffset", dash ? `${dashOffset}px` : null);
+			.style("stroke-linejoin", "round");
+
+		if (dash) {
+			path.style("stroke-dasharray", dash.join(",")).style("stroke-dashoffset", `${dashOffset}px`);
+		}
 	}
 
 	private drawQ10PathOverlays(map: Q10FrontendMapData, geometry: Q10MapGeometry): void {
@@ -2284,28 +2010,20 @@ class MapApplication {
 		this.roomNameGroup.selectAll<SVGGElement, unknown>("g.room-label").each(function () {
 			const label = d3.select(this);
 			const segmentId = normalizeRoomId(label.attr("data-segment-id"));
-			label.select("rect.room-label-selection").style("display", segmentId !== null && selected.has(segmentId) ? null : "none");
+			const box = label.select("rect.room-label-selection");
+			if (segmentId !== null && selected.has(segmentId)) box.style("display", null);
+			else box.style("display", "none");
 		});
 	}
 
-	/** Updates hint text and the two room buttons. */
+	/** Publishes how many rooms are selected and how many the current map offers. */
 	private renderRoomSelection(): void {
-		const count = this.selectedRoomIds.size;
-		this.cleanRoomsButton.disabled = count === 0;
-		this.clearRoomsButton.disabled = count === 0;
-
-		if (count > 0) {
-			this.roomHint.textContent = this.t("ui_selected_rooms", "Selected: %s", count);
-		} else if (this.roomLabelCount === 0) {
-			this.roomHint.textContent = this.t("ui_no_rooms", "No rooms available for this map.");
-		} else {
-			this.roomHint.textContent = this.t("ui_rooms_hint", "Click a room name in the map to select it.");
-		}
+		this.host.onRooms?.({ selected: this.selectedRoomIds.size, available: this.roomLabelCount });
 	}
 
-	/** Shows how many zones are still possible; the limit is a UI decision, see MAX_ZONES. */
+	/** Publishes the zone count; the limit is a UI decision, see MAX_ZONES. */
 	private renderZoneHint(): void {
-		this.zoneHint.textContent = this.rects.length >= MAX_ZONES ? this.t("ui_zone_limit", "At most %s zones can be cleaned in one run.", MAX_ZONES) : "";
+		this.host.onZones?.({ count: this.rects.length, max: MAX_ZONES, atLimit: this.rects.length >= MAX_ZONES });
 	}
 
 	private updateBackgroundImageFromStateCache(): void {
@@ -2528,7 +2246,6 @@ class MapApplication {
 			.on("start", (event: any) => {
 				const element = event.sourceEvent.target.closest("g.zone");
 				if (element) d3.select(element).raise().style("cursor", "grabbing");
-				this.deleteButton.disabled = false;
 			})
 			.on("drag", (event: any, d: Rect) => {
 				if (!this.hasDrawableMapBounds()) return;
@@ -2603,9 +2320,8 @@ class MapApplication {
 	private updateRobotZones() {
 		const params = this.getMapParams();
 		if (!params) return;
-		const cleanCountInput = document.getElementById("cleanCount") as HTMLInputElement;
 		this.zones = [];
-		const cleanCount = parseInt(cleanCountInput.value) || 1;
+		const cleanCount = this.cleanCount;
 		for (const rect of this.rects) {
 			const p1 = { x: rect.x, y: rect.y };
 			const p2 = { x: rect.x + rect.width, y: rect.y + rect.height };
@@ -2646,11 +2362,13 @@ class MapApplication {
 			: null;
 		const scaledRobotSize = q10Geometry ? q10Geometry.imgRateLength(8) : this.rescaler.robotSize();
 		const params = this.getMapParams();
+		// Robot and charger positions only exist on V1 maps; a Q10 map places them in its overlays.
+		const v1Map = this.map && !isQ10MapData(this.map) ? (this.map as MapData) : undefined;
 		this.robotGroup.selectAll("image.robot").attr("width", scaledRobotSize).attr("height", scaledRobotSize);
-		if (params && this.map?.ROBOT_POSITION?.position) {
-			const pos = this.map.ROBOT_POSITION.position;
+		if (params && v1Map?.ROBOT_POSITION?.position) {
+			const pos = v1Map.ROBOT_POSITION.position;
 			const svgCoords = this.robotToSvg({ x: pos[0], y: pos[1] }, params);
-			const angle = -(this.map.ROBOT_POSITION.angle ?? 0) + 90;
+			const angle = -(v1Map.ROBOT_POSITION.angle ?? 0) + 90;
 			this.robotGroup
 				.selectAll("image.robot")
 				.attr("transform", `translate(${svgCoords.x}, ${svgCoords.y}) rotate(${angle}) translate(${-scaledRobotSize / 2}, ${-scaledRobotSize / 2})`);
@@ -2658,8 +2376,8 @@ class MapApplication {
 
 		const scaledChargerSize = q10Geometry ? q10Geometry.imgRateLength(8) : this.rescaler.chargerSize();
 		this.chargerGroup.selectAll("image.charger").attr("width", scaledChargerSize).attr("height", scaledChargerSize);
-		if (params && this.map?.CHARGER_LOCATION?.position) {
-			const pos = this.map.CHARGER_LOCATION.position;
+		if (params && v1Map?.CHARGER_LOCATION?.position) {
+			const pos = v1Map.CHARGER_LOCATION.position;
 			const c = this.robotToSvg({ x: pos[0], y: pos[1] }, params);
 			this.chargerGroup
 				.selectAll("image.charger")
@@ -2768,234 +2486,231 @@ class MapApplication {
 		return Math.round(number * 100) / 100;
 	}
 
-	private getQueryParam(param: string): string | null {
-		const urlParams = new URLSearchParams(window.location.search);
-		return urlParams.get(param);
+	// -----------------------------------------------------------------------------
+	// Public command surface
+	//
+	// What used to be a click listener on a fixed button is now a method the React shell
+	// calls. The bodies are the ones the standalone page ran, so the behaviour - including
+	// the zone limit and the go-to gesture - is unchanged.
+	// -----------------------------------------------------------------------------
+
+	/** Switches to another robot and rebuilds every subscription and panel for it. */
+	public selectRobot(duid: string): void {
+		if (!duid || duid === this.currentRobotDuid) return;
+		this.currentRobotDuid = duid;
+		this.host.onRobots?.(this.robots, duid);
+		this.setupSocketListeners(duid);
 	}
 
-	private bindUiEvents() {
-		this.robotSelect.addEventListener("change", () => {
-			const newDuid = this.robotSelect.value;
-			if (newDuid && newDuid !== this.currentRobotDuid) {
-				this.currentRobotDuid = newDuid;
-				this.setupSocketListeners(newDuid);
-			}
-		});
+	/** Switches the active floor. The adapter verifies the map flag before it acts on it. */
+	public selectFloor(value: string): void {
+		const mapFlag = normalizeMapFlag(value);
+		if (!this.currentRobotDuid || mapFlag === null) return;
+		this.selectedFloor = value;
+		this.host.onFloors?.(this.floors, this.selectedFloor);
+		this.clearRoomSelection();
+		void this.sendCommand("load_multi_map", { duid: this.currentRobotDuid, mapFlag });
+	}
 
-		this.floorSelect.addEventListener("change", () => {
-			const mapFlag = normalizeMapFlag(this.floorSelect.value);
-			if (!this.currentRobotDuid || mapFlag === null) return;
-			this.clearRoomSelection();
-			void this.sendCommand("load_multi_map", { duid: this.currentRobotDuid, mapFlag });
-		});
+	/** Writes one of the fan/mop/water modes through the guarded generic writer. */
+	public setMode(command: string, value: string): void {
+		if (!this.currentRobotDuid) return;
+		void this.sendCommand("set_state", { duid: this.currentRobotDuid, folder: "commands", command, value });
+	}
 
-		for (const control of this.modeControls) {
-			control.select.addEventListener("change", () => {
-				if (!this.currentRobotDuid) return;
-				void this.sendCommand("set_state", {
-					duid: this.currentRobotDuid,
-					folder: "commands",
-					command: control.command,
-					value: control.select.value,
-				});
-			});
+	/** Starts a segment run for the rooms the user picked in the map. */
+	public cleanSelectedRooms(): void {
+		if (!this.currentRobotDuid || this.selectedRoomIds.size === 0) return;
+		const segments = Array.from(this.selectedRoomIds);
+		void this.sendCommand("app_segment_clean", { duid: this.currentRobotDuid, segments });
+		this.clearRoomSelection();
+	}
+
+	/** Drops the room selection without sending anything. */
+	public clearRooms(): void {
+		this.clearRoomSelection();
+	}
+
+	/** Repeat count of the next zoned run. */
+	public setCleanCount(count: number): void {
+		this.cleanCount = Number.isFinite(count) && count > 0 ? Math.trunc(count) : 1;
+		this.updateRobotZones();
+	}
+
+	/** Removes the zone added last. */
+	public removeZone(): void {
+		if (this.rects.length === 0) return;
+		this.rects.pop();
+		this.drawZones();
+		this.renderZoneHint();
+		this.updateRobotZones();
+	}
+
+	/** Drops a new zone into the middle of the current view, up to the MAX_ZONES limit. */
+	public addZone(): void {
+		if (this.rects.length >= MAX_ZONES) return;
+		// Placing a zone and placing a go-to target are the same gesture; only one can be active.
+		if (this.goToTarget) this.cancelGoTo();
+
+		const svgWidth = parseFloat(this.svg.attr("width"));
+		const svgHeight = parseFloat(this.svg.attr("height"));
+		const centerWorld = this.screenToWorldCoords(svgWidth / 2, svgHeight / 2);
+		const params = this.getMapParams();
+		if (!params) return;
+
+		this.rects.push({
+			id: this.rectCounter++,
+			x: centerWorld.x - 25 * params.scaleFactor,
+			y: centerWorld.y - 25 * params.scaleFactor,
+			width: 50 * params.scaleFactor,
+			height: 50 * params.scaleFactor,
+		});
+		this.drawZones();
+		this.renderZoneHint();
+		this.updateRobotZones();
+	}
+
+	/** Starts a run: a zoned one while zones are drawn, otherwise the plain start. */
+	public start(): void {
+		if (!this.currentRobotDuid) return;
+		this.updateRobotZones();
+		const command = this.zones.length > 0 ? "app_zoned_clean" : "app_start";
+		const parameters = this.zones.length > 0 ? { zones: this.zones, duid: this.currentRobotDuid } : { duid: this.currentRobotDuid };
+		void this.sendCommand(command, parameters);
+		this.rects = [];
+		this.drawZones();
+		this.renderZoneHint();
+	}
+
+	public pause(): void {
+		if (!this.currentRobotDuid) return;
+		void this.sendCommand("app_pause", { duid: this.currentRobotDuid });
+	}
+
+	public stop(): void {
+		if (!this.currentRobotDuid) return;
+		void this.sendCommand("app_stop", { duid: this.currentRobotDuid });
+	}
+
+	public dock(): void {
+		if (!this.currentRobotDuid) return;
+		void this.sendCommand("app_charge", { duid: this.currentRobotDuid });
+	}
+
+	/** Presses one consumable reset button. The shell asks for confirmation before calling this. */
+	public resetConsumable(command: string): void {
+		if (!this.currentRobotDuid || !command) return;
+		void this.sendCommand("reset_consumable", { duid: this.currentRobotDuid, consumable: command });
+	}
+
+	/** Returns the view to the fit that was computed for the current map. */
+	public resetZoom(): void {
+		if (!this.initialTransform) return;
+		this.svgContainer.transition().duration(750).call(this.zoom.transform as any, this.initialTransform);
+		this.userAdjustedView = false;
+	}
+
+	/** Enters or leaves the go-to gesture: the next click on the map becomes the target. */
+	public toggleGoTo(): void {
+		if (this.goToTarget) {
+			this.cancelGoTo();
+			return;
 		}
 
-		this.cleanRoomsButton.addEventListener("click", () => {
-			if (!this.currentRobotDuid || this.selectedRoomIds.size === 0) return;
-			const segments = Array.from(this.selectedRoomIds);
-			void this.sendCommand("app_segment_clean", { duid: this.currentRobotDuid, segments });
-			this.clearRoomSelection();
-		});
+		this.goToTarget = true;
+		this.svg.style("cursor", "none");
+		this.host.onGoToMode?.(true);
 
-		this.clearRoomsButton.addEventListener("click", () => this.clearRoomSelection());
+		const transform = d3.zoomTransform(this.svgContainer.node() as Element);
+		const svgWidth = parseFloat(this.svg.attr("width"));
+		const svgHeight = parseFloat(this.svg.attr("height"));
+		const [initialX, initialY] = transform.invert([svgWidth / 2, svgHeight / 2]);
+		const scaledPinWidth = this.rescaler.pinWidth();
+		const scaledPinHeight = this.rescaler.pinHeight();
+		const scaledPinYOffset = this.rescaler.pinYOffset();
+		const pin = this.pinGroup.select("image.goto-pin");
+		pin
+			.style("display", "block")
+			.style("opacity", 0.7)
+			.attr("data-center-x", initialX)
+			.attr("data-center-y", initialY)
+			.attr("x", initialX - scaledPinWidth / 2)
+			.attr("y", initialY - (scaledPinHeight - scaledPinYOffset));
 
-		this.deleteButton.addEventListener("click", () => {
-			if (this.rects.length > 0) {
-				this.rects.pop();
-				this.drawZones();
-				if (this.rects.length < MAX_ZONES) this.addButton.disabled = false;
-				if (this.rects.length < 1) this.deleteButton.disabled = true;
-				this.renderZoneHint();
-			}
-		});
-
-		this.addButton.addEventListener("click", () => {
-			if (this.goToTarget) {
-				this.goToTarget = false;
-				this.svg.style("cursor", "grab");
-				this.svgContainer.on("mousemove.gototarget", null);
-				this.svgContainer.on("click.gototarget", null);
-				this.pinGroup.select("image.goto-pin").style("display", "none").style("opacity", 0);
-				this.goToButton.textContent = this.t("ui_goto", "Go to point");
-				return;
-			}
-			const svgWidth = parseFloat(this.svg.attr("width"));
-			const svgHeight = parseFloat(this.svg.attr("height"));
-			const centerWorld = this.screenToWorldCoords(svgWidth / 2, svgHeight / 2);
-			const params = this.getMapParams();
-			if (!params) return;
-
-			this.rects.push({
-				id: this.rectCounter++,
-				x: centerWorld.x - 25 * params.scaleFactor,
-				y: centerWorld.y - 25 * params.scaleFactor,
-				width: 50 * params.scaleFactor,
-				height: 50 * params.scaleFactor,
-			});
-			this.drawZones();
-			if (this.rects.length > 0) this.deleteButton.disabled = false;
-			if (this.rects.length >= MAX_ZONES) this.addButton.disabled = true;
-			this.renderZoneHint();
-			this.updateRobotZones();
-		});
-
-		this.startButton.addEventListener("click", () => {
-			if (!this.currentRobotDuid) return;
-			this.updateRobotZones();
-			const command = this.zones.length > 0 ? "app_zoned_clean" : "app_start";
-			const parameters = this.zones.length > 0 ? { zones: this.zones, duid: this.currentRobotDuid } : { duid: this.currentRobotDuid };
-			void this.sendCommand(command, parameters);
-			this.rects = [];
-			this.drawZones();
-			this.deleteButton.disabled = true;
-			this.addButton.disabled = false;
-			this.renderZoneHint();
-			// No local guessing anymore: Start/Pause follow the reported robot state.
-		});
-
-		this.pauseButton.addEventListener("click", () => {
-			if (!this.currentRobotDuid) return;
-			void this.sendCommand("app_pause", { duid: this.currentRobotDuid });
-		});
-
-		this.stopButton.addEventListener("click", () => {
-			if (!this.currentRobotDuid) return;
-			void this.sendCommand("app_stop", { duid: this.currentRobotDuid });
-		});
-
-		this.dockButton.addEventListener("click", () => {
-			if (!this.currentRobotDuid) return;
-			void this.sendCommand("app_charge", { duid: this.currentRobotDuid });
-		});
-
-		this.goToButton.addEventListener("click", () => {
-			if (this.goToTarget) {
-				this.goToTarget = false;
-				this.svg.style("cursor", "grab");
-				this.svgContainer.on("mousemove.gototarget", null);
-				this.svgContainer.on("click.gototarget", null);
-				this.pinGroup.select("image.goto-pin").style("display", "none").style("opacity", 0);
-				this.goToButton.textContent = this.t("ui_goto", "Go to point");
-				return;
-			}
-			this.goToTarget = true;
-			this.svg.style("cursor", "none");
-			this.goToButton.textContent = this.t("ui_cancel", "Cancel");
-			const transform = d3.zoomTransform(this.svgContainer.node() as Element);
-			const svgWidth = parseFloat(this.svg.attr("width"));
-			const svgHeight = parseFloat(this.svg.attr("height"));
-			const [initialX, initialY] = transform.invert([svgWidth / 2, svgHeight / 2]);
-			const scaledPinWidth = this.rescaler.pinWidth();
-			const scaledPinHeight = this.rescaler.pinHeight();
-			const scaledPinYOffset = this.rescaler.pinYOffset();
-			const pin = this.pinGroup.select("image.goto-pin");
+		this.svgContainer.on("mousemove.gototarget", (event: MouseEvent) => {
+			const [mouseX, mouseY] = d3.pointer(event, this.mainGroup.node());
+			const scaledW = this.rescaler.pinWidth();
+			const scaledH = this.rescaler.pinHeight();
+			const scaledOff = this.rescaler.pinYOffset();
 			pin
-				.style("display", "block")
-				.style("opacity", 0.7)
-				.attr("data-center-x", initialX)
-				.attr("data-center-y", initialY)
-				.attr("x", initialX - scaledPinWidth / 2)
-				.attr("y", initialY - (scaledPinHeight - scaledPinYOffset));
+				.attr("data-center-x", mouseX)
+				.attr("data-center-y", mouseY)
+				.attr("x", mouseX - scaledW / 2)
+				.attr("y", mouseY - (scaledH - scaledOff));
+		});
 
-			this.svgContainer.on("mousemove.gototarget", (event: MouseEvent) => {
-				const [mouseX, mouseY] = d3.pointer(event, this.mainGroup.node());
-				const scaledW = this.rescaler.pinWidth();
-				const scaledH = this.rescaler.pinHeight();
-				const scaledOff = this.rescaler.pinYOffset();
-				pin
-					.attr("data-center-x", mouseX)
-					.attr("data-center-y", mouseY)
-					.attr("x", mouseX - scaledW / 2)
-					.attr("y", mouseY - (scaledH - scaledOff));
+		this.svgContainer.on("click.gototarget", (event: MouseEvent) => {
+			event.stopImmediatePropagation();
+			const params = this.getMapParams();
+			if (!this.currentRobotDuid || !params) return;
+			const [mouseX, mouseY] = d3.pointer(event, this.mainGroup.node());
+			const point = localCoordsToRobotCoords({ x: mouseX, y: mouseY }, params);
+			void this.sendCommand("app_goto_target", { points: [point.x, point.y], duid: this.currentRobotDuid });
+			// The pin stays where the robot was sent, so the target remains visible.
+			pin.style("opacity", 1.0);
+			this.goToTarget = false;
+			this.svg.style("cursor", "grab");
+			this.svgContainer.on("mousemove.gototarget", null);
+			this.svgContainer.on("click.gototarget", null);
+			this.host.onGoToMode?.(false);
+		});
+	}
+
+	/** Leaves the go-to gesture and removes the pin again. */
+	private cancelGoTo(): void {
+		this.goToTarget = false;
+		this.svg.style("cursor", "grab");
+		this.svgContainer.on("mousemove.gototarget", null);
+		this.svgContainer.on("click.gototarget", null);
+		this.pinGroup.select("image.goto-pin").style("display", "none").style("opacity", 0);
+		this.host.onGoToMode?.(false);
+	}
+
+	/** Closes the small hover preview above the map. */
+	private hideObstaclePopup(): void {
+		this.popup.style.display = "none";
+		if (this.popupTimeout) clearTimeout(this.popupTimeout);
+		this.popupTimeout = null;
+	}
+
+	/**
+	 * Loads the full obstacle photo the user clicked in the preview and hands it to the shell,
+	 * which shows it in a dialog.
+	 */
+	private openObstaclePhoto(): void {
+		this.hideObstaclePopup();
+		if (!this.currentRobotDuid || !this.selectedObstacleID) return;
+
+		this.connection
+			.sendTo(this.instanceId, "get_obstacle_image", { obstacleId: this.selectedObstacleID, duid: this.currentRobotDuid, type: 0 })
+			.then((response: any) => {
+				if (this.destroyed || !response?.image) return;
+				let imageData = String(response.image);
+				if (!imageData.startsWith("data:image/")) imageData = `data:image/png;base64,${imageData}`;
+
+				const raw = response.bbox;
+				// A bounding box is only usable when the robot reported the size it refers to.
+				const bbox: ObstaclePhotoModel["bbox"] =
+					raw && Number(raw.imageWidth) > 0 && Number(raw.imageHeight) > 0
+						? { x: Number(raw.x), y: Number(raw.y), w: Number(raw.w), h: Number(raw.h), imageWidth: Number(raw.imageWidth), imageHeight: Number(raw.imageHeight) }
+						: null;
+
+				this.host.onObstaclePhoto?.({ image: imageData.replace(/\s/g, ""), bbox });
+			})
+			.catch((err: unknown) => {
+				console.error("Error getting large obstacle image:", err);
+				this.showError(this.t("ui_command_failed", "Command failed: %s", this.errorText(err)));
 			});
-
-			this.svgContainer.on("click.gototarget", (event: MouseEvent) => {
-				event.stopImmediatePropagation();
-				const params = this.getMapParams();
-				if (!this.currentRobotDuid || !params) return;
-				const [mouseX, mouseY] = d3.pointer(event, this.mainGroup.node());
-				const worldX = mouseX;
-				const worldY = mouseY;
-				const point = localCoordsToRobotCoords({ x: worldX, y: worldY }, params);
-				void this.sendCommand("app_goto_target", { points: [point.x, point.y], duid: this.currentRobotDuid });
-				pin.style("opacity", 1.0);
-				this.goToTarget = false;
-				this.svg.style("cursor", "grab");
-				this.svgContainer.on("mousemove.gototarget", null);
-				this.svgContainer.on("click.gototarget", null);
-				this.goToButton.textContent = this.t("ui_goto", "Go to point");
-			});
-		});
-
-		this.resetZoomButton.addEventListener("click", () => {
-			if (this.initialTransform) {
-				this.svgContainer.transition().duration(750).call(this.zoom.transform as any, this.initialTransform);
-				this.userAdjustedView = false;
-			}
-		});
-
-		this.popupImage.addEventListener("click", () => {
-			this.largePhoto.style.display = "block";
-			this.popup.style.display = "none";
-			this.triangle.style.display = "none";
-			if (this.popupTimeout) clearTimeout(this.popupTimeout);
-			this.popupTimeout = null;
-			if (!this.currentRobotDuid || !this.selectedObstacleID) return;
-			this.largePhotoImage.src = "";
-			this.largePhotoBBox.style.display = "none";
-
-			this.connection
-				.sendTo(this.instanceId, "get_obstacle_image", { obstacleId: this.selectedObstacleID, duid: this.currentRobotDuid, type: 0 })
-				.then((response: any) => {
-					if (response && (response as any).image) {
-						let imageData = (response as any).image as string;
-						if (typeof imageData === "string" && !imageData.startsWith("data:image/")) imageData = "data:image/png;base64," + imageData;
-						// Define the onload handler BEFORE setting .src to avoid race conditions
-						this.largePhotoImage.onload = () => {
-							// Handle Bounding Box scaling if present
-							if (response.bbox) {
-								const bbox = response.bbox;
-								const displayedWidth = this.largePhotoImage.clientWidth;
-								const displayedHeight = this.largePhotoImage.clientHeight;
-
-								// Calculate scaling factor
-								// Calculate scaling factor, protecting against zero division
-								if (bbox.imageWidth > 0 && bbox.imageHeight > 0) {
-									const scaleX = displayedWidth / bbox.imageWidth;
-									const scaleY = displayedHeight / bbox.imageHeight;
-
-									// Position BBox
-									this.largePhotoBBox.style.left = (bbox.x * scaleX) + "px";
-									this.largePhotoBBox.style.top = (bbox.y * scaleY) + "px";
-									this.largePhotoBBox.style.width = (bbox.w * scaleX) + "px";
-									this.largePhotoBBox.style.height = (bbox.h * scaleY) + "px";
-									this.largePhotoBBox.style.display = "block";
-								}
-							}
-						};
-						this.largePhotoImage.src = imageData.replace(/\s/g, "");
-					}
-				})
-				.catch((err) => {
-					console.error("Error getting large obstacle image:", err);
-					this.showError(this.t("ui_command_failed", "Command failed: %s", this.errorText(err)));
-				});
-		});
-
-		this.largePhoto.addEventListener("click", () => {
-			this.largePhoto.style.display = "none";
-		});
 	}
 
 
@@ -3016,12 +2731,3 @@ class MapApplication {
 		};
 	}
 }
-
-// =================================================================================
-// --- Main Entry Point ---
-// =================================================================================
-
-window.onload = async () => {
-	const app = new MapApplication();
-	app.init().catch((err) => console.error("Failed to initialize Map Application:", err));
-};

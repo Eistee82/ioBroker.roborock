@@ -220,5 +220,6 @@
   "ui_dock_wash_temperature": "Température de l’eau de lavage",
   "ui_dock_back_wash_mode": "Mode de rinçage",
   "ui_on": "Activé",
-  "ui_off": "Désactivé"
+  "ui_off": "Désactivé",
+  "ui_no_devices": "Aucun appareil Roborock trouvé pour cette instance."
 }

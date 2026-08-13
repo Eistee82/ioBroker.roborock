@@ -87,18 +87,15 @@
     "src/",
     "admin{,/!(src)/**}/!(tsconfig|tsconfig.*|.eslintrc).json",
     "admin{,/!(src)/**}/*.{html,css,png,svg,jpg,js}",
-    "www/",
     "lib/protocols/",
     "io-package.json",
     "LICENSE"
   ],
   "scripts": {
-    "clean": "shx rm -rf www/*.d.ts www/*.tsbuildinfo",
-    "build": "npm run clean && npm run build:www && npm run lint && npm run typecheck && npm run docs",
-    "build:www": "esbuild src/www/map.ts --bundle --minify --sourcemap --outfile=www/app.js --format=esm",
-    "precommit": "npm run build:www && git add www/app.js www/app.js.map && node scripts/updateCommitInfo.js --force-current-date && git add src/lib/commitInfo.ts",
-    "watch": "npm run clean && npm run watch:www",
-    "watch:www": "esbuild src/www/map.ts --bundle --sourcemap --outfile=www/app.js --format=esm --watch",
+    "clean": "shx rm -rf admin/assets",
+    "build": "npm run build:tab && npm run lint && npm run typecheck && npm run typecheck:tab && npm run docs",
+    "precommit": "npm run build:tab && git add admin/tab.html admin/assets && node scripts/updateCommitInfo.js --force-current-date && git add src/lib/commitInfo.ts",
+    "watch": "npm run watch:tab",
     "test:unit": "vitest run",
     "test": "npm run test:unit && npm run test:integration && npm run test:package",
     "test:watch": "vitest",
@@ -120,8 +117,12 @@
     "extract:appplugin-translations": "node scripts/extract_appplugin_translations.js",
     "extract:appplugin-error-codes": "node scripts/extract_appplugin_error_codes.js --plugin \"S7 MaxV\"",
     "copy:protocols": "shx mkdir -p build/lib/protocols && shx cp lib/protocols/*.json build/lib/protocols/",
-    "build:git": "npm run clean && npm run copy:protocols && tsc -b tsconfig.json && npm run build:www",
-    "release": "release-script"
+    "build:git": "npm run copy:protocols && tsc -b tsconfig.json && npm run build:tab",
+    "release": "release-script",
+    "install:tab": "npm --prefix src-tab install --no-audit --no-fund",
+    "build:tab": "npm run clean && npm --prefix src-tab run build",
+    "typecheck:tab": "npm --prefix src-tab run typecheck",
+    "watch:tab": "npm --prefix src-tab run start"
   },
   "bugs": {
     "url": "https://github.com/copystring/ioBroker.roborock/issues"

@@ -220,5 +220,6 @@
   "ui_dock_wash_temperature": "Temperatura dell’acqua di lavaggio",
   "ui_dock_back_wash_mode": "Modalità di controlavaggio",
   "ui_on": "Acceso",
-  "ui_off": "Spento"
+  "ui_off": "Spento",
+  "ui_no_devices": "Nessun dispositivo Roborock trovato per questa istanza."
 }
