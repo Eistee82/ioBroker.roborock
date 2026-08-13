@@ -4,6 +4,7 @@ import * as crypto from "node:crypto";
 import { Roborock } from "../main";
 import { LoginV4Response, ProductV5Response } from "./apiTypes";
 import { cryptoEngine } from "./cryptoEngine";
+import type { ManualDevice } from "./manualDevices";
 
 // Constants
 const API_V3_SIGN = "api/v3/key/sign";
@@ -182,9 +183,45 @@ export class http_api {
 	public productInfo: ProductV5Response | null = null;
 
 	private fwFeaturesCache = new Map<string, number[]>();
+	/** Devices declared manually in the adapter configuration (cloud-free operation). */
+	private manualDevices: ManualDevice[] = [];
 
 	constructor(adapter: Roborock) {
 		this.adapter = adapter;
+	}
+
+	/**
+	 * Registers manually configured devices. They are merged into every device lookup so the
+	 * rest of the adapter works identically with and without a Roborock account.
+	 */
+	public applyManualDevices(devices: ManualDevice[]): void {
+		this.manualDevices = [...devices];
+		if (this.manualDevices.length > 0) {
+			// Never log the localKey itself.
+			this.adapter.rLog("HTTP", null, "Info", "Local", undefined, `Using ${this.manualDevices.length} manually configured device(s): [${this.manualDevices.map((d) => `${d.duid} (${d.pv}${d.ip ? `, ${d.ip}` : ""})`).join(", ")}]`, "info");
+		}
+	}
+
+	public getManualDevices(): ManualDevice[] {
+		return this.manualDevices;
+	}
+
+	public getManualDevice(duid: string): ManualDevice | undefined {
+		return this.manualDevices.find((device) => device.duid === duid);
+	}
+
+	/** Cloud device shape for a manually configured device. */
+	private toDevice(manual: ManualDevice): Device {
+		return {
+			duid: manual.duid,
+			localKey: manual.localKey,
+			productId: `manual:${manual.model}`,
+			name: manual.name,
+			online: true,
+			deviceStatus: {},
+			pv: manual.pv,
+			sn: manual.sn,
+		};
 	}
 
 	/**
@@ -803,15 +840,22 @@ export class http_api {
 	 * Returns an empty array if homeData is not initialized.
 	 */
 	getDevices(): Device[] {
-		if (!this.homeData) {
-			return [];
-		}
-		return [...(this.homeData.devices || []), ...(this.homeData.receivedDevices || [])];
+		const cloudDevices = this.homeData ? [...(this.homeData.devices || []), ...(this.homeData.receivedDevices || [])] : [];
+		if (this.manualDevices.length === 0) return cloudDevices;
+
+		// A manual entry is an explicit user decision and therefore wins over the cloud copy.
+		const manualDuids = new Set(this.manualDevices.map((device) => device.duid));
+		return [...this.manualDevices.map((device) => this.toDevice(device)), ...cloudDevices.filter((device) => !manualDuids.has(device.duid))];
 	}
 
 	getReceivedDevices(): Device[] {
 		if (!this.homeData) return [];
 		return this.homeData.receivedDevices || [];
+	}
+
+	/** True when an authenticated cloud session exists. False in cloud-free operation. */
+	public hasCloudSession(): boolean {
+		return !!this.realApi && !!this.userData;
 	}
 
 	/**
@@ -849,8 +893,9 @@ export class http_api {
 	 */
 	getMatchedRoomIDs(assignFallbackNames = false): { id: number; name: string }[] {
 		if (!this.homeData || !Array.isArray(this.homeData.rooms)) {
-			// Not throwing an error here anymore, just logging warning to prevent crashes if rooms are missing
-			this.adapter.rLog("HTTP", null, "Warn", "Cloud", undefined, "getMatchedRoomIDs: this.homeData.rooms is missing or invalid.", "warn");
+			// Without a cloud session there simply are no cloud rooms - that is expected, not a fault.
+			const level = this.hasCloudSession() ? "warn" : "debug";
+			this.adapter.rLog("HTTP", null, level === "warn" ? "Warn" : "Debug", "Cloud", undefined, "getMatchedRoomIDs: this.homeData.rooms is missing or invalid.", level);
 			return [];
 		}
 
@@ -892,6 +937,9 @@ export class http_api {
 			throw new Error("Parameter duid missing in function getRobotModel");
 		}
 
+		const manual = this.getManualDevice(duid);
+		if (manual) return manual.model;
+
 		const devices = this.getDevices();
 
 		try {
@@ -915,6 +963,9 @@ export class http_api {
 	 * Finds the product category for a given device DUID.
 	 */
 	getProductCategory(duid: string): string | null {
+		const manual = this.getManualDevice(duid);
+		if (manual) return manual.category;
+
 		const devices = this.getDevices();
 
 		try {

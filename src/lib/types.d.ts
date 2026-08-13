@@ -21,6 +21,15 @@ declare global {
 			sceneExecutionMode?: "local" | "cloud";
 			region: "eu" | "us" | "cn" | "asia";
 			map_theme?: "dark" | "light";
+
+			/** "cloud" = cloud + local (default), "local" = never contact the Roborock cloud. */
+			connectionMode?: "cloud" | "local";
+			/** JSON array of manually configured devices ({ duid, localKey, ip?, pv?, ... }). Secret. */
+			manualDevices?: string;
+			/** Listen for device broadcasts on UDP 58866. Off = static IPs only. */
+			udpDiscoveryEnabled?: boolean;
+			/** IP of the interface UDP 58866 binds to. Empty = all interfaces. */
+			udpBindAddress?: string;
 		}
 	}
 }
