@@ -61,6 +61,14 @@ This feature only works when map creation is enabled in the adapter options. Ope
 - (Eistee82) Fixed the timeout cascade after a connection loss: pending and new requests now fail immediately with a clear message instead of each running into its own timeout, and repeated outage messages are throttled to one per device per minute.
 - (Eistee82) Fixed an explicit request timeout being silently overwritten for any method containing "map" (the floor switch asked for 60s and got 20s).
 - (Eistee82) Fixed the 24h request ID reset interval and the request bookkeeping timers not being cleared when the adapter unloads.
+* (Eistee82) Added manual device configuration: `duid` + `localKey` (optionally static IP and protocol version) can be entered directly, so the adapter works without ever asking for Roborock cloud credentials. The local key is stored encrypted and is never written to the log.
+* (Eistee82) Added the enforceable connection mode "local only". In this mode the adapter never contacts the Roborock cloud, and functions that would need it fail with a clear message instead of silently falling back. Map retrieval currently still needs the cloud connection; the configuration page says so.
+* (Eistee82) Added per device connection states `connection.local`, `connection.cloud`, `connection.preferred` and `connection.ip` so the active transport channel is visible.
+* (Eistee82) Made the network binding explicit: the UDP 58866 discovery socket can be bound to a selectable network interface, and discovery can be switched off entirely when static IP addresses are configured. This addresses the recurring LXC/multi-NIC problems.
+* (Eistee82) Added a "Search devices in network" button to the configuration page that reports `duid`, IP address and protocol version of devices broadcasting on the local network.
+* (Eistee82) Changed the MQTT client ID to `mqttUser_<random>` so the adapter and the Roborock phone app no longer disconnect each other when using the same account.
+* (Eistee82) Stopped exposing the device `localKey` as a state under `deviceInfo` and removed the legacy state on startup.
+* (Eistee82) Grouped the adapter configuration into the tabs "Account & connection", "Map" and "Advanced" and documented where the 2FA login code has to be entered.
 
 ### 0.7.4 (2026-06-07)
 

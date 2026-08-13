@@ -1,163 +1,281 @@
 {
   "i18n": true,
-  "type": "panel",
+  "type": "tabs",
   "items": {
-    "loginMethod": {
-      "type": "select",
-      "label": "Login Method",
-      "options": [
-        {
-          "label": "Email + 2FA Code",
-          "value": "email"
+    "accountTab": {
+      "type": "panel",
+      "label": "Account & connection",
+      "items": {
+        "loginMethod": {
+          "type": "select",
+          "label": "Login Method",
+          "help": "With \"Email + 2FA Code\" Roborock sends a six digit code by email. There is no input field for it here: enter the code into the state roborock.<instance>.loginCode within 15 minutes of starting the adapter.",
+          "options": [
+            {
+              "label": "Email + 2FA Code",
+              "value": "email"
+            },
+            {
+              "label": "Email + Password",
+              "value": "password"
+            }
+          ],
+          "default": "email",
+          "hidden": "data.connectionMode === 'local'",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
         },
-        {
-          "label": "Email + Password",
-          "value": "password"
+        "region": {
+          "type": "select",
+          "label": "Region",
+          "options": [
+            {
+              "label": "Europe",
+              "value": "eu"
+            },
+            {
+              "label": "United States",
+              "value": "us"
+            },
+            {
+              "label": "China",
+              "value": "cn"
+            },
+            {
+              "label": "Asia",
+              "value": "asia"
+            }
+          ],
+          "default": "eu",
+          "hidden": "data.connectionMode === 'local'",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
+        },
+        "username": {
+          "type": "text",
+          "label": "Login",
+          "hidden": "data.connectionMode === 'local'",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
+        },
+        "password": {
+          "type": "password",
+          "label": "Password",
+          "newLine": true,
+          "hidden": "data.loginMethod !== 'password' || data.connectionMode === 'local'",
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
+        },
+        "_localOperationHeader": {
+          "type": "header",
+          "text": "Local operation",
+          "size": 2,
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 12,
+          "lg": 12,
+          "xl": 12
+        },
+        "connectionMode": {
+          "type": "select",
+          "label": "Connection mode",
+          "help": "Local only: the adapter never contacts the Roborock cloud. This requires manually configured devices with duid and localKey. Cloud based functions stay unavailable in this mode - map retrieval currently needs the cloud connection, as do saved scenes, firmware information and camera streaming. There is no automatic fallback to the cloud.",
+          "options": [
+            {
+              "label": "Cloud and local",
+              "value": "cloud"
+            },
+            {
+              "label": "Local only (no cloud contact)",
+              "value": "local"
+            }
+          ],
+          "default": "cloud",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
+        },
+        "_manualDevicesHelp": {
+          "type": "staticText",
+          "text": "JSON array, one object per device: {\"duid\": \"...\", \"localKey\": \"...\", \"ip\": \"192.168.1.50\", \"pv\": \"1.0\"}. Optional: name, model, category, sn. The localKey is a 16 character device secret that only exists in the Roborock cloud device list and cannot be derived locally; it changes only when the device is paired again. Log in once with your account to read it, then keep it here. It is stored encrypted and never written to the log.",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 12,
+          "lg": 12,
+          "xl": 12
+        },
+        "manualDevices": {
+          "type": "jsonEditor",
+          "label": "Manual devices (JSON)",
+          "tooltip": "JSON array of { duid, localKey, ip, pv }. The localKey is a device secret and is stored encrypted.",
+          "allowEmpty": true,
+          "default": "",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 12,
+          "lg": 12,
+          "xl": 12
+        },
+        "scanLocalDevices": {
+          "type": "sendTo",
+          "label": "Search devices in network",
+          "command": "scanLocalDevices",
+          "useNative": false,
+          "showProcess": true,
+          "timeout": 25000,
+          "variant": "contained",
+          "help": "Listens for device broadcasts and reports duid, IP address and protocol version, so a manual entry can be created without a cloud account. The adapter instance must be running.",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
         }
-      ],
-      "default": "email",
-      "newLine": true,
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
+      }
     },
-    "region": {
-      "type": "select",
-      "label": "Region",
-      "options": [
-        {
-          "label": "Europe",
-          "value": "eu"
+    "mapTab": {
+      "type": "panel",
+      "label": "Map",
+      "items": {
+        "enable_map_creation": {
+          "type": "checkbox",
+          "label": "Enable Map Creation",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
         },
-        {
-          "label": "United States",
-          "value": "us"
-        },
-        {
-          "label": "China",
-          "value": "cn"
-        },
-        {
-          "label": "Asia",
-          "value": "asia"
+        "map_theme": {
+          "type": "select",
+          "label": "Map Theme",
+          "options": [
+            {
+              "label": "Dark",
+              "value": "dark"
+            },
+            {
+              "label": "Light",
+              "value": "light"
+            }
+          ],
+          "default": "dark",
+          "newLine": true,
+          "hidden": "!data.enable_map_creation",
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
         }
-      ],
-      "default": "eu",
-      "newLine": true,
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
+      }
     },
-    "username": {
-      "type": "text",
-      "label": "Login",
-      "newLine": true,
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
-    },
-    "password": {
-      "type": "password",
-      "label": "Password",
-      "newLine": true,
-      "hidden": "data.loginMethod !== 'password'",
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
-    },
-    "enable_map_creation": {
-      "type": "checkbox",
-      "label": "Enable Map Creation",
-      "newLine": true,
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
-    },
-    "sceneExecutionMode": {
-      "type": "select",
-      "label": "Saved program execution",
-      "help": "Local: runs the saved scene locally from its Roborock scene steps and keeps the local queue/resume. Cloud: starts the saved scene through Roborock cloud like the app. No automatic fallback between modes.",
-      "options": [
-        {
-          "label": "Local adapter queue",
-          "value": "local"
+    "advancedTab": {
+      "type": "panel",
+      "label": "Advanced",
+      "items": {
+        "updateInterval": {
+          "type": "number",
+          "label": "Update interval",
+          "newLine": true,
+          "min": 60,
+          "max": 240,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
         },
-        {
-          "label": "Cloud like Roborock app",
-          "value": "cloud"
-        }
-      ],
-      "default": "local",
-      "newLine": true,
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
-    },
-    "updateInterval": {
-      "type": "number",
-      "label": "Update interval",
-      "newLine": true,
-      "min": 60,
-      "max": 240,
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
-    },
-    "map_theme": {
-      "type": "select",
-      "label": "Map Theme",
-      "options": [
-        {
-          "label": "Dark",
-          "value": "dark"
+        "sceneExecutionMode": {
+          "type": "select",
+          "label": "Saved program execution",
+          "help": "Local: runs the saved scene locally from its Roborock scene steps and keeps the local queue/resume. Cloud: starts the saved scene through Roborock cloud like the app. No automatic fallback between modes.",
+          "options": [
+            {
+              "label": "Local adapter queue",
+              "value": "local"
+            },
+            {
+              "label": "Cloud like Roborock app",
+              "value": "cloud"
+            }
+          ],
+          "default": "local",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
         },
-        {
-          "label": "Light",
-          "value": "light"
+        "udpDiscoveryEnabled": {
+          "type": "checkbox",
+          "label": "Listen for device broadcasts (UDP 58866)",
+          "help": "Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges).",
+          "default": true,
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
+        },
+        "udpBindAddress": {
+          "type": "interface",
+          "label": "Network interface for discovery",
+          "help": "IP address of the interface the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.",
+          "hidden": "!data.udpDiscoveryEnabled",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
+        },
+        "hostname_ip": {
+          "type": "text",
+          "label": "Hostname/IP for camera stream",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
+        },
+        "cameraPin": {
+          "type": "number",
+          "label": "PIN for streaming the camera",
+          "newLine": true,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
         }
-      ],
-      "default": "dark",
-      "newLine": true,
-      "hidden": "!data.enable_map_creation",
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
-    },
-    "hostname_ip": {
-      "type": "text",
-      "label": "Hostname/IP for camera stream",
-      "newLine": true,
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
-    },
-    "cameraPin": {
-      "type": "number",
-      "label": "PIN for streaming the camera",
-      "newLine": true,
-      "xs": 12,
-      "sm": 12,
-      "md": 6,
-      "lg": 6,
-      "xl": 6
+      }
     }
   }
 }

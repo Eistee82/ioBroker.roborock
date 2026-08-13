@@ -10,7 +10,9 @@ import { commitInfo } from "./lib/commitInfo";
 // --- API & Helper Imports ---
 import { AppPluginManager } from "./lib/AppPluginManager";
 import { B01Variant, getB01VariantFromModel } from "./lib/b01Variant";
+import { ConnectionStatusManager } from "./lib/connectionStatus";
 import { DeviceManager } from "./lib/deviceManager";
+import { LOCAL_ONLY_LIMITATIONS, isLocalOnlyMode, parseManualDevices } from "./lib/manualDevices";
 import { BaseDeviceFeatures } from "./lib/features/baseDeviceFeatures";
 import type { CommandSpec } from "./lib/features/baseDeviceFeatures";
 import { Feature } from "./lib/features/features.enum";
@@ -109,6 +111,7 @@ export class Roborock extends utils.Adapter {
 	public deviceManager!: DeviceManager;
 	public mapManager: MapManager;
 	public translationManager!: TranslationManager;
+	public connectionStatus: ConnectionStatusManager;
 
 	// --- Internal Properties ---
 	public deviceFeatureHandlers: Map<string, BaseDeviceFeatures>;
@@ -144,6 +147,7 @@ export class Roborock extends utils.Adapter {
 		this.mapManager = new MapManager(this);
 		this.translationManager = new TranslationManager(this);
 
+		this.connectionStatus = new ConnectionStatusManager(this);
 		this.deviceManager = new DeviceManager(this);
 		this.socketHandler = new socketHandler(this);
 		this.deviceFeatureHandlers = this.deviceManager.deviceFeatureHandlers;
@@ -187,9 +191,25 @@ export class Roborock extends utils.Adapter {
 	 * Adapter ready logic.
 	 */
 	async onReady() {
+		const localOnly = isLocalOnlyMode(this.config);
+		const manualDevices = parseManualDevices(this.config.manualDevices);
+
+		for (const error of manualDevices.errors) {
+			this.rLog("System", null, "Error", undefined, undefined, `[Manual device config] ${error}`, "error");
+		}
+		for (const warning of manualDevices.warnings) {
+			this.rLog("System", null, "Warn", undefined, undefined, `[Manual device config] ${warning}`, "warn");
+		}
+
 		// Config properties are now type-safe thanks to types.d.ts
-		if (!this.config.username) {
+		if (!localOnly && !this.config.username) {
 			this.rLog("System", null, "Error", undefined, undefined, "Username missing!", "error");
+			this.isInitializing = false;
+			return;
+		}
+
+		if (localOnly && manualDevices.devices.length === 0) {
+			this.rLog("System", null, "Error", undefined, undefined, "Connection mode is 'local only' but no manual device is configured. Add at least one device with duid and localKey.", "error");
 			this.isInitializing = false;
 			return;
 		}
@@ -209,6 +229,10 @@ export class Roborock extends utils.Adapter {
 			loginMethod: this.config.loginMethod,
 			map_theme: this.config.map_theme,
 			sceneExecutionMode: this.getSceneExecutionMode(),
+			connectionMode: localOnly ? "local" : "cloud",
+			manualDeviceCount: manualDevices.devices.length,
+			udpDiscoveryEnabled: this.local_api.isUdpDiscoveryEnabled(),
+			udpBindAddress: this.local_api.getUdpBindAddress() ?? "all interfaces",
 		};
 		if ("map_creation_interval" in this.config) safeSettings.map_creation_interval = (this.config as Record<string, unknown>).map_creation_interval;
 		if ("map_scale" in this.config) safeSettings.map_scale = (this.config as Record<string, unknown>).map_scale;
@@ -221,26 +245,44 @@ export class Roborock extends utils.Adapter {
 			username: this.config.username ? "******" : "NOT_SET",
 			password: this.config.password ? "******" : "NOT_SET",
 			cameraPin: this.config.cameraPin ? "******" : undefined,
+			// Contains localKeys - never write it to the log.
+			manualDevices: manualDevices.devices.length > 0 ? `****** (${manualDevices.devices.length} device(s))` : "NOT_SET",
 		};
 		this.rLog("System", null, "Info", undefined, undefined, `Config: ${JSON.stringify(configSummary)}`, "debug");
 
 		await this.setupBasicObjects();
 
 		try {
-			const clientID = await this.ensureClientID();
-			await this.http_api.init(clientID);
+			// Manual entries are the only device source in cloud-free operation and take
+			// precedence over the cloud copy when both exist.
+			this.http_api.applyManualDevices(manualDevices.devices);
 
-			// 1. Start Cloud Data Sync (Get Keys & DUIDs)
-			await this.http_api.updateHomeData();
+			if (localOnly) {
+				this.rLog("System", null, "Info", undefined, undefined, `Cloud-free operation active. The adapter will not contact the Roborock cloud. Not available in this mode: ${LOCAL_ONLY_LIMITATIONS.join("; ")}.`, "info");
+				if (this.config.enable_map_creation) {
+					this.rLog("System", null, "Warn", undefined, undefined, "Map creation is enabled, but map retrieval currently needs the cloud connection. Maps will stay empty in 'local only' mode.", "warn");
+				}
+			} else {
+				const clientID = await this.ensureClientID();
+				await this.http_api.init(clientID);
 
-			// 1b. Asset download for account models (before device init)
-			await this.downloadAssetsForAccountModels();
+				// 1. Start Cloud Data Sync (Get Keys & DUIDs)
+				await this.http_api.updateHomeData();
+
+				// 1b. Asset download for account models (before device init)
+				await this.downloadAssetsForAccountModels();
+			}
 
 			// 2a. Start UDP Discovery (Essential for determining Local/Cloud mode before Init)
 			await this.local_api.startUdpDiscovery();
 
+			// 2a2. Statically configured endpoints work without any discovery at all.
+			await this.local_api.applyManualEndpoints(manualDevices.devices);
+
 			// 2b. Start MQTT and WAIT for the connection to be established
-			await this.mqtt_api.init();
+			if (!localOnly) {
+				await this.mqtt_api.init();
+			}
 
 			// --- Pre-Init Network Probe (Docker/VLAN Support) ---
 			this.rLog("System", null, "Info", undefined, undefined, "Starting Pre-Init Network Probe...", "debug");
@@ -250,6 +292,9 @@ export class Roborock extends utils.Adapter {
 				if (!device.online) return; // Skip devices cloud reports as offline
 				// If already local (UDP found it), skip
 				if (this.local_api.isConnected(duid)) return;
+				// The probe asks the robot via get_network_info; without the cloud there is no
+				// transport for that when no local session exists yet.
+				if (localOnly) return;
 				const protocolVersion = device.pv || await this.getDeviceProtocolVersion(duid);
 				if (protocolVersion === "B01") {
 					const model = this.http_api.getRobotModel(duid) || "";
@@ -289,8 +334,7 @@ export class Roborock extends utils.Adapter {
 
 			// Parallelize non-dependent startup tasks
 			await Promise.all([
-				this.processScenes(),
-				this.start_go2rtc(),
+				...(localOnly ? [] : [this.processScenes(), this.start_go2rtc()]),
 				...Array.from(writableFolders).map((folder) => this.subscribeStatesAsync(`Devices.*.${folder}.*`)),
 				this.subscribeStatesAsync("Devices.*.resetConsumables.*"),
 				this.subscribeStatesAsync("Devices.*.programs.*"),
@@ -299,22 +343,28 @@ export class Roborock extends utils.Adapter {
 				this.subscribeStatesAsync("loginCode")
 			]);
 
-			await this.resumeSceneQueues();
+			if (!localOnly) {
+				await this.resumeSceneQueues();
+			}
 
 			this.deviceManager.startPolling();
 			this.local_api.startTcpKeepaliveInterval();
+			await this.connectionStatus.updateAll();
+			this.connectionStatus.start();
 
 			this.rLog("System", null, "Info", undefined, undefined, "Adapter startup finished. Let's go!", "info");
 			this.isInitializing = false;
 
 			// Schedule MQTT API reset every hour (legacy behavior to prevent stale connections)
-			this.mqttReconnectInterval = this.setInterval(() => {
-				this.rLog("System", null, "Debug", undefined, undefined, "Running scheduled MQTT reconnect...", "debug");
-				this.resetMqttApi().catch((e: unknown) => {
-					this.rLog("System", null, "Error", undefined, undefined, `Scheduled MQTT reconnect failed: ${e instanceof Error ? e.message : String(e)}`, "error");
-					this.catchError(e, "resetMqttApi (scheduled)");
-				});
-			}, 3600 * 1000);
+			if (!localOnly) {
+				this.mqttReconnectInterval = this.setInterval(() => {
+					this.rLog("System", null, "Debug", undefined, undefined, "Running scheduled MQTT reconnect...", "debug");
+					this.resetMqttApi().catch((e: unknown) => {
+						this.rLog("System", null, "Error", undefined, undefined, `Scheduled MQTT reconnect failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+						this.catchError(e, "resetMqttApi (scheduled)");
+					});
+				}, 3600 * 1000);
+			}
 		} catch (e: unknown) {
 			this.rLog("System", null, "Error", undefined, undefined, `Failed to initialize adapter: ${this.errorMessage(e)}`, "error");
 			this.catchError(e, "onReady");
@@ -343,6 +393,13 @@ export class Roborock extends utils.Adapter {
 
 	async executeSceneProgram(duid: string, sceneId: string | number): Promise<void> {
 		const mode = this.getSceneExecutionMode();
+		if (!this.http_api.hasCloudSession()) {
+			// No silent detour: saved programs are defined in the cloud, so say so instead of failing obscurely.
+			await this.ensureSceneQueueState(duid);
+			await this.setSceneQueueStatus(duid, "cloud-required");
+			this.rLog("Requests", duid, "Error", undefined, undefined, `[Scene] Saved program ${sceneId} cannot be started: the scene definition currently needs the cloud connection, which is disabled in 'local only' mode.`, "error");
+			return;
+		}
 		await this.ensureSceneQueueState(duid);
 		await this.setState(this.getSceneQueueModeStateId(duid), { val: mode, ack: true });
 
@@ -1366,6 +1423,7 @@ export class Roborock extends utils.Adapter {
 				this.clearInterval(this.mqttReconnectInterval);
 			}
 			this.clearTimersAndIntervals();
+			this.connectionStatus.stop();
 			this.mqtt_api.cleanup();
 			this.local_api.stopUdpDiscovery();
 			this.local_api.stopTcpKeepaliveInterval();
@@ -1607,6 +1665,10 @@ export class Roborock extends utils.Adapter {
 	 * Processes scenes from HTTP API.
 	 */
 	async processScenes() {
+		if (!this.http_api.hasCloudSession()) {
+			this.rLog("Requests", null, "Debug", undefined, undefined, "[processScenes] Skipped: saved programs need the cloud connection.", "debug");
+			return;
+		}
 		const scenes = await this.http_api.getScenes();
 		if (!scenes?.result) return;
 
@@ -1677,8 +1739,12 @@ export class Roborock extends utils.Adapter {
 		const device = devices.find((d) => d.duid === duid);
 		if (!device) return;
 
+		await this.removeLegacyLocalKeyState(duid);
+
 		const raw = device as unknown as Record<string, unknown>;
 		for (const attr of Object.keys(raw)) {
+			// The localKey is the device secret; it must never end up in a readable state.
+			if (attr === "localKey") continue;
 			let value: ioBroker.StateValue = raw[attr] as ioBroker.StateValue;
 			if (typeof value === "object" && value !== null) {
 				value = JSON.stringify(value);
@@ -1699,12 +1765,34 @@ export class Roborock extends utils.Adapter {
 		}
 	}
 
+	/** Older adapter versions wrote the localKey into deviceInfo. Remove it once. */
+	private cleanedLocalKeyStates?: Set<string>;
+	private async removeLegacyLocalKeyState(duid: string): Promise<void> {
+		this.cleanedLocalKeyStates ??= new Set<string>();
+		if (this.cleanedLocalKeyStates.has(duid)) return;
+		this.cleanedLocalKeyStates.add(duid);
+
+		const stateId = `Devices.${duid}.deviceInfo.localKey`;
+		try {
+			const existing = await this.getObjectAsync(stateId);
+			if (!existing) return;
+			await this.delObjectAsync(stateId);
+			this.rLog("System", duid, "Info", undefined, undefined, "Removed the legacy deviceInfo.localKey state; the local key is a secret and is no longer exposed as a state.", "info");
+		} catch (e: unknown) {
+			this.rLog("System", duid, "Debug", undefined, undefined, `Could not remove legacy localKey state: ${this.errorMessage(e)}`, "debug");
+		}
+	}
+
 	/**
 	 * Checks for new firmware.
 	 */
 	async checkForNewFirmware(duid: string) {
 		const isLocal = this.local_api.isLocalDevice(duid);
 		if (!isLocal) return;
+		if (!this.http_api.hasCloudSession()) {
+			this.rLog("HTTP", duid, "Debug", undefined, undefined, "[checkForNewFirmware] Skipped: firmware information needs the cloud connection.", "debug");
+			return;
+		}
 
 		try {
 			this.rLog("HTTP", duid, "Debug", undefined, undefined, "[checkForNewFirmware] Checking for firmware update...", "debug");
@@ -1925,7 +2013,11 @@ export class Roborock extends utils.Adapter {
 
 		const devices = this.http_api.getDevices();
 		const device = devices ? devices.find((d) => d.duid == duid) : undefined;
-		return device?.pv || "1.0";
+		if (device?.pv) return device.pv;
+
+		// Discovery broadcasts carry the protocol version in clear text (first three bytes),
+		// so use it when neither cloud nor manual configuration knows the device.
+		return this.local_api.getLocalProtocolVersion(duid) || "1.0";
 	}
 
 	/**
@@ -1949,6 +2041,10 @@ export class Roborock extends utils.Adapter {
 	 * Starts the go2rtc process if cameras are present.
 	 */
 	async start_go2rtc() {
+		if (!this.http_api.hasCloudSession()) {
+			this.rLog("Local", null, "Debug", undefined, undefined, "[go2rtc] Skipped: camera streaming is relayed through the Roborock cloud broker.", "debug");
+			return;
+		}
 		const devices = this.http_api.getDevices() || [];
 		const localKeys = this.http_api.getMatchedLocalKeys();
 		const { u, s, k } = this.http_api.get_rriot();

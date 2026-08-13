@@ -12,10 +12,24 @@ import { PhotoManager } from "./PhotoManager";
 
 let cachedB01RobotMapType: protobuf.Type | null = null;
 
+/**
+ * The Roborock app uses the MQTT username as client ID (see _appanalysis/02-mqtt-cloud.md §2.3).
+ * Running the adapter next to the phone app on the same account would make both sides kick each
+ * other off the broker, so we append a random suffix. The broker authorises via username/password
+ * and the topic ACL (topics contain rriot.u and mqttUser), not via the client ID.
+ * @param mqttUser The derived MQTT username.
+ * @param randomSuffix Hex suffix; generated randomly when omitted.
+ */
+export function buildMqttClientId(mqttUser: string, randomSuffix?: string): string {
+	const suffix = randomSuffix ?? crypto.randomBytes(4).toString("hex");
+	return `${mqttUser}_${suffix}`;
+}
+
 export class mqtt_api {
 	adapter: Roborock;
 	mqttUser: string;
 	mqttPassword: string;
+	mqttClientId: string;
 	client: any;
 	connected: boolean;
 	public photoManager: PhotoManager;
@@ -29,6 +43,7 @@ export class mqtt_api {
 
 		this.mqttUser = "";
 		this.mqttPassword = "";
+		this.mqttClientId = "";
 		this.client = null;
 		this.connected = false;
 		this.mqttOptions = null;
@@ -56,9 +71,10 @@ export class mqtt_api {
 		// Generate MQTT username and password based on rriot data hashing
 		this.mqttUser = this.md5hex(rriot.u + ":" + rriot.k).substring(2, 10);
 		this.mqttPassword = this.md5hex(rriot.s + ":" + rriot.k).substring(16);
+		this.mqttClientId = buildMqttClientId(this.mqttUser);
 
 		this.mqttOptions = {
-			clientId: this.mqttUser,
+			clientId: this.mqttClientId,
 			username: this.mqttUser,
 			password: this.mqttPassword,
 			keepalive: 30,

@@ -30,6 +30,7 @@ describe("device online state sync from HomeData", () => {
 			rLog: vi.fn(),
 			http_api: {
 				updateHomeData: vi.fn().mockResolvedValue(undefined),
+				hasCloudSession: () => true,
 				getDevices: () => devices,
 			},
 			updateDeviceInfo: vi.fn().mockResolvedValue(undefined),

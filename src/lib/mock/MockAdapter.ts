@@ -50,6 +50,9 @@ export class MockAdapter {
 	public ["clearTimeout"](timeoutId: any): void {
 		clearNodeTimeout(timeoutId);
 	}
+	public delay(ms: number): Promise<void> {
+		return new Promise((resolve) => setNodeTimeout(resolve, ms));
+	}
 	public getDeviceProtocolVersion = async (): Promise<string> => {
 		return "1.0";
 	};
@@ -124,6 +127,14 @@ export class MockAdapter {
 				...commonOptions,
 			},
 			native,
+		});
+	}
+
+	public async ensureFolder(path: string, customName?: string): Promise<void> {
+		await this.setObjectNotExistsAsync(path, {
+			type: "folder",
+			common: { name: customName ?? path.split(".").pop() ?? path },
+			native: {},
 		});
 	}
 

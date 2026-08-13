@@ -188,12 +188,14 @@
   "encryptedNative": [
     "username",
     "password",
-    "cameraPin"
+    "cameraPin",
+    "manualDevices"
   ],
   "protectedNative": [
     "username",
     "password",
-    "cameraPin"
+    "cameraPin",
+    "manualDevices"
   ],
   "native": {
     "loginMethod": "email",
@@ -205,7 +207,11 @@
     "cameraPin": 1234,
     "region": "eu",
     "map_theme": "dark",
-    "sceneExecutionMode": "local"
+    "sceneExecutionMode": "local",
+    "connectionMode": "cloud",
+    "manualDevices": "",
+    "udpDiscoveryEnabled": true,
+    "udpBindAddress": ""
   },
   "objects": [],
   "instanceObjects": [
