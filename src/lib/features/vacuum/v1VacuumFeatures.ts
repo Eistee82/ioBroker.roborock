@@ -20,6 +20,7 @@ import {
 	FAN_POWER_SMART,
 	MOP_MODE_SMART,
 	WATER_BOX_MODE_SMART,
+	WATER_BOX_MODE_VACUUM_ONLY,
 	buildCleanMotorModePresets,
 	deriveCleaningMode,
 	supportsCleanModeMaxPlus,
@@ -96,6 +97,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		// Deep clone profile to avoid mutating shared static objects
 		this.profile = structuredClone(profile);
 		this.applyShakeMopWaterLabels();
+		this.applyPureModeWaterLevels();
 		this.applyMaxPlusFanLevel();
 		this.consumableService = new V1ConsumableService(this.deps, this.duid, this.profile);
 		this.stationService = new StationService(this.deps, this.duid);
@@ -144,6 +146,33 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		if (water[203] !== undefined && water[208] === undefined) {
 			water[208] = WATER_BOX_MODE_EXTREME_LABEL;
 		}
+	}
+
+	/**
+	 * Drops the water level "Off" on robots that have the pure cleaning modes.
+	 *
+	 * `water_box_mode = 200` is not a level: it *is* vacuum-only mode. The app knows that and its
+	 * picker drops the entry with a `shift()` as soon as the robot has the pure modes (report 17,
+	 * §6.3) - leaving it in offers a second, hidden way to switch the mode, disguised as a level.
+	 *
+	 * Reported from the field as "Saugkraft Off und Wassermenge Extreme gibt es in der App nicht".
+	 * The tab already filtered it out of its picker, but the value stayed in `common.states`, so it
+	 * remained visible in the object tree and to every script and VIS widget reading that state.
+	 *
+	 * Robots without the pure modes keep it: there the entry is the only way to stop mopping.
+	 */
+	private applyPureModeWaterLevels(): void {
+		const water = this.profile.mappings.water_box_mode;
+		if (!water || !supportsPureCleanMop(this.robotModel)) {
+			return;
+		}
+		// Only on the standard scale. A model that declares its own range - the Qrevo Edge 2 runs
+		// 221..250 - may well mean 200 as a level of that range, and the claim above is proven for
+		// the standard one only. Same restraint as in `applyShakeMopWaterLabels`.
+		if (water[201] === undefined || water[203] === undefined) {
+			return;
+		}
+		delete water[WATER_BOX_MODE_VACUUM_ONLY];
 	}
 
 	/**
@@ -328,6 +357,14 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		}
 
 		if (statusData["water_shortage_status"] !== undefined && await this.applyFeature(Feature.WaterShortage)) {
+			changed = true;
+		}
+
+		// A station that dries the mop reports `dry_status`; one without a dryer does not. That is
+		// the same test `ProductHelper.detectFeatures()` already applies to the product card, and it
+		// is what gives models such as the a65 - which lists neither MopWash nor MopDry statically -
+		// its drying buttons. Devices without the field keep the folder as it was.
+		if (statusData["dry_status"] !== undefined && await this.applyFeature(Feature.MopDry)) {
 			changed = true;
 		}
 
@@ -1027,6 +1064,10 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			await this.updateDockingStationStatus(Number(validStatus.dss));
 			delete validStatus.dss;
 		}
+
+		// The station's mop wash and mop drying. The raw fields stay in `deviceStatus` below; this
+		// adds the reading the Roborock app applies to them, see StationService for the proofs.
+		await this.stationService.updateWashAndDryStatus(validStatus);
 
     	// Define property processing map
     	const processors: Record<string, (val: any) => Promise<void>> = {

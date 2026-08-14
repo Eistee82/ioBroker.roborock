@@ -562,7 +562,7 @@ Values reported by the robot in `Devices.<duid>.deviceStatus`.
 | `patrolStatus` | Patrol Status | `number` |  |  |
 | `petModeEnabled` | Pet Mode Enabled | `boolean` |  |  |
 | `petSnapshotEnabled` | Pet Snapshot Enabled | `boolean` |  |  |
-| `rdt` |  | `number` |  |  |
+| `rdt` |  | `number` | `s` | [s] |
 | `realTimeMonitorEnabled` | Real-Time Monitor Enabled | `boolean` |  |  |
 | `realTimeVideoWithTwoKeysStatus` | Real-Time Video Two-Key Status | `number` |  | `0` = Off<br>`1` = Waiting Activation<br>`2` = Active |
 | `realVideoSetting` | Real Video Setting | `number` |  | `0` = Lightly Disturb<br>`1` = Strong Reminder<br>`2` = Do Not Disturb |

@@ -115,7 +115,6 @@ describe("vibrating-mop water wording", () => {
 		const vacuum = new A65Features(createDeps(), "duid1") as any;
 
 		expect(vacuum.profile.mappings.water_box_mode).toEqual({
-			200: "Off",
 			201: "Mild",
 			202: "Standard",
 			203: "Intense",
@@ -127,7 +126,6 @@ describe("vibrating-mop water wording", () => {
 		const vacuum = new A87Features(createDeps(), "duid1") as any;
 
 		expect(vacuum.profile.mappings.water_box_mode).toEqual({
-			200: "Off",
 			201: "Low",
 			202: "Medium",
 			203: "High"
