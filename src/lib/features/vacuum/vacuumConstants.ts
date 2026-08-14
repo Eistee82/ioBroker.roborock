@@ -439,7 +439,9 @@ export const VACUUM_CONSTANTS = {
 		subdivision_sets: { type: "number" },
 		repeat: { type: "number" },
 		replenish_mode: { type: "number" },
-		rdt: { type: "number" },
+		// Remaining drying time in seconds: the app divides it by 60 for its "finishes in x minutes"
+		// text (a65 control plugin, index.android.bundle.decompiled.js Z. 224252-224275).
+		rdt: { type: "number", unit: "s" },
 		camera_status: { type: "number" },
 		distance_off: { name: "Distance Off", type: "number" },
 		wash_phase: { type: "number", states: Z70_WASH_PHASE_STATES },

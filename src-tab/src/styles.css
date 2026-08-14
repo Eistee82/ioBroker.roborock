@@ -84,12 +84,61 @@ body,
 	cursor: move;
 }
 
-.zone-handle {
-	fill: var(--rr-accent);
+/*
+ * The three handles of a zone: delete, resize, move.
+ *
+ * Geometry, positions and the reasoning behind them are in `engine/zoneHandles.ts`; only the
+ * appearance is here, and only the appearance is ours to choose - the app's own artwork is not
+ * in the plugin package (report §B.5.2), so the glyphs are the Material icons the rest of the
+ * tab uses.
+ *
+ * Everything inside a handle group is already in screen pixels: the group carries
+ * `scale(1 / zoom)`, so `stroke-width: 1` here is one pixel on screen at every zoom and needs no
+ * `non-scaling-stroke`. Frame and leash are the exception - they span between world points, so
+ * `MapEngine` writes their weight as an inline style, divided by the zoom, exactly as it does
+ * for the zone edge.
+ */
+.zone-handle-hit {
+	/* 1.5 × the glyph, and circular: at 16 px outside the corner it keeps a clearance of ~4.6 px
+	   from the rectangle, so it can never take a click that belongs to the zone. */
+	fill: transparent;
+}
+
+.zone-handle-disc {
+	fill: rgba(0, 0, 0, 0.55);
 	stroke: #ffffff;
 	stroke-width: 1;
-	vector-effect: non-scaling-stroke;
+}
+
+.zone-handle-glyph {
+	fill: #ffffff;
+	/* The hit circle underneath is the target; the glyph must not shrink it to its own outline. */
+	pointer-events: none;
+}
+
+.zone-handle-delete {
+	cursor: pointer;
+}
+
+.zone-handle-scale {
 	cursor: nwse-resize;
+}
+
+.zone-handle-move {
+	cursor: move;
+}
+
+/*
+ * The dashed frame the handles sit on the corners of, and the leash the move handle hangs on.
+ * Both are the app's (`focusViewColor`, a 20 % wash of the opposite of the ground, and a 2 px
+ * line in the same colour), and both are decoration: they must never swallow a press meant for
+ * the zone below them.
+ */
+.zone-focus-frame,
+.zone-leash {
+	fill: none;
+	stroke: rgba(255, 255, 255, 0.45);
+	pointer-events: none;
 }
 
 .obstacle-marker {

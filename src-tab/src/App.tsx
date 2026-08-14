@@ -16,6 +16,7 @@ import { MapView } from "./components/MapView";
 import { createMapThemeReporter } from "./engine/mapThemeReporter";
 import type { MapThemeName } from "./engine/mapThemeReporter";
 import { createRoborockTheme, themeCssVariables } from "./theme";
+import { isDarkColour, themeFromName, themeFromQuery } from "./engine/adminTheme";
 
 import enLang from "@i18n/en.json";
 import deLang from "@i18n/de.json";
@@ -239,15 +240,44 @@ function readAdminThemeName(): "dark" | "light" | null {
 		}
 	};
 
+	// The admin hands a tab its theme in the query string, and that is the only source that is
+	// current by construction: it is written the moment the tab is opened. `GenericApp` parses the
+	// same query but takes only `instance` and `newReact` out of it (see its constructor), so the
+	// theme in there is dropped - which is why the classic HTML tabs of other adapters follow the
+	// dark mode and this one did not.
+	const fromQuery = themeFromQuery(window.location.search);
+	if (fromQuery) return fromQuery;
+
 	// `window.parent` is the window itself when the tab is not embedded, so this covers both.
 	const parentName = window.parent !== window ? fromStorage(window.parent) : null;
 	const name = parentName ?? fromStorage(window);
-	if (name && name !== "auto") return name === "dark" || name === "blue" ? "dark" : "light";
+	const byName = themeFromName(name);
+	if (byName) return byName;
 
-	// Deliberately no fall back to `prefers-color-scheme` here. This value exists to *correct*
-	// what GenericApp resolved, and the browser preference is not evidence about the admin: an
-	// admin set to dark on a machine whose system is light would be turned light by it - which is
-	// exactly the bug this comment replaces. Without a stored choice there is nothing to correct,
-	// so the caller keeps what it had.
+	// Last resort, and the only source that cannot be out of date: look at the admin itself.
+	//
+	// Measured on a real installation - admin 7.0.25 with dark mode switched on - the stored
+	// `App.themeName` said `light`. Whatever the admin does with its own setting, the page it
+	// draws is the ground truth, and the tab sits inside it. So the background colour of the
+	// surrounding document decides: a dark page means dark mode, whatever any key claims.
+	//
+	// Same-origin only, like the storage read above; a foreign origin throws and leaves the
+	// resolved mode alone.
+	try {
+		const parentBody = window.parent !== window ? window.parent.document?.body : null;
+		if (parentBody) {
+			const background = window.parent.getComputedStyle(parentBody).backgroundColor;
+			const dark = isDarkColour(background);
+			if (dark !== null) return dark ? "dark" : "light";
+		}
+	} catch {
+		// Cross-origin, or the admin has not painted yet. Nothing to correct.
+	}
+
+	// Deliberately no fall back to `prefers-color-scheme`. This value exists to *correct* what
+	// GenericApp resolved, and the browser preference is not evidence about the admin: an admin
+	// set to dark on a machine whose system is light would be turned light by it. Without any
+	// usable source there is nothing to correct, so the caller keeps what it had.
 	return null;
 }
+

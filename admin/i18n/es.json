@@ -200,6 +200,9 @@
   "ui_zones": "Zonas",
   "ui_add_zone": "Añadir zona",
   "ui_remove_zone": "Quitar zona",
+  "ui_zone_handle_delete": "Eliminar esta zona",
+  "ui_zone_handle_resize": "Cambiar el tamaño de la zona",
+  "ui_zone_handle_move": "Mover zona",
   "ui_zone_limit": "Como máximo se pueden limpiar %s zonas de una vez.",
   "ui_repeat": "Pasadas",
   "ui_repeat_once": "1 pasada",
@@ -297,5 +300,14 @@
   "Map Colour Scheme": "Esquema de color del mapa",
   "Follow the admin theme": "Seguir el tema del admin",
   "Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.": "Solo los colores de las habitaciones. El suelo, las paredes y el recorrido se ajustan con el esquema de color del mapa de abajo.",
-  "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.": "Suelo, paredes y recorrido del mapa renderizado. «Claro» es la imagen que el adaptador ha producido siempre. «Seguir el tema del admin» adopta el tema que informa la pestaña de Roborock; como solo hay una imagen renderizada por robot, el navegador que informó en último lugar decide lo que ven todos."
+  "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.": "Suelo, paredes y recorrido del mapa renderizado. «Claro» es la imagen que el adaptador ha producido siempre. «Seguir el tema del admin» adopta el tema que informa la pestaña de Roborock; como solo hay una imagen renderizada por robot, el navegador que informó en último lugar decide lo que ven todos.",
+  "washingTaskStatus": "Estado de la tarea de lavado",
+  "washingMode": "Modo de lavado",
+  "isWashing": "Lavando la mopa",
+  "isWashReady": "Listo para lavar",
+  "isDrying": "Secando la mopa",
+  "dryRemainTime": "Tiempo de secado restante",
+  "ui_dock_washing": "Lavando la mopa",
+  "ui_dock_drying": "Secando la mopa",
+  "ui_dock_drying_remaining": "Secando, quedan %s min"
 }

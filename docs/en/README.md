@@ -186,6 +186,24 @@ All device objects live below `roborock.<instance>.Devices.<duid>`:
 | `deviceInfo`, `networkInfo`, `connection` | Model and firmware information, network data and the state of the local/cloud channels. |
 | `dockingStationStatus` | Dock states, only on models with a dock that reports them. |
 
+Besides the tank and dust bag states, `dockingStationStatus` carries what the station is
+doing with the mop. The robot reports that as raw numbers in `deviceStatus`
+(`wash_status`, `wash_phase`, `wash_ready`, `dry_status`, `rdt`), and these six states are
+those numbers read the way the Roborock app reads them:
+
+| State | Meaning |
+| --- | --- |
+| `isWashing` | A wash task is running (the low byte of `wash_status` is not zero). |
+| `washingTaskStatus` | That low byte itself. Only "not zero" has a documented meaning; the value range is enumerated nowhere, so it stays a plain number. |
+| `washingMode` | The high byte of `wash_status`, that is *which* wash is running. Four modes have a wording; every other value keeps its number rather than borrowing a label. Meaningful only while `isWashing` is true. |
+| `isWashReady` | The station can wash right away, without the robot driving back to it first. |
+| `isDrying` | The station is drying the mop (`dry_status = 1`). |
+| `dryRemainTime` | Minutes left of the drying run, from `rdt` (which stays in `deviceStatus` in seconds). |
+
+A device that reports none of the raw fields gets none of these states. `wash_phase` keeps
+its own value list in `deviceStatus` and gets no derived state, because only two of its
+values are documented anywhere.
+
 Two objects live at the instance root rather than under a device:
 
 | State | Content |

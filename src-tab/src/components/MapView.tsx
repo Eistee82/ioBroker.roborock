@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Alert, Box, MenuItem, Snackbar, Stack, TextField, Typography } from "@mui/material";
 import { I18n, type AdminConnection } from "@iobroker/adapter-react-v5";
 import { MapEngine } from "../engine/MapEngine";
+import { EMPTY_DOCK_ACTIVITY } from "../engine/dockActivity";
 import type {
 	CleaningModeTabsModel,
 	ConsumablePartModel,
@@ -93,7 +94,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [zones, setZones] = useState<ZoneModel>({ count: 0, max: 5, atLimit: false });
 	const [cleanCount, setCleanCount] = useState(1);
 	const [consumables, setConsumables] = useState<ConsumablePartModel[]>([]);
-	const [dock, setDock] = useState<DockModel>({ controls: [], status: [], faulty: false });
+	const [dock, setDock] = useState<DockModel>({ controls: [], status: [], faulty: false, activity: EMPTY_DOCK_ACTIVITY });
 	const [hasMap, setHasMap] = useState(false);
 	// Only true while the robot actually reports a live track; the colour key follows it.
 	const [hasLiveTrack, setHasLiveTrack] = useState(false);

@@ -17,6 +17,7 @@ import {
 	type LiveSnapshot,
 } from "./liveTrack";
 import { furnitureAssetFileName, furnitureGraphic, furnitureRect } from "./furniture";
+import { layoutZoneHandles, renderZoneHandles } from "./zoneHandles";
 import type { Furniture } from "@adapter/lib/map/v1/types";
 
 /**
@@ -34,10 +35,12 @@ import type { Furniture } from "@adapter/lib/map/v1/types";
 export const ASSET_BASE = "../../files/roborock/assets";
 import { buildCleaningModeTabs } from "./cleaningModes";
 import { CONSUMABLE_LABEL_OVERRIDES, consumableGroup } from "./consumables";
+import { DOCK_ACTIVITY_STATES, EMPTY_DOCK_ACTIVITY, readDockActivity } from "./dockActivity";
 import type {
 	CleaningModeTab,
 	ConsumableGroup,
 	ConsumablePartModel,
+	DockActivityModel,
 	DockControlModel,
 	DockStatusModel,
 	EngineConnection,
@@ -201,6 +204,7 @@ const RESET_CONSUMABLES_FOLDER = "resetConsumables";
 /** Folder the station status lives in; absent on devices without a dock. */
 const DOCK_STATUS_FOLDER = "dockingStationStatus";
 
+
 /** Suffixes the adapter appends to a consumable name, longest first (avoids "_work_time" eating "_work_times"). */
 const CONSUMABLE_SUFFIXES = ["_work_times", "_work_time", "_dirty_time", "_life"];
 
@@ -256,7 +260,6 @@ const UI_CONSTANTS = {
 	 * over the blue floor of the map was a line one had to look for.
 	 */
 	ZONE_STROKE_BASE: 4,
-	ZONE_HANDLE_RADIUS_BASE: 5,
 	PIN_WIDTH_BASE: 29,
 	PIN_HEIGHT_BASE: 24,
 	PIN_Y_OFFSET_BASE: 5,
@@ -439,6 +442,14 @@ export class MapEngine {
 	private rects: Rect[] = [];
 	private zones: number[][] = [];
 	private rectCounter = 0;
+	/**
+	 * Zone currently being moved or resized, or null.
+	 *
+	 * Only its handles are exempt from the size threshold in `zoneHandles.ts`: shrinking a zone
+	 * with its own scale handle would otherwise cross that threshold mid-gesture and take the
+	 * handle out from under the pointer.
+	 */
+	private zoneGestureId: number | null = null;
 	/** Cache: "duid.mapFlag.roomId" -> room name (from get_room_names for cloud maps). */
 	private roomNamesFromStates: Record<string, string> = {};
 	/** Guard: "duid.mapFlag" of the floor whose room names have already been requested. */
@@ -998,6 +1009,11 @@ export class MapEngine {
 				this.panelValues[id] = state && state.val !== undefined ? state.val : null;
 				this.updateConsumableValues();
 				this.updateDockValues();
+				// Drying is the one station job the robot state does not carry, so the status bar
+				// only learns about it here - and it decides which half of the drying pair shows.
+				if (id.endsWith(`.${DOCK_STATUS_FOLDER}.${DOCK_ACTIVITY_STATES.drying}`)) {
+					this.renderStatusBar();
+				}
 				return;
 			}
 
@@ -1171,7 +1187,7 @@ export class MapEngine {
 		this.dockErrorStateId = null;
 
 		this.host.onConsumables?.([]);
-		this.host.onDock?.({ controls: [], status: [], faulty: false });
+		this.host.onDock?.({ controls: [], status: [], faulty: false, activity: EMPTY_DOCK_ACTIVITY });
 	}
 
 	/** Lists the state objects below a path prefix; an unreachable view yields an empty panel, not an error. */
@@ -1441,7 +1457,12 @@ export class MapEngine {
 		const dockError = this.dockErrorStateId === null ? null : Number(this.panelValues[this.dockErrorStateId]);
 		const faulty = dockError !== null && Number.isFinite(dockError) && dockError > 0;
 
-		this.host.onDock?.({ controls, status, faulty });
+		this.host.onDock?.({ controls, status, faulty, activity: this.readDockActivity() });
+	}
+
+	/** The station's wash and dry activity, condensed out of the rows already on screen. */
+	private readDockActivity(): DockActivityModel {
+		return readDockActivity(this.dockStatusRows, this.panelValues, DOCK_STATUS_FOLDER);
 	}
 
 	/** Subscribes to every state the two panels display and fetches their current values. */
@@ -1593,8 +1614,9 @@ export class MapEngine {
 			// so a run started from the phone app shows up here as well.
 			phase: robotPhase(stateCode),
 			// The station reports its running job through the robot state, so the dock panel can
-			// offer Stop for exactly the job that is under way.
-			dockActivity: dockActivity(stateCode),
+			// offer Stop for exactly the job that is under way. Drying is the exception - the robot
+			// reports plain charging while the station dries, so that one comes from `isDrying`.
+			dockActivity: dockActivity(stateCode, this.readDockActivity().drying),
 		};
 
 		this.host.onStatus?.(status);
@@ -2587,7 +2609,8 @@ export class MapEngine {
 	private drawZones() {
 		const dragHandler = d3
 			.drag<SVGGElement, Rect>()
-			.on("start", (event: any) => {
+			.on("start", (event: any, d: Rect) => {
+				this.zoneGestureId = d.id;
 				const element = event.sourceEvent.target.closest("g.zone");
 				if (element) d3.select(element).raise().style("cursor", "grabbing");
 			})
@@ -2607,16 +2630,24 @@ export class MapEngine {
 				if (element) d3.select(element).attr("transform", `translate(${d.x}, ${d.y})`);
 			})
 			.on("end", (event: any) => {
+				this.zoneGestureId = null;
 				const element = event.sourceEvent.target.closest("g.zone");
 				if (element) d3.select(element).style("cursor", "move");
 				this.updateRobotZones();
 			});
 
+		// The resize gesture now hangs on the scale handle instead of on the corner circle that
+		// used to sit inside the rectangle. The arithmetic is unchanged - only the element it is
+		// attached to, and with it the way back to the zone group: the handle is two levels down,
+		// so the group is found by `closest` rather than by `parentNode`.
 		const resizeHandler = d3
-			.drag<SVGCircleElement, Rect>()
-			.on("start", (event: any) => {
+			.drag<SVGGElement, Rect>()
+			.on("start", (event: any, d: Rect) => {
+				// Without this the press would travel on to `g.zone` and drag the zone away while
+				// the user is resizing it.
 				event.sourceEvent.stopPropagation();
-				const element = event.sourceEvent.target;
+				this.zoneGestureId = d.id;
+				const element = event.sourceEvent.target.closest("g.zone");
 				if (element) d3.select(element).raise();
 			})
 			.on("drag", (event: any, d: Rect) => {
@@ -2629,32 +2660,52 @@ export class MapEngine {
 				if (d.y + newHeight > maxBoundY) newHeight = maxBoundY - d.y;
 				d.width = newWidth;
 				d.height = newHeight;
-				const element = event.sourceEvent.target;
+				const element = event.sourceEvent.target.closest("g.zone");
 				if (element) {
-					const parentGroup = d3.select(element.parentNode as SVGGElement);
-					parentGroup.select("rect").attr("width", d.width).attr("height", d.height);
-					parentGroup.select("circle.zone-handle").attr("cx", d.width).attr("cy", d.height);
+					const zoneGroup = d3.select(element as SVGGElement) as d3.Selection<SVGGElement, Rect, any, any>;
+					zoneGroup.select("rect.zone-rect").attr("width", d.width).attr("height", d.height);
+					layoutZoneHandles(zoneGroup, { zoom: this.wheelZoom, activeZoneId: this.zoneGestureId });
 				}
 			})
-			.on("end", () => this.updateRobotZones());
+			.on("end", () => {
+				this.zoneGestureId = null;
+				this.updateRobotZones();
+				// A zone shrunk below the handle threshold gives them up only now, so the gesture
+				// could not pull the handle out from under the pointer while it was running.
+				this.layoutAllZoneHandles();
+			});
 
 		const selection = this.zoneGroup.selectAll("g.zone").data(this.rects, (d: any) => d.id);
 		selection.exit().remove();
 		const enterGroup = selection.enter().append("g").attr("class", "zone").call(dragHandler as any);
 		enterGroup.append("rect").attr("class", "zone-rect").attr("x", 0).attr("y", 0).style("stroke-width", this.rescaler.zoneStrokeWidth());
-		enterGroup.append("circle").attr("class", "zone-handle").attr("r", this.rescaler.zoneHandleRadius()).call(resizeHandler as any);
 		const mergedSelection = selection.merge(enterGroup as any);
 		mergedSelection.attr("transform", (d: Rect) => `translate(${d.x}, ${d.y})`);
 		mergedSelection
-			.select("rect")
+			// By class, not by tag: the focus frame of the handles is a `rect` as well, and this
+			// one has to stay the zone's own body.
+			.select("rect.zone-rect")
 			.attr("width", (d: Rect) => d.width)
 			.attr("height", (d: Rect) => d.height)
 			.style("stroke-width", this.rescaler.zoneStrokeWidth());
-		mergedSelection
-			.select("circle.zone-handle")
-			.attr("cx", (d: Rect) => d.width)
-			.attr("cy", (d: Rect) => d.height)
-			.attr("r", this.rescaler.zoneHandleRadius());
+
+		// Delete, resize and move, on the positions the app puts them (see `zoneHandles.ts`).
+		// Building them is idempotent, so this both equips the new zones and lays out all of them.
+		renderZoneHandles(mergedSelection as unknown as d3.Selection<SVGGElement, Rect, any, any>, {
+			zoom: this.wheelZoom,
+			activeZoneId: this.zoneGestureId,
+			t: (key: string, fallback: string) => this.t(key, fallback),
+			onDelete: (id: number) => this.removeZoneById(id),
+			scaleDrag: resizeHandler,
+		});
+	}
+
+	/** Puts the handles of every zone back where the current zoom wants them. */
+	private layoutAllZoneHandles(): void {
+		layoutZoneHandles(this.zoneGroup.selectAll<SVGGElement, Rect>("g.zone"), {
+			zoom: this.wheelZoom,
+			activeZoneId: this.zoneGestureId,
+		});
 	}
 
 	// -----------------------------------------------------------------------------
@@ -2699,7 +2750,9 @@ export class MapEngine {
 		if (event.sourceEvent) this.userAdjustedView = true;
 
 		this.zoneGroup.selectAll("rect.zone-rect").style("stroke-width", this.rescaler.zoneStrokeWidth());
-		this.zoneGroup.selectAll("circle.zone-handle").attr("r", this.rescaler.zoneHandleRadius());
+		// The zone scales with the map because it stands for an area on the floor; its handles
+		// must not, or they are unusable at either end of the zoom range.
+		this.layoutAllZoneHandles();
 
 		const q10Geometry = isQ10MapData(this.map)
 			? new Q10MapGeometry(this.map, 1, this.getQ10CanvasScale(this.map))
@@ -2901,10 +2954,27 @@ export class MapEngine {
 		this.updateRobotZones();
 	}
 
-	/** Removes the zone added last. */
+	/** Removes the zone added last. This is what the dock's remove button does. */
 	public removeZone(): void {
 		if (this.rects.length === 0) return;
 		this.rects.pop();
+		this.drawZones();
+		this.renderZoneHint();
+		this.updateRobotZones();
+	}
+
+	/**
+	 * Removes exactly one zone, the one its own delete handle was pressed on.
+	 *
+	 * "The one added last" is the right rule for a button standing next to the map, and the
+	 * wrong one for a handle drawn on a specific rectangle: with the five zones the map allows,
+	 * it would hit the wrong zone four times out of five.
+	 * @param id `Rect.id` the data join keys on; an id that is no longer drawn changes nothing.
+	 */
+	public removeZoneById(id: number): void {
+		const remaining = this.rects.filter((rect) => rect.id !== id);
+		if (remaining.length === this.rects.length) return;
+		this.rects = remaining;
 		this.drawZones();
 		this.renderZoneHint();
 		this.updateRobotZones();
@@ -3085,7 +3155,6 @@ export class MapEngine {
 			robotSize: () => VISUAL_BLOCK_SIZE * UI_CONSTANTS.ROBOT_SIZE_BASE,
 			chargerSize: () => VISUAL_BLOCK_SIZE * UI_CONSTANTS.CHARGER_SIZE_BASE,
 			zoneStrokeWidth: () => UI_CONSTANTS.ZONE_STROKE_BASE / this.wheelZoom,
-			zoneHandleRadius: () => UI_CONSTANTS.ZONE_HANDLE_RADIUS_BASE / this.wheelZoom,
 			pinWidth: () => UI_CONSTANTS.PIN_WIDTH_BASE / this.wheelZoom,
 			pinHeight: () => UI_CONSTANTS.PIN_HEIGHT_BASE / this.wheelZoom,
 			pinYOffset: () => UI_CONSTANTS.PIN_Y_OFFSET_BASE / this.wheelZoom,

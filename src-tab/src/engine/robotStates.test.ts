@@ -92,6 +92,23 @@ describe("dockActivity", () => {
 		}
 	});
 
+	it("reports drying from the station flag, since no state code names it", () => {
+		// While the station dries the mop the robot reports plain charging (8).
+		expect(dockActivity(8, true)).toBe("drying");
+		expect(dockActivity(null, true)).toBe("drying");
+	});
+
+	it("does not read a silent or negative drying flag as a running job", () => {
+		expect(dockActivity(8, false)).toBeNull();
+		expect(dockActivity(8, null)).toBeNull();
+	});
+
+	it("lets the job the robot itself reports win over the drying flag", () => {
+		// The two never overlap in practice, and a Stop button must match the state that is shown.
+		expect(dockActivity(23, true)).toBe("washing");
+		expect(dockActivity(22, true)).toBe("emptying");
+	});
+
 	it("only ever reports a job while the robot counts as docked", () => {
 		// A Stop button for a wash cycle would be pointless if the robot were out cleaning.
 		for (const code of [22, 23, 25]) {
@@ -107,11 +124,15 @@ describe("DOCK_COMMAND_PAIRS", () => {
 			start: "app_start_collect_dust",
 			stop: "app_stop_collect_dust",
 		});
+		expect(DOCK_COMMAND_PAIRS.drying).toEqual({
+			start: "app_start_mop_drying",
+			stop: "app_stop_mop_drying",
+		});
 	});
 
 	it("is keyed by exactly the jobs dockActivity can report", () => {
 		// A key that no state ever produces would leave its Stop button permanently hidden.
-		const reported = new Set([dockActivity(23), dockActivity(22)]);
+		const reported = new Set([dockActivity(23), dockActivity(22), dockActivity(8, true)]);
 		expect(new Set(Object.keys(DOCK_COMMAND_PAIRS))).toEqual(reported);
 	});
 

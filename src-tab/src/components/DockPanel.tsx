@@ -18,6 +18,37 @@ interface DockPanelProps {
 }
 
 /**
+ * One line for the station job that is running, or null while none is.
+ *
+ * Only states the device really published count. `null` means "the device says nothing about
+ * this", and a station that says nothing gets no chip - it must never read as "idle", because a
+ * silent station and an idle one look the same from here and only one of them is harmless.
+ *
+ * Washing wins over drying when both are reported: washing is the job the robot itself names in
+ * its state, and the same order decides which Start/Stop pair the panel offers.
+ *
+ * The wash mode text comes from the adapter's own value list, so it appears only for the four
+ * modes the Roborock app gives a wording to. For every other mode the chip says just "washing"
+ * rather than inventing a name for a number.
+ */
+function describeDockActivity(dock: DockModel): string | null {
+	const { washing, washingModeText, drying, dryRemainMinutes } = dock.activity;
+
+	if (washing === true) {
+		return washingModeText ?? I18n.t("ui_dock_washing");
+	}
+
+	if (drying === true) {
+		if (dryRemainMinutes !== null && dryRemainMinutes > 0) {
+			return I18n.t("ui_dock_drying_remaining").replace("%s", String(dryRemainMinutes));
+		}
+		return I18n.t("ui_dock_drying");
+	}
+
+	return null;
+}
+
+/**
  * The dock: its actions, its modes and its station states.
  *
  * Nothing here is a model list - an entry only exists because the device handler published
@@ -52,6 +83,8 @@ export function DockPanel({ dock, phase, dockActivity, onCommand }: DockPanelPro
 	const robotAway = phase === "cleaning" || phase === "paused" || phase === "returning";
 	const buttonHint = robotAway ? I18n.t("ui_dock_needs_robot") : "";
 
+	const activityLabel = describeDockActivity(dock);
+
 	return (
 		<FloatingSurface sx={{ width: 300, maxWidth: "100%" }}>
 			<Stack
@@ -74,6 +107,16 @@ export function DockPanel({ dock, phase, dockActivity, onCommand }: DockPanelPro
 						size="small"
 						color="error"
 						label={I18n.t("ui_error")}
+					/>
+				) : null}
+				{/* Same reasoning for a running station job: washing and drying take minutes, and
+				    a panel that has to be opened to find out is a panel that gets opened. */}
+				{activityLabel ? (
+					<Chip
+						size="small"
+						color="primary"
+						variant="outlined"
+						label={activityLabel}
 					/>
 				) : null}
 				<IconButton size="small">

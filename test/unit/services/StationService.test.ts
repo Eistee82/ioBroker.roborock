@@ -61,4 +61,87 @@ describe("StationService", () => {
 			expect(mockAdapter.setStateChanged).toHaveBeenCalledWith(expect.stringContaining("isUpdownWaterReady"), { val: 2, ack: true });
 		});
 	});
+
+	describe("updateWashAndDryStatus", () => {
+		/** Value written to `dockingStationStatus.<name>`, or undefined when nothing was written. */
+		function written(name: string): unknown {
+			const call = mockAdapter.setStateChanged.mock.calls.find(
+				(entry: any[]) => entry[0] === `Devices.test_duid.dockingStationStatus.${name}`
+			);
+			return call ? call[1].val : undefined;
+		}
+
+		/** `common` of the object created for `dockingStationStatus.<name>`. */
+		function definition(name: string): any {
+			const call = mockDeps.ensureState.mock.calls.find(
+				(entry: any[]) => entry[0] === `Devices.test_duid.dockingStationStatus.${name}`
+			);
+			return call ? call[1] : undefined;
+		}
+
+		it("splits wash_status into task status and mode the way the app does", async () => {
+			// 0x0B07: low byte 7 (a task is running), high byte 11.
+			await service.updateWashAndDryStatus({ wash_status: 0x0b07 });
+
+			expect(written("washingTaskStatus")).toBe(7);
+			expect(written("washingMode")).toBe(11);
+			expect(written("isWashing")).toBe(true);
+		});
+
+		it("reports no wash while the low byte is zero", async () => {
+			await service.updateWashAndDryStatus({ wash_status: 0 });
+
+			expect(written("washingTaskStatus")).toBe(0);
+			expect(written("isWashing")).toBe(false);
+		});
+
+		it("labels only the four wash modes the app gives a wording to", async () => {
+			await service.updateWashAndDryStatus({ wash_status: 0x0601 });
+
+			const states = definition("washingMode").states;
+			expect(Object.keys(states).sort()).toEqual(["12", "6", "7", "9"]);
+			// A mode without a proven wording must stay a bare number rather than borrow a label.
+			expect(states[11]).toBeUndefined();
+		});
+
+		it("derives drying and its remaining minutes from dry_status and rdt", async () => {
+			await service.updateWashAndDryStatus({ dry_status: 1, rdt: 7200 });
+
+			expect(written("isDrying")).toBe(true);
+			// rdt is seconds; the app shows minutes.
+			expect(written("dryRemainTime")).toBe(120);
+			expect(definition("dryRemainTime").unit).toBe("min");
+		});
+
+		it("treats every dry_status other than 1 as not drying", async () => {
+			await service.updateWashAndDryStatus({ dry_status: 0 });
+
+			expect(written("isDrying")).toBe(false);
+		});
+
+		it("maps wash_ready 1 to the ready flag", async () => {
+			await service.updateWashAndDryStatus({ wash_ready: 1 });
+			expect(written("isWashReady")).toBe(true);
+
+			mockAdapter.setStateChanged.mockClear();
+			await service.updateWashAndDryStatus({ wash_ready: 0 });
+			expect(written("isWashReady")).toBe(false);
+		});
+
+		it("publishes nothing at all when the device reports none of the fields", async () => {
+			await service.updateWashAndDryStatus({ state: 8, battery: 100 });
+
+			expect(mockDeps.ensureFolder).not.toHaveBeenCalled();
+			expect(mockAdapter.setStateChanged).not.toHaveBeenCalled();
+		});
+
+		it("skips exactly the fields the device leaves out", async () => {
+			await service.updateWashAndDryStatus({ dry_status: 1 });
+
+			expect(written("isDrying")).toBe(true);
+			expect(written("washingTaskStatus")).toBeUndefined();
+			expect(written("isWashReady")).toBeUndefined();
+			expect(written("dryRemainTime")).toBeUndefined();
+		});
+	});
 });

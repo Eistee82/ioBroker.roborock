@@ -29,7 +29,7 @@ export interface SelectOption {
 export type RobotPhase = "cleaning" | "paused" | "returning" | "docked" | "idle" | "unknown";
 
 /** A station job the robot reports as running, or null when the station is idle. */
-export type DockActivity = "washing" | "emptying" | null;
+export type DockActivity = "washing" | "emptying" | "drying" | null;
 
 /** The live device status shown in the status strip. */
 export interface StatusModel {
@@ -131,12 +131,32 @@ export interface DockStatusModel {
 	text: string;
 }
 
+/**
+ * What the station is doing with the mop right now.
+ *
+ * The adapter derives all of it from the raw status fields the app reads too - see
+ * `StationService.updateWashAndDryStatus()` for the proofs. Every field is null while the device
+ * publishes no such state, and a null must never be shown as "no", only as "not reported".
+ */
+export interface DockActivityModel {
+	/** A wash task is running (`wash_status` low byte is not zero). */
+	washing: boolean | null;
+	/** Text of the running wash mode, or null when the mode has no proven wording. */
+	washingModeText: string | null;
+	/** The station is drying the mop (`dry_status === 1`). */
+	drying: boolean | null;
+	/** Minutes left of the drying run, or null while none is reported. */
+	dryRemainMinutes: number | null;
+}
+
 /** Everything the dock panel needs. */
 export interface DockModel {
 	controls: DockControlModel[];
 	status: DockStatusModel[];
 	/** True while the device reports a station fault; flagged on the collapsed summary. */
 	faulty: boolean;
+	/** Mop wash and drying, so the summary line says what runs without expanding the panel. */
+	activity: DockActivityModel;
 }
 
 /** Room selection state of the currently displayed map. */

@@ -192,6 +192,24 @@ Alle Geräteobjekte liegen unter `roborock.<instanz>.Devices.<duid>`:
 | `deviceInfo`, `networkInfo`, `connection` | Modell- und Firmware-Informationen, Netzwerkdaten und der Zustand der lokalen bzw. Cloud-Kanäle. |
 | `dockingStationStatus` | Stationszustände, nur bei Modellen mit einer Station, die sie meldet. |
 
+Neben den Tank- und Staubbeutelzuständen enthält `dockingStationStatus`, was die Station
+gerade mit dem Mopp macht. Der Roboter meldet das als rohe Zahlen in `deviceStatus`
+(`wash_status`, `wash_phase`, `wash_ready`, `dry_status`, `rdt`); diese sechs States sind
+dieselben Zahlen, gelesen wie die Roborock-App sie liest:
+
+| State | Bedeutung |
+| --- | --- |
+| `isWashing` | Ein Waschvorgang läuft (das untere Byte von `wash_status` ist nicht 0). |
+| `washingTaskStatus` | Genau dieses untere Byte. Belegt ist nur „ungleich 0"; der Wertebereich ist nirgends aufgezählt, deshalb bleibt es eine reine Zahl. |
+| `washingMode` | Das obere Byte von `wash_status`, also *welche* Wäsche läuft. Vier Modi haben einen Text; jeder andere Wert behält seine Zahl, statt sich ein Etikett zu leihen. Nur aussagekräftig, solange `isWashing` wahr ist. |
+| `isWashReady` | Die Station kann sofort waschen, ohne dass der Roboter erst zurückfahren muss. |
+| `isDrying` | Die Station trocknet den Mopp (`dry_status = 1`). |
+| `dryRemainTime` | Restminuten der Trocknung, aus `rdt` (das in `deviceStatus` in Sekunden stehen bleibt). |
+
+Ein Gerät, das keines der rohen Felder meldet, bekommt auch keinen dieser States.
+`wash_phase` behält seine eigene Werteliste in `deviceStatus` und bekommt keinen
+abgeleiteten State, weil nur zwei seiner Werte überhaupt irgendwo belegt sind.
+
 Zwei Objekte liegen nicht unter einem Gerät, sondern direkt in der Instanz:
 
 | State | Inhalt |

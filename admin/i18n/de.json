@@ -200,6 +200,9 @@
   "ui_zones": "Zonen",
   "ui_add_zone": "Zone hinzufügen",
   "ui_remove_zone": "Zone entfernen",
+  "ui_zone_handle_delete": "Diese Zone löschen",
+  "ui_zone_handle_resize": "Zonengröße ändern",
+  "ui_zone_handle_move": "Zone verschieben",
   "ui_zone_limit": "Es können höchstens %s Zonen in einem Durchgang gereinigt werden.",
   "ui_repeat": "Durchgänge",
   "ui_repeat_once": "1 Durchgang",
@@ -297,5 +300,14 @@
   "Map Colour Scheme": "Kartenfarbschema",
   "Follow the admin theme": "Dem Admin-Theme folgen",
   "Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.": "Betrifft nur die Raumfarben. Boden, Wände und Fahrspur werden über das Kartenfarbschema darunter eingestellt.",
-  "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.": "Boden, Wände und Fahrspur der gerenderten Karte. „Hell“ ist das Bild, das der Adapter seit jeher erzeugt. „Dem Admin-Theme folgen“ übernimmt das Theme, das der Roborock-Tab meldet; da es pro Roboter nur ein gerendertes Bild gibt, entscheidet der zuletzt meldende Browser, was alle sehen."
+  "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.": "Boden, Wände und Fahrspur der gerenderten Karte. „Hell“ ist das Bild, das der Adapter seit jeher erzeugt. „Dem Admin-Theme folgen“ übernimmt das Theme, das der Roborock-Tab meldet; da es pro Roboter nur ein gerendertes Bild gibt, entscheidet der zuletzt meldende Browser, was alle sehen.",
+  "washingTaskStatus": "Status des Waschvorgangs",
+  "washingMode": "Moppwäsche-Modus",
+  "isWashing": "Mopp wird gewaschen",
+  "isWashReady": "Waschen sofort möglich",
+  "isDrying": "Mopp wird getrocknet",
+  "dryRemainTime": "Restzeit der Trocknung",
+  "ui_dock_washing": "Mopp wird gewaschen",
+  "ui_dock_drying": "Mopp wird getrocknet",
+  "ui_dock_drying_remaining": "Trocknen, noch %s min"
 }

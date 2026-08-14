@@ -100,12 +100,18 @@ export function robotPhase(stateCode: number | null): RobotPhase {
  * `25 Washing duster` counts as washing as well - it is the same wash cycle on the models that
  * carry a duster, and `app_stop_wash` is what ends it.
  *
+ * Drying is the one job the robot state does not name: while the station dries the mop, the robot
+ * reports plain charging. It comes from `dockingStationStatus.isDrying` instead, which the adapter
+ * derives from `dry_status`. A running wash or dust collection wins over it - those are what the
+ * robot itself reports, and the two never overlap in practice.
+ *
  * Anything else yields `null`, which the panel reads as "nothing running" and answers with the
  * Start buttons. An unlisted code must never hide a control.
  *
  * @param stateCode Value of `deviceStatus.state` / `deviceStatus.status`, or null while none arrived.
+ * @param drying Value of `dockingStationStatus.isDrying`, or null while the device publishes none.
  */
-export function dockActivity(stateCode: number | null): DockActivity {
+export function dockActivity(stateCode: number | null, drying: boolean | null = null): DockActivity {
 	switch (stateCode) {
 		case 23:
 		case 25:
@@ -113,7 +119,7 @@ export function dockActivity(stateCode: number | null): DockActivity {
 		case 22:
 			return "emptying";
 		default:
-			return null;
+			return drying === true ? "drying" : null;
 	}
 }
 
@@ -127,4 +133,5 @@ export function dockActivity(stateCode: number | null): DockActivity {
 export const DOCK_COMMAND_PAIRS: Readonly<Record<string, { start: string; stop: string }>> = {
 	washing: { start: "app_start_wash", stop: "app_stop_wash" },
 	emptying: { start: "app_start_collect_dust", stop: "app_stop_collect_dust" },
+	drying: { start: "app_start_mop_drying", stop: "app_stop_mop_drying" },
 };
