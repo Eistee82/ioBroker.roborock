@@ -119,6 +119,8 @@ export class MockRobot {
 			case "set_custom_mode":
 				this.updateState({ fan_power: params[0] });
 				return ["ok"];
+			case "get_dynamic_map_diff":
+				return this.handleGetDynamicMapDiff(params);
 			case "reset_consumable":
 			{
 				const consumable = params[0] as string;
@@ -131,6 +133,31 @@ export class MockRobot {
 				// Return generic success for unknown commands to prevent crashes
 				return ["ok"];
 		}
+	}
+
+	/**
+	 * Map nonce the robot hands out, mirroring the `NONCEDATA` entry of type 35.
+	 * `-1` means "this robot has no incremental map".
+	 */
+	public mapNonce = 1000;
+
+	/**
+	 * Scripted answers to `get_dynamic_map_diff`, consumed one per call. When the queue runs dry
+	 * the robot reports "nothing changed", which is the answer a standing robot gives.
+	 */
+	public mapDiffAnswers: unknown[] = [];
+
+	/**
+	 * Answers `get_dynamic_map_diff`.
+	 * @param params The `{nonce, round}` object the caller sent.
+	 * @returns The next scripted answer, or an unchanged-map answer.
+	 */
+	private handleGetDynamicMapDiff(params: any): unknown {
+		const request = Array.isArray(params) ? params[0] : params;
+		if (this.mapDiffAnswers.length > 0) {
+			return this.mapDiffAnswers.shift();
+		}
+		return { result: 0, nonce: request?.nonce ?? this.mapNonce, diff: {} };
 	}
 
 	/**

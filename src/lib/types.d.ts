@@ -16,6 +16,11 @@ declare global {
 			activePollInterval?: number;
 			/** Upper bound (seconds) of the exponential backoff after failed polls. Clamped to 30..900. */
 			pollBackoffMaxInterval?: number;
+			/**
+			 * Cadence (seconds) of the live map update while the robot is working. 0 switches it
+			 * off; any other value is clamped to 1..30 and doubled while the robot stands still.
+			 */
+			liveMapInterval?: number;
 
 			enable_map_creation: boolean;
 			cameraPin: string;

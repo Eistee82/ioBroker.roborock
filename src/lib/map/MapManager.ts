@@ -5,6 +5,7 @@ import { MapBuilder as MapBuilderB01 } from "./b01/MapBuilder";
 import { B01DeviceStatus, B01MapData, Q10RuntimeDebugSummary } from "./b01/types";
 import { Q10MapBuilder } from "./q10/Q10MapBuilder";
 import { Q10MapCreator } from "./q10/Q10MapCreator";
+import { extractMapNonce } from "./mapDiff";
 import { enrichSegmentNamesFromRoomStates, normalizeMapFlag } from "./roomKey";
 import { applyQ10PathOnlyToB01, applyQ10RuntimeStatePatch, mergeQ10RuntimeState } from "./q10/Q10YxMapParser";
 import type { Q10RuntimeStatePatch, Q10SourcePathPoint } from "./q10/types";
@@ -43,6 +44,33 @@ export class MapManager {
 	};
 
 	private static readonly Q10_PATH_PRELUDE_TTL_MS = 30_000;
+
+	/**
+	 * Latest map nonce per device, needed by `get_dynamic_map_diff`.
+	 *
+	 * Static on purpose: every `V1MapService` builds its own `MapManager`, so a per-instance field
+	 * would be invisible to the live map poller, which only knows the device. The map is keyed by
+	 * duid, holds one number per robot and is cleared through {@link forgetMapNonce}.
+	 */
+	private static readonly mapNonceByDevice = new Map<string, number>();
+
+	/**
+	 * Nonce of the last complete V1 map parsed for a device.
+	 * @param duid Device Unique ID.
+	 * @returns The nonce, or `null` when no map with a nonce has been seen yet.
+	 */
+	public static getMapNonce(duid: string): number | null {
+		const nonce = MapManager.mapNonceByDevice.get(duid);
+		return nonce === undefined ? null : nonce;
+	}
+
+	/**
+	 * Drops the cached nonce, e.g. after the robot reported that it belongs to a different map.
+	 * @param duid Device Unique ID.
+	 */
+	public static forgetMapNonce(duid: string): void {
+		MapManager.mapNonceByDevice.delete(duid);
+	}
 
 	constructor(adapter: Roborock) {
 		this.adapter = adapter;
@@ -132,6 +160,18 @@ export class MapManager {
 								return (obj as any)?.common?.name;
 							});
 						}
+					}
+				}
+
+				// Remember the nonce this map carries: it is the handle `get_dynamic_map_diff` needs
+				// to ask "what changed since this map". A map without one simply leaves the poller
+				// on its full-map branch.
+				if (duid) {
+					const nonce = extractMapNonce(mapData);
+					if (nonce === null) {
+						MapManager.mapNonceByDevice.delete(duid);
+					} else {
+						MapManager.mapNonceByDevice.set(duid, nonce);
 					}
 				}
 
