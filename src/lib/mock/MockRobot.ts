@@ -13,6 +13,32 @@ export class MockRobot {
 	public roomMapping: any[];
 	public timers: any[];
 
+	/** Ordered segment ids of the cleaning sequence; empty means "robot decides". */
+	public cleanSequence: number[] = [];
+
+	/**
+	 * Furniture per map, keyed by map flag then furniture id. `save_furnitures` is differential, so
+	 * the mock applies the operations instead of replacing the list.
+	 */
+	public furnitures = new Map<number, Map<number, number[]>>();
+	private nextFurnitureId = 1;
+
+	/** Last `sync_rooms_info` payload, or null when the robot never got one. */
+	public syncedRoomNames: any = null;
+
+	/**
+	 * Makes the robot defer the next call to one of these methods with `{result: "retry", id}`,
+	 * the way firmware with feature bit 26 does. The entry is consumed on the first call.
+	 */
+	public deferOnce = new Set<string>();
+	/** Retry ids handed out by {@link deferOnce}, and how many polls each still needs. */
+	private pendingRetries = new Map<number, number>();
+	private nextRetryId = 1000;
+	/** How many `retry_request` polls a deferred call needs before it reports success. */
+	public retryPollsNeeded = 1;
+	/** Every request the robot saw, for payload assertions. */
+	public readonly seen: { method: string; params: any }[] = [];
+
 	constructor(duid: string = MOCK_ROBOT_DATA.duid, model: string = MOCK_ROBOT_DATA.model) {
 		this.duid = duid;
 		this.model = model;
@@ -31,8 +57,33 @@ export class MockRobot {
 		}
 	}
 
-	public handleRequest(method: string, params: any[] = []): any {
+	public handleRequest(method: string, params: any = []): any {
+		this.seen.push({ method, params });
+
+		if (method === "retry_request") {
+			return this.handleRetryRequest(params);
+		}
+
+		if (this.deferOnce.has(method)) {
+			this.deferOnce.delete(method);
+			const retryId = this.nextRetryId++;
+			this.pendingRetries.set(retryId, this.retryPollsNeeded);
+			return { result: "retry", id: retryId };
+		}
+
 		switch (method) {
+			case "get_clean_sequence":
+				return this.cleanSequence;
+			case "set_clean_sequence":
+				this.cleanSequence = MockRobot.unwrapRetryEnvelope(params) as number[];
+				return ["ok"];
+			case "save_furnitures":
+				return this.handleSaveFurnitures(MockRobot.unwrapRetryEnvelope(params));
+			case "name_segment":
+				return this.handleNameSegment(MockRobot.unwrapRetryEnvelope(params));
+			case "sync_rooms_info":
+				this.syncedRoomNames = MockRobot.unwrapRetryEnvelope(params);
+				return ["ok"];
 			case "get_prop":
 				return this.handleGetProp(params);
 			case "get_status":
@@ -80,6 +131,95 @@ export class MockRobot {
 				// Return generic success for unknown commands to prevent crashes
 				return ["ok"];
 		}
+	}
+
+	/**
+	 * Strips the `{data, need_retry}` envelope firmware with feature bit 26 expects, so payload
+	 * assertions can look at the parameters the method itself defines.
+	 * @param params Raw parameters as received.
+	 * @returns The unwrapped payload.
+	 */
+	public static unwrapRetryEnvelope(params: any): any {
+		if (params && typeof params === "object" && !Array.isArray(params) && "need_retry" in params) {
+			return "data" in params ? params.data : params;
+		}
+		return params;
+	}
+
+	/**
+	 * Applies a differential furniture edit: `[1, id, ...]` adds or replaces a piece (`id = -1`
+	 * means "new", so the robot assigns one), `[0, id]` deletes one. Pieces the payload does not
+	 * mention stay untouched - that is what makes this call safe.
+	 * @param payload `{map_flag, data}`.
+	 * @returns The robot's answer.
+	 */
+	private handleSaveFurnitures(payload: any): any {
+		const mapFlag = payload?.map_flag;
+		const data = payload?.data;
+		if (!Number.isInteger(mapFlag) || !Array.isArray(data)) return ["invalid_params"];
+
+		let onMap = this.furnitures.get(mapFlag);
+		if (!onMap) {
+			onMap = new Map<number, number[]>();
+			this.furnitures.set(mapFlag, onMap);
+		}
+
+		for (const record of data) {
+			if (!Array.isArray(record)) return ["invalid_params"];
+			if (record[0] === 0) {
+				onMap.delete(record[1]);
+			} else if (record[0] === 1) {
+				const id = record[1] === -1 ? this.nextFurnitureId++ : record[1];
+				onMap.set(id, [1, id, ...record.slice(2)]);
+			} else {
+				return ["invalid_params"];
+			}
+		}
+		return ["ok"];
+	}
+
+	/**
+	 * Replaces the whole segment-to-cloud-room assignment, the way the firmware does: rooms missing
+	 * from the payload lose their assignment. Mirrored faithfully so a test can prove the adapter
+	 * always sends the complete list.
+	 * @param payload `[{iotRoomId, robotRoomId, robotTagId}, ...]`.
+	 * @returns The robot's answer.
+	 */
+	private handleNameSegment(payload: any): any {
+		if (!Array.isArray(payload) || payload.length === 0) return ["invalid_params"];
+
+		const replacement: any[] = [];
+		for (const entry of payload) {
+			const segmentId = entry?.robotRoomId;
+			const iotRoomId = entry?.iotRoomId;
+			if (!Number.isInteger(segmentId) || typeof iotRoomId !== "string") return ["invalid_params"];
+
+			replacement.push(entry.robotTagId === undefined
+				? [segmentId, iotRoomId]
+				: [segmentId, iotRoomId, entry.robotTagId]);
+		}
+
+		this.roomMapping = replacement;
+		return ["ok"];
+	}
+
+	/**
+	 * Answers a `retry_request` poll: still `retry` until the configured number of polls is reached,
+	 * then `["ok"]`.
+	 * @param params `{retry_id, method, retry_count}`.
+	 * @returns The poll answer.
+	 */
+	private handleRetryRequest(params: any): any {
+		const retryId = params?.retry_id;
+		const remaining = this.pendingRetries.get(retryId);
+		if (remaining === undefined) return ["unknown_id"];
+
+		if (remaining <= 1) {
+			this.pendingRetries.delete(retryId);
+			return ["ok"];
+		}
+		this.pendingRetries.set(retryId, remaining - 1);
+		return { result: "retry", id: retryId };
 	}
 
 	/**
