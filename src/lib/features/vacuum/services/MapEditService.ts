@@ -1,16 +1,23 @@
 import type { CommandSpec, FeatureDependencies } from "../../baseDeviceFeatures";
 
 /**
- * The map editor commands that are safe to expose.
+ * The map editor commands this adapter exposes.
  *
- * Everything in here is either differential (it carries an operation code and an id, so the robot
- * only touches what was named) or it replaces a list the adapter rebuilds in full before sending.
- * The destructive editor methods - `save_map`, `split_segment`, `merge_segment` and the carpet
- * calls - are deliberately absent: `save_map` drops every zone that is not part of the payload and
- * splitting or merging invalidates the settings and schedules attached to a room.
+ * Most of them are harmless: they are either differential (they carry an operation code and an id,
+ * so the robot only touches what was named) or they set a single value. Two are not, and both are
+ * built so that a caller cannot trip over them:
+ *
+ * * **`save_map` replaces the entire set of zones and walls** - the payload has no operation code,
+ *   no zone id and no delete record (report section 2.1). There is therefore no raw `save_map`
+ *   command; the adapter offers "add a zone" and "remove a zone" instead, reads the robot's own map
+ *   first, lays the change over it and writes the complete set back. If the map cannot be read,
+ *   nothing is written.
+ * * **`split_segment` and `merge_segment` change the segment ids** (report section 2.2), which
+ *   invalidates room-bound modes, the cleaning order and room-bound schedules. Both warn on the
+ *   state and in the log, and the room states are re-read afterwards.
  *
  * Payload formats, module and line references come from `_appanalysis/14-editor-methoden.md`
- * (sections 1.1, 1.2, 1.5, 1.8, 1.9) and `lib/protocols/roborock_map_edit.json`, both read out of
+ * (sections 1.2 to 1.9, 2.1 to 2.3) and `lib/protocols/roborock_map_edit.json`, both read out of
  * Roborock's decompiled control plugin.
  */
 
@@ -411,6 +418,65 @@ export function parseCleanSequence(raw: unknown): number[] {
 }
 
 /**
+ * How the robot is meant to treat carpets (`CarPetCleanModeSettingMap`, report section 1.7).
+ *
+ * The adapter's `deviceStatus.carpet_clean_mode` only ever knew 0 to 2; the fourth value is in the
+ * plugin's own table.
+ */
+export const CARPET_CLEAN_MODES: Readonly<Record<number, string>> = {
+	0: "Avoid",
+	1: "Rise",
+	2: "Ignore",
+	3: "Dynamic Lift",
+};
+
+/**
+ * Reads the carpet handling mode a user wrote into the command state.
+ *
+ * Report section 1.7: the parameter is `{carpet_clean_mode: 0..3}`. The call is a single setting,
+ * not a list, so there is nothing it could drop.
+ * @param raw Value of the command state.
+ * @returns The payload for `set_carpet_clean_mode`.
+ * @throws If the value is not one of the four documented modes.
+ */
+export function parseCarpetCleanMode(raw: unknown): { carpet_clean_mode: number } {
+	let value: unknown = raw;
+	if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+		value = (value as Record<string, unknown>).carpet_clean_mode;
+	}
+
+	const mode = typeof value === "number" ? value : Number(value);
+	if (!Number.isInteger(mode) || CARPET_CLEAN_MODES[mode] === undefined) {
+		throw new Error(`set_carpet_clean_mode expects one of ${Object.entries(CARPET_CLEAN_MODES).map(([key, label]) => `${key} (${label})`).join(", ")}, got ${JSON.stringify(raw)}.`);
+	}
+	return { carpet_clean_mode: mode };
+}
+
+/**
+ * Reads the classic carpet boost settings a user wrote into the command state.
+ *
+ * Report section 1.7: the parameter is a one-element array holding the settings object, the same
+ * shape `deviceStatus.carpet_mode` reports back. A bare object is wrapped, an array is taken as it
+ * is - the robot replaces the whole settings record either way, and the record is what the user
+ * supplied, so nothing of theirs can be lost.
+ * @param raw Value of the command state.
+ * @returns The payload for `set_carpet_mode`.
+ * @throws If the value is not a settings object.
+ */
+export function parseCarpetMode(raw: unknown): Record<string, unknown>[] {
+	const entries = Array.isArray(raw) ? raw : [raw];
+	if (entries.length !== 1) {
+		throw new Error(`set_carpet_mode expects exactly one settings object, for example {"enable":1,"stall_time":10,"current_low":400,"current_high":500,"current_integral":450}; got ${entries.length}.`);
+	}
+
+	const settings = entries[0];
+	if (settings === null || typeof settings !== "object" || Array.isArray(settings)) {
+		throw new Error("set_carpet_mode expects a settings object such as {\"enable\":1,\"stall_time\":10,\"current_low\":400,\"current_high\":500,\"current_integral\":450}.");
+	}
+	return [settings as Record<string, unknown>];
+}
+
+/**
  * The map editor methods this adapter sends, and the payload building around them.
  *
  * The service owns the payload shapes and the retry envelope; the device feature class only routes
@@ -419,7 +485,13 @@ export function parseCleanSequence(raw: unknown): number[] {
  */
 export class MapEditService {
 	/** Commands this service registers and handles. */
-	public static readonly COMMANDS: readonly string[] = ["set_clean_sequence", "save_furnitures", "name_segment"];
+	public static readonly COMMANDS: readonly string[] = [
+		"set_clean_sequence",
+		"save_furnitures",
+		"name_segment",
+		"set_carpet_clean_mode",
+		"set_carpet_mode",
+	];
 
 	/**
 	 * @param deps Feature dependencies.
@@ -460,6 +532,21 @@ export class MapEditService {
 			def: "",
 			name: translations["name_segment"] || "Rename rooms ([{\"segmentId\":16,\"name\":\"Kitchen\",\"tag\":14}])",
 		} as CommandSpec);
+
+		addCommand("set_carpet_clean_mode", {
+			type: "number",
+			role: "value.list",
+			def: 0,
+			states: { ...CARPET_CLEAN_MODES },
+			name: translations["set_carpet_clean_mode"] || "Carpet Avoidance Mode",
+		} as CommandSpec);
+
+		addCommand("set_carpet_mode", {
+			type: "json",
+			role: "json",
+			def: "",
+			name: translations["set_carpet_mode"] || "Carpet Boost",
+		} as CommandSpec);
 	}
 
 	/** Whether the given command is handled by this service. */
@@ -498,6 +585,16 @@ export class MapEditService {
 		if (method === "name_segment") {
 			const entries = await this.buildNameSegment(parseRoomNaming(params));
 			return { method, params: await this.wrap(method, entries) };
+		}
+
+		if (method === "set_carpet_clean_mode") {
+			const payload = parseCarpetCleanMode(params);
+			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined, `Setting the carpet handling to ${CARPET_CLEAN_MODES[payload.carpet_clean_mode]} (${payload.carpet_clean_mode}).`, "info");
+			return { method, params: await this.wrap(method, payload) };
+		}
+
+		if (method === "set_carpet_mode") {
+			return { method, params: await this.wrap(method, parseCarpetMode(params)) };
 		}
 
 		throw new Error(`MapEditService cannot build a request for '${method}'.`);

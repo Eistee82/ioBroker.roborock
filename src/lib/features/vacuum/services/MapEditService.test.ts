@@ -5,10 +5,13 @@ import { Feature } from "../../features.enum";
 import { V1VacuumFeatures } from "../v1VacuumFeatures";
 import {
 	applyRetryEnvelope,
+	CARPET_CLEAN_MODES,
 	FURNITURE_TYPES,
 	hasFeatureStrBit,
 	MapEditService,
 	MATTER_FEATURE_BIT,
+	parseCarpetCleanMode,
+	parseCarpetMode,
 	parseCleanSequence,
 	parseFurnitures,
 	parseRoomMapping,
@@ -446,18 +449,83 @@ describe("MapEditService", () => {
 		});
 	});
 
+	describe("carpets (report section 1.7)", () => {
+		it("registers the two carpet settings whose payload the report pins down", async () => {
+			const commands = (vacuum as any).commands;
+			expect(commands.set_carpet_clean_mode.type).toBe("number");
+			expect(commands.set_carpet_clean_mode.states).toEqual(CARPET_CLEAN_MODES);
+			expect(commands.set_carpet_mode.type).toBe("json");
+
+			await vacuum.createCommandObjects();
+			expect(mockAdapter.objects[`Devices.${mockRobot.duid}.commands.set_carpet_clean_mode`].common.write).toBe(true);
+			expect(mockAdapter.objects[`Devices.${mockRobot.duid}.commands.set_carpet_mode`].common.write).toBe(true);
+		});
+
+		it("knows the fourth mode the adapter's own table was missing", () => {
+			expect(CARPET_CLEAN_MODES[3]).toBe("Dynamic Lift");
+		});
+
+		it("sends {carpet_clean_mode} and nothing else", async () => {
+			const sent = await runCommand("set_carpet_clean_mode", 2);
+			expect(sent.method).toBe("set_carpet_clean_mode");
+			expect(sent.params).toEqual({ carpet_clean_mode: 2 });
+		});
+
+		it("is not wrapped in the retry envelope, because it is not one of the 13 methods", async () => {
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, { val: RPC_RETRY_FEATURE_BIT, ack: true });
+			const sent = await runCommand("set_carpet_clean_mode", 1);
+			expect(sent.params).toEqual({ carpet_clean_mode: 1 });
+		});
+
+		it("rejects a mode the plugin does not list", () => {
+			expect(() => parseCarpetCleanMode(4)).toThrow(/expects one of/);
+			expect(() => parseCarpetCleanMode("Avoid")).toThrow(/expects one of/);
+		});
+
+		it("accepts the object form as well as the bare number", () => {
+			expect(parseCarpetCleanMode({ carpet_clean_mode: 3 })).toEqual({ carpet_clean_mode: 3 });
+			expect(parseCarpetCleanMode("2")).toEqual({ carpet_clean_mode: 2 });
+		});
+
+		it("wraps the carpet boost settings in the one-element array the robot expects", async () => {
+			const settings = { enable: 1, stall_time: 10, current_low: 400, current_high: 500, current_integral: 450 };
+			const sent = await runCommand("set_carpet_mode", settings);
+			expect(sent.params).toEqual([settings]);
+		});
+
+		it("takes an already wrapped array unchanged", () => {
+			expect(parseCarpetMode([{ enable: 0 }])).toEqual([{ enable: 0 }]);
+		});
+
+		it("rejects anything that is not a settings object", () => {
+			expect(() => parseCarpetMode("on")).toThrow(/settings object/);
+			expect(() => parseCarpetMode([{ enable: 1 }, { enable: 0 }])).toThrow(/exactly one/);
+		});
+	});
+
 	describe("scope", () => {
 		it("claims only the commands it registers", () => {
 			const service = new MapEditService(deps, mockRobot.duid);
-			expect(service.handles("set_clean_sequence")).toBe(true);
-			expect(service.handles("save_furnitures")).toBe(true);
-			expect(service.handles("name_segment")).toBe(true);
+			for (const method of MapEditService.COMMANDS) {
+				expect(service.handles(method)).toBe(true);
+			}
 			expect(service.handles("app_start")).toBe(false);
 		});
 
-		it("does not touch the destructive editor methods", () => {
+		it("offers no raw save_map, because a raw save_map would delete the user's zones", () => {
 			const service = new MapEditService(deps, mockRobot.duid);
-			for (const method of ["save_map", "split_segment", "merge_segment", "set_carpet_area", "set_carpet_clean_mode"]) {
+			// The zone editing goes through add_/remove_ operations that read, change and write back
+			// the complete set (report section 2.1); a pass-through state would let a caller send a
+			// single zone and wipe all the others.
+			expect(service.handles("save_map")).toBe(false);
+			expect(MapEditService.COMMANDS).not.toContain("save_map");
+		});
+
+		it("leaves the carpet zone calls alone, whose payload the report could not pin down", () => {
+			const service = new MapEditService(deps, mockRobot.duid);
+			// `set_carpet_area` and `set_ignore_carpet_zone` are "teilweise belegt": zone_data was
+			// never traced to the single value, so whether they replace or extend is unknown.
+			for (const method of ["set_carpet_area", "set_ignore_carpet_zone"]) {
 				expect(service.handles(method)).toBe(false);
 			}
 		});
