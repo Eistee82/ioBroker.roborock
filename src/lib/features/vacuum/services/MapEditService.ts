@@ -437,7 +437,7 @@ export class MapEditService {
 	 * Declares the command states for the editor methods.
 	 * @param addCommand The feature class' own `addCommand`, so the states land in the usual place.
 	 */
-	public registerCommands(addCommand: (name: string, spec: CommandSpec, group?: string) => void): void {
+	public registerCommands(addCommand: (name: string, spec: CommandSpec) => void): void {
 		const translations = this.deps.adapter.translations;
 
 		addCommand("set_clean_sequence", {
