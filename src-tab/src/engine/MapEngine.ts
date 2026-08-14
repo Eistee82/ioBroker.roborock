@@ -6,8 +6,11 @@ import type { DrawObstacleInput, DrawRoomLabelInput, DrawVirtualWallInput } from
 import type { B01MapData } from "@adapter/lib/map/b01/types";
 import { Q10_CANVAS_SCALE, Q10MapGeometry } from "@adapter/lib/map/q10/Q10MapGeometry";
 import { floorScopeKey, normalizeMapFlag, normalizeRoomId, roomNameCacheKey } from "@adapter/lib/map/roomKey";
+import type { DrawFurnitureInput } from "./SVGMapRenderer";
 import { ROOM_LABEL_BASE_FONT, SVGMapRenderer } from "./SVGMapRenderer";
 import { ROBOT_STATES, dockActivity, robotPhase } from "./robotStates";
+import { furnitureAssetFileName, furnitureGraphic, furnitureRect } from "./furniture";
+import type { Furniture } from "@adapter/lib/map/v1/types";
 
 /**
  * Base path for the device artwork the AppPluginManager stores in the adapter's file storage
@@ -52,6 +55,8 @@ interface MapData {
 	MOP_PATH?: number[];
 	OBSTACLES2?: Array<[number, number, ...any]>;
 	CARPET_MAP?: number[];
+	/** Block type 25. The field names are the ones `MapParser` publishes, see {@link Furniture}. */
+	FURNITURES?: Furniture[];
 	model?: string; // e.g. roborock.vacuum.a147, for asset paths
 	mapFlag?: number; // active map/floor this map belongs to; rooms are keyed by (mapFlag, roomId)
 }
@@ -374,6 +379,7 @@ export class MapEngine {
 	private pureCleanPathGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 
 	// Element Groups
+	private furnitureGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private chargerGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private robotGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private roomNameGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
@@ -483,6 +489,7 @@ export class MapEngine {
 		this.mopPathGroup = d3.select(null) as any;
 		this.backwashPathGroup = d3.select(null) as any;
 		this.pureCleanPathGroup = d3.select(null) as any;
+		this.furnitureGroup = d3.select(null) as any;
 		this.chargerGroup = d3.select(null) as any;
 		this.robotGroup = d3.select(null) as any;
 		this.roomNameGroup = d3.select(null) as any;
@@ -591,6 +598,10 @@ export class MapEngine {
 		this.pureCleanPathGroup = this.mainGroup
 			.append("g")
 			.attr("class", "pure-clean-paths");
+
+		// Furniture sits above the driven paths - it is a permanent part of the room, not a trace -
+		// but below charger, obstacles and robot, which have to stay readable on top of it.
+		this.furnitureGroup = this.mainGroup.append("g").attr("class", "furniture-models");
 
 		this.chargerGroup = this.mainGroup.append("g").attr("class", "charger");
 		this.obstacleGroup = this.mainGroup.append("g").attr("class", "obstacles");
@@ -858,6 +869,7 @@ export class MapEngine {
 		this.mapImage = undefined;
 		this.mapImageElement.attr("href", null);
 		this.carpetGroup.selectAll("*").remove();
+		this.furnitureGroup.selectAll("*").remove();
 		this.obstacleGroup.selectAll("*").remove();
 		this.zonesOverlayGroup.selectAll("*").remove();
 		this.pinGroup.select("image.goto-pin").style("display", "none").style("opacity", 0);
@@ -946,6 +958,7 @@ export class MapEngine {
 				if (id === mapDataStateId) {
 					this.map = undefined;
 					this.zonesOverlayGroup.selectAll("*").remove();
+					this.furnitureGroup.selectAll("*").remove();
 					this.robotGroup.selectAll("*").remove();
 					this.updateMapPlaceholder();
 				}
@@ -1516,6 +1529,9 @@ export class MapEngine {
 		this.pinGroup.select("image.goto-pin").style("display", "none").style("opacity", "0");
 
 		if (isQ10MapData(this.map)) {
+			// Furniture is a V1 block; a Q10 map never carries it, so the layer is emptied here
+			// rather than being left over from the device that was selected before.
+			this.furnitureGroup.selectAll("*").remove();
 			this.setPathGroupOpacityMode(true);
 			this.drawQ10Overlays(this.map);
 			this.applyRoomLabelZoomBehavior();
@@ -1583,8 +1599,67 @@ export class MapEngine {
 			dimensionsAreScaled: false,
 			roomLabels: roomLabels?.length ? roomLabels : undefined,
 		});
+		renderer.drawFurniture(this.buildFurnitureItems(this.map.FURNITURES, params, baseUrl));
 		this.applyRoomLabelZoomBehavior();
 		this.syncRoomSelectionWithLabels(roomLabels?.map((label) => label.segmentId) ?? []);
+	}
+
+	/**
+	 * Turns block type 25 into draw commands.
+	 *
+	 * Three decisions are made here, all of them from `_appanalysis/15-livemap-und-moebel.md`:
+	 *
+	 *  - **Which pieces.** Only those whose `edit` byte is set. A zero there marks a detection the
+	 *    AI proposed and the user never confirmed; the app keeps those in a separate `hide` list
+	 *    and does not draw them either (§2.4). Drawing them would put furniture on the map that
+	 *    the user never placed - exactly the opposite of what was asked for.
+	 *  - **Where.** The corner points are robot coordinates in millimetres, the same unit and
+	 *    origin `robotCoordsToLocalCoords` already converts for the robot and the charger, so they
+	 *    go through it unchanged (§2.5). Rectangle and rotation follow from the four converted
+	 *    points.
+	 *  - **Which graphic.** Only assignments proven in the control plugin; an unproven type or
+	 *    subtype yields null and is drawn as a neutral outline instead of another type's artwork.
+	 *
+	 * @param furnitures The `FURNITURES` block, or undefined when the map carries none.
+	 * @param params Geometry of the current map.
+	 * @param baseUrl Asset folder of the current model, ending in a slash.
+	 */
+	private buildFurnitureItems(
+		furnitures: Furniture[] | undefined,
+		params: MapParams,
+		baseUrl: string
+	): DrawFurnitureInput[] {
+		if (!Array.isArray(furnitures) || !furnitures.length) return [];
+
+		const items: DrawFurnitureInput[] = [];
+		for (const piece of furnitures) {
+			if (!piece || typeof piece !== "object") continue;
+			if (!piece.edit) continue;
+
+			const corners = [
+				this.robotToSvg({ x: piece.x1, y: piece.y1 }, params),
+				this.robotToSvg({ x: piece.x2, y: piece.y2 }, params),
+				this.robotToSvg({ x: piece.x3, y: piece.y3 }, params),
+				this.robotToSvg({ x: piece.x4, y: piece.y4 }, params),
+			];
+			const rect = furnitureRect(corners);
+			if (!rect) continue;
+
+			const graphic = furnitureGraphic(piece.type, piece.subType);
+			items.push({
+				id: piece.id,
+				x: rect.x,
+				y: rect.y,
+				width: rect.width,
+				height: rect.height,
+				centerX: rect.centerX,
+				centerY: rect.centerY,
+				angle: rect.angle,
+				imageHref: graphic ? baseUrl + furnitureAssetFileName(graphic.image) : null,
+				title: graphic?.title ?? null,
+			});
+		}
+		return items;
 	}
 
 	private createSvgRenderer(baseUrl: string, params: MapParams | null): SVGMapRenderer {
@@ -1609,6 +1684,7 @@ export class MapEngine {
 				obstacleGroup: this.obstacleGroup,
 				roomNameGroup: this.roomNameGroup,
 				zonesOverlayGroup: this.zonesOverlayGroup,
+				furnitureGroup: this.furnitureGroup,
 			},
 			pathMainWidth: this.rescaler.pathMainWidth(),
 			pathMopWidth: this.rescaler.pathMopWidth(),

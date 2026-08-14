@@ -1,6 +1,9 @@
 // src/lib/map/v1/MapParser.ts
 import * as crypto from "node:crypto";
 import type { Roborock } from "../../../main";
+import type { Furniture } from "./types";
+
+export type { Furniture };
 
 // --------------------
 // Constants
@@ -168,7 +171,7 @@ export interface ParsedMapData {
 	SMART_ZONE?: any[];
 	CUSTOM_CARPET?: any[];
 	FLOOR_MAP?: number[];
-	FURNITURES?: any[];
+	FURNITURES?: Furniture[];
 	DOCK_TYPE?: number;
 	ENEMIES?: any[];
 	STUCK_POINTS?: any[];
@@ -908,27 +911,31 @@ export class MapParser {
 		return zones;
 	}
 
-	private getFurnitures(buf: Buffer, offset: number): any[] {
+	/**
+	 * Reads block type 25. The byte offsets are unchanged - they always matched the app - but the
+	 * result is a named object now, see {@link Furniture} for why.
+	 */
+	private getFurnitures(buf: Buffer, offset: number): Furniture[] {
 		const count = this.getCount(buf);
-		const furnitures: any[] = [];
+		const furnitures: Furniture[] = [];
 		for (let i = 0; i < count; i++) {
 			const base = offset + i * 23;
-			furnitures.push([
-				buf.readUInt16LE(base), // x1
-				buf.readUInt16LE(base + 2), // y1
-				buf.readUInt16LE(base + 4), // x2
-				buf.readUInt16LE(base + 6), // y2
-				buf.readUInt16LE(base + 8), // x3
-				buf.readUInt16LE(base + 10), // y3
-				buf.readUInt16LE(base + 12), // x4
-				buf.readUInt16LE(base + 14), // y4
-				buf.readUInt16LE(base + 16), // x_real
-				buf.readUInt8(base + 18), // percent
-				buf.readUInt8(base + 19), // type
-				buf.readUInt8(base + 20), // subtype
-				buf.readUInt8(base + 21), // edit
-				buf.readUInt8(base + 22) // id
-			]);
+			furnitures.push({
+				x1: buf.readUInt16LE(base),
+				y1: buf.readUInt16LE(base + 2),
+				x2: buf.readUInt16LE(base + 4),
+				y2: buf.readUInt16LE(base + 6),
+				x3: buf.readUInt16LE(base + 8),
+				y3: buf.readUInt16LE(base + 10),
+				x4: buf.readUInt16LE(base + 12),
+				y4: buf.readUInt16LE(base + 14),
+				percent: buf.readUInt16LE(base + 16),
+				type: buf.readUInt8(base + 18),
+				subType: buf.readUInt8(base + 19),
+				edit: buf.readUInt8(base + 20),
+				id: buf.readUInt8(base + 21),
+				hasAngle: buf.readUInt8(base + 22)
+			});
 		}
 		return furnitures;
 	}

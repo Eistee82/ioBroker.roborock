@@ -78,6 +78,33 @@ function carpetPositionsToPathD(positions: { x: number; y: number }[]): string {
 	return pathCoords.join("");
 }
 
+/**
+ * One piece of furniture, ready to draw: the rectangle its four corner points span, the rotation
+ * that turns it back onto them, and the graphic that may or may not be downloaded already.
+ *
+ * Only furniture the user placed or confirmed reaches this point - `MapEngine` drops the entries
+ * whose `edit` byte is zero, which is what the app does as well (analysis §2.4).
+ */
+export interface DrawFurnitureInput {
+	/** Furniture id of the block entry; used as the D3 key so an update reuses its element. */
+	id: number;
+	/** Left edge in SVG user units, before the rotation. */
+	x: number;
+	/** Top edge in SVG user units, before the rotation. */
+	y: number;
+	width: number;
+	height: number;
+	/** Centre the rotation turns around. */
+	centerX: number;
+	centerY: number;
+	/** Rotation in degrees, clockwise. */
+	angle: number;
+	/** URL of the proven graphic, or null when this type/subtype pair has none. */
+	imageHref: string | null;
+	/** Name of the piece, shown as the native SVG tooltip; null when the name is unproven. */
+	title: string | null;
+}
+
 export interface SVGMapRendererGroups {
 	carpetGroup: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
 	pathGroup: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
@@ -90,6 +117,8 @@ export interface SVGMapRendererGroups {
 	obstacleGroup: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
 	roomNameGroup: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
 	zonesOverlayGroup?: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
+	/** Optional so a caller that does not draw furniture keeps working unchanged. */
+	furnitureGroup?: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
 }
 
 export interface SVGMapRendererOptions {
@@ -300,6 +329,82 @@ export class SVGMapRenderer implements IMapRenderer {
 			});
 
 		enter.merge(groups as unknown as d3.Selection<SVGGElement, DrawObstacleInput, SVGGElement, unknown>).attr("transform", (d) => `translate(${d.x}, ${d.y})`);
+	}
+
+	/**
+	 * Draws the furniture models of block type 25.
+	 *
+	 * Two things are worth knowing here.
+	 *
+	 * **A missing graphic must never show as a broken image.** The artwork is downloaded per user
+	 * from that user's own Roborock account, so a purely local installation has none of it. Every
+	 * piece is therefore drawn as a neutral outline first and the `href` is only set once an
+	 * off-screen probe has confirmed the file is really there - the same approach the obstacle
+	 * icons use, and the reason this does not simply bind `href` and hope.
+	 *
+	 * **The rotation is applied around the centre**, not around the element origin, because the
+	 * rectangle itself is the axis-aligned hull the four corner points were reduced to.
+	 *
+	 * @param items Furniture to draw; an empty list clears the layer.
+	 */
+	drawFurniture(items: DrawFurnitureInput[]): void {
+		const g = this.opts.groups.furnitureGroup;
+		if (!g) return;
+		g.selectAll("g.furniture").remove();
+		if (!items.length) return;
+
+		for (const item of items) {
+			const piece = g
+				.append("g")
+				.attr("class", "furniture")
+				.attr("data-furniture-id", String(item.id))
+				.attr(
+					"transform",
+					`translate(${item.centerX}, ${item.centerY}) rotate(${item.angle}) translate(${-item.width / 2}, ${-item.height / 2})`
+				);
+
+			// Native SVG tooltip. The app shows no permanent text on the map either (analysis
+			// §2.7), so the name stays out of the way until the pointer asks for it.
+			if (item.title) piece.append("title").text(item.title);
+
+			piece
+				.append("rect")
+				.attr("class", "furniture-shape")
+				.attr("x", 0)
+				.attr("y", 0)
+				.attr("width", item.width)
+				.attr("height", item.height)
+				.attr("rx", Math.min(item.width, item.height) * 0.1)
+				.style("fill", "rgba(120, 120, 120, 0.18)")
+				.style("stroke", "rgba(60, 60, 60, 0.55)")
+				.style("stroke-width", "0.75px");
+
+			if (!item.imageHref) continue;
+
+			const href = item.imageHref;
+			const probe = new Image();
+			probe.onload = () => {
+				// The map may have been redrawn while the image was loading.
+				const node = piece.node();
+				if (!node || !g.node()?.contains(node)) return;
+				piece.select("rect.furniture-shape").style("display", "none");
+				piece
+					.append("image")
+					.attr("class", "furniture-icon")
+					.attr("x", 0)
+					.attr("y", 0)
+					.attr("width", item.width)
+					.attr("height", item.height)
+					// The rectangle is the real footprint, so the artwork fills it instead of
+					// being letterboxed into it.
+					.attr("preserveAspectRatio", "none")
+					.attr("href", href);
+			};
+			probe.onerror = () => {
+				// Nothing to do - the neutral outline is already on the map.
+			};
+			probe.src = href;
+		}
 	}
 
 	drawRoomLabels(labels: DrawRoomLabelInput[]): void {
