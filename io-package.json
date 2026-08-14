@@ -207,6 +207,7 @@
     "cameraPin": 1234,
     "region": "eu",
     "map_theme": "dark",
+    "map_color_scheme": "light",
     "sceneExecutionMode": "local",
     "connectionMode": "cloud",
     "manualDevices": "",

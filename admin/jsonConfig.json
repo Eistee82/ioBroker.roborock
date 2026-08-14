@@ -172,6 +172,7 @@
         "map_theme": {
           "type": "select",
           "label": "Map Theme",
+          "help": "Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.",
           "options": [
             {
               "label": "Dark",
@@ -183,6 +184,33 @@
             }
           ],
           "default": "dark",
+          "newLine": true,
+          "hidden": "!data.enable_map_creation",
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
+        },
+        "map_color_scheme": {
+          "type": "select",
+          "label": "Map Colour Scheme",
+          "help": "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.",
+          "options": [
+            {
+              "label": "Light",
+              "value": "light"
+            },
+            {
+              "label": "Dark",
+              "value": "dark"
+            },
+            {
+              "label": "Follow the admin theme",
+              "value": "auto"
+            }
+          ],
+          "default": "light",
           "newLine": true,
           "hidden": "!data.enable_map_creation",
           "xs": 12,

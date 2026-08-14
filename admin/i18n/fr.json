@@ -293,5 +293,9 @@
   "ui_live_track_mopped": "Lavé",
   "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Adresse IP ou nom d’interface (par exemple eth0) auquel le socket UDP de découverte se lie. Vide signifie toutes les interfaces, ce qui peut échouer sur des hôtes ayant plusieurs réseaux.",
   "clean_mode_tab": "Mode de nettoyage",
-  "set_clean_motor_mode": "Définir le mode de nettoyage"
+  "set_clean_motor_mode": "Définir le mode de nettoyage",
+  "Map Colour Scheme": "Palette de couleurs de la carte",
+  "Follow the admin theme": "Suivre le thème de l'admin",
+  "Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.": "Couleurs des pièces uniquement. Le sol, les murs et le trajet parcouru sont définis par la palette de couleurs de la carte ci-dessous.",
+  "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.": "Sol, murs et trajet parcouru de la carte rendue. « Clair » correspond à l'image que l'adaptateur a toujours produite. « Suivre le thème de l'admin » reprend le thème signalé par l'onglet Roborock ; comme il n'existe qu'une seule image rendue par robot, c'est le navigateur ayant signalé en dernier qui décide de ce que tout le monde voit."
 }

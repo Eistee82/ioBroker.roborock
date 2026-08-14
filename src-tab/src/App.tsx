@@ -13,6 +13,8 @@ import {
 } from "@iobroker/adapter-react-v5";
 
 import { MapView } from "./components/MapView";
+import { createMapThemeReporter } from "./engine/mapThemeReporter";
+import type { MapThemeName } from "./engine/mapThemeReporter";
 import { createRoborockTheme, themeCssVariables } from "./theme";
 
 import enLang from "@i18n/en.json";
@@ -68,10 +70,39 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 	onConnectionReady(): void {
 		this.setState({ ready: true });
 		this.applyThemeToDocument();
+		this.publishMapTheme();
 	}
 
 	componentDidUpdate(): void {
 		this.applyThemeToDocument();
+		this.publishMapTheme();
+	}
+
+	/**
+	 * Gate that turns "the theme on every render" into "the theme when it changed".
+	 * See {@link createMapThemeReporter} for why only changes may be sent.
+	 */
+	private readonly reportMapTheme = createMapThemeReporter((theme: MapThemeName) => {
+		void this.socket
+			?.sendTo(`${this.adapterName}.${this.instance}`, "set_map_theme", { theme })
+			.catch(() => {
+				// An adapter without the command answers with an error. The map then stays light,
+				// which is exactly what it was before - not worth bothering the user with, and
+				// retrying would only repeat the same answer.
+			});
+	});
+
+	/**
+	 * Tells the adapter which theme this browser is showing.
+	 *
+	 * The map is not drawn here: it is a PNG the adapter renders and this page merely displays,
+	 * so the adapter is the only place that can paint it dark - and it has no way of knowing what
+	 * the browser looks like unless the browser says so. Whether the report is acted on is the
+	 * adapter's decision; with a fixed colour scheme configured it is simply remembered.
+	 */
+	private publishMapTheme(): void {
+		if (!this.socket) return;
+		this.reportMapTheme(createRoborockTheme(this.resolveTheme()).palette.mode === "dark" ? "dark" : "light");
 	}
 
 	/**

@@ -1,6 +1,7 @@
 // /lib/socketHandler.ts
 
 import { Roborock } from "../main"; // Import main adapter type
+import { isReportableMapTheme } from "./map/mapColorScheme";
 
 // Robot object definition
 interface Robot {
@@ -49,6 +50,7 @@ export class socketHandler {
 		this.commandHandlers.set("set_state", (msg) => this.handleSetState(msg));
 		this.commandHandlers.set("reset_consumable", (msg) => this.handleResetConsumable(msg));
 		this.commandHandlers.set("get_translations", () => this.handleGetTranslations());
+		this.commandHandlers.set("set_map_theme", (msg) => this.handleSetMapTheme(msg));
 	}
 
 	/**
@@ -516,5 +518,27 @@ export class socketHandler {
 			language: this.adapter.language || "en",
 			translations: this.adapter.translations || {}
 		};
+	}
+
+	/**
+	 * Takes the light/dark theme the admin tab currently displays.
+	 *
+	 * The map is a PNG the adapter paints, so it cannot follow a browser on its own; this is the
+	 * one place where the browser tells it. Deliberately a message and not a direct state write:
+	 * the value steers what the adapter renders, so it passes the same boundary as every other
+	 * command from the UI and is rejected unless it is exactly `light` or `dark`.
+	 *
+	 * Whether the report has any effect is the adapter's decision - with the option set to a fixed
+	 * scheme it is remembered and otherwise ignored.
+	 * @param msg Message payload, expected to carry `theme`.
+	 * @returns The resolved scheme, so the caller can tell whether its report mattered.
+	 */
+	private async handleSetMapTheme(msg: { theme?: unknown }): Promise<{ scheme: "light" | "dark" } | { error: string }> {
+		const theme = msg?.theme;
+		if (!isReportableMapTheme(theme)) {
+			return { error: "theme must be 'light' or 'dark'" };
+		}
+		await this.adapter.setReportedMapTheme(theme);
+		return { scheme: this.adapter.getMapColorScheme() };
 	}
 }

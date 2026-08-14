@@ -282,6 +282,33 @@ describe("socketHandler", () => {
 		});
 	});
 
+	describe("set_map_theme", () => {
+		it("hands a reported theme to the adapter and answers with the resolved scheme", async () => {
+			const themeAdapter = createAdapter({
+				setReportedMapTheme: vi.fn().mockResolvedValue(undefined),
+				getMapColorScheme: () => "dark"
+			});
+
+			const result = await send(themeAdapter, "set_map_theme", { theme: "dark" });
+
+			expect((themeAdapter as unknown as { setReportedMapTheme: ReturnType<typeof vi.fn> }).setReportedMapTheme).toHaveBeenCalledWith("dark");
+			expect(result).toEqual({ scheme: "dark" });
+		});
+
+		it("refuses anything that is not one of the two theme names", async () => {
+			const themeAdapter = createAdapter({
+				setReportedMapTheme: vi.fn().mockResolvedValue(undefined),
+				getMapColorScheme: () => "light"
+			});
+
+			for (const theme of [undefined, "", "auto", "Dark", 1, true, { theme: "dark" }]) {
+				const result = await send(themeAdapter, "set_map_theme", { theme });
+				expect(result.error, String(theme)).toMatch(/'light' or 'dark'/);
+			}
+			expect((themeAdapter as unknown as { setReportedMapTheme: ReturnType<typeof vi.fn> }).setReportedMapTheme).not.toHaveBeenCalled();
+		});
+	});
+
 	it("still rejects unknown commands", async () => {
 		const result = await send(adapter, "definitely_unknown", {});
 

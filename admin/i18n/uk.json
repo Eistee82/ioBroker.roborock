@@ -293,5 +293,9 @@
   "ui_live_track_mopped": "Вимито",
   "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-адреса або назва інтерфейсу (наприклад, eth0), до якого прив’язується UDP-сокет виявлення. Порожнє означає всі інтерфейси, що може не спрацювати на хостах із кількома мережами.",
   "clean_mode_tab": "Режим прибирання",
-  "set_clean_motor_mode": "Встановити режим прибирання"
+  "set_clean_motor_mode": "Встановити режим прибирання",
+  "Map Colour Scheme": "Колірна схема карти",
+  "Follow the admin theme": "Слідувати темі admin",
+  "Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.": "Лише кольори кімнат. Підлогу, стіни та пройдений шлях задає колірна схема карти нижче.",
+  "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.": "Підлога, стіни та пройдений шлях відрендереної карти. «Світла» — це зображення, яке адаптер створював завжди. «Слідувати темі admin» переймає тему, про яку повідомляє вкладка Roborock; оскільки на робота припадає лише одне відрендерене зображення, те, що бачать усі, визначає браузер, який повідомив останнім."
 }

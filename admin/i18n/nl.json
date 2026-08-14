@@ -293,5 +293,9 @@
   "ui_live_track_mopped": "Gedweild",
   "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-adres of interfacenaam (bijvoorbeeld eth0) waaraan de UDP-detectiesocket wordt gebonden. Leeg betekent alle interfaces, wat kan mislukken op hosts met meerdere netwerken.",
   "clean_mode_tab": "Reinigingsmodus",
-  "set_clean_motor_mode": "Reinigingsmodus instellen"
+  "set_clean_motor_mode": "Reinigingsmodus instellen",
+  "Map Colour Scheme": "Kleurenschema van de kaart",
+  "Follow the admin theme": "Het admin-thema volgen",
+  "Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.": "Alleen de kamerkleuren. De vloer, de muren en het gereden pad worden ingesteld met het kleurenschema van de kaart hieronder.",
+  "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.": "Vloer, muren en gereden pad van de gerenderde kaart. 'Licht' is het beeld dat de adapter altijd al maakte. 'Het admin-thema volgen' neemt het thema over dat het Roborock-tabblad meldt; omdat er per robot maar één gerenderd beeld is, bepaalt de browser die het laatst meldde wat iedereen ziet."
 }

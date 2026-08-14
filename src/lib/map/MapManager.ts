@@ -534,6 +534,53 @@ export class MapManager {
 	}
 
 	/**
+	 * Paints the maps already on record again, without asking a single robot.
+	 *
+	 * Used when the colour scheme changes: the parsed map is kept in `Devices.<duid>.map.mapData`
+	 * anyway (the admin tab draws its overlays from it), so the new picture can be produced from
+	 * that instead of costing every device a `get_map_v1` round trip. A theme switch therefore
+	 * takes effect at once and still generates no traffic.
+	 *
+	 * Only V1 maps are repainted. The B01/Q10 pipelines build their bitmap from a different, and
+	 * differently stored, structure and have a dark ground of their own; handing their `mapData`
+	 * to the V1 renderer would replace a working map with the 1x1 error image.
+	 */
+	public async repaintStoredMaps(): Promise<void> {
+		let states: Record<string, ioBroker.State | null | undefined>;
+		try {
+			states = await this.adapter.getStatesAsync("Devices.*.map.mapData");
+		} catch (e: unknown) {
+			this.adapter.rLog("MapManager", null, "Warn", "Map", undefined, `Could not list stored maps for repaint: ${this.adapter.errorMessage(e)}`, "warn");
+			return;
+		}
+
+		for (const [stateId, state] of Object.entries(states)) {
+			if (typeof state?.val !== "string" || !state.val) continue;
+
+			// roborock.<instance>.Devices.<duid>.map.mapData
+			const parts = stateId.split(".");
+			const duid = parts[parts.length - 3];
+			if (!duid) continue;
+
+			let mapData: any;
+			try {
+				mapData = JSON.parse(state.val);
+			} catch {
+				continue;
+			}
+			if (!mapData?.IMAGE?.dimensions) continue;
+
+			try {
+				const model = this.adapter.http_api?.getRobotModel(duid) || "";
+				const [mapBase64Clean, mapBase64] = await this.mapCreator.canvasMap(mapData, { model, duid });
+				await this.saveGeneratedMap(duid, { mapBase64, mapBase64Clean });
+			} catch (e: unknown) {
+				this.adapter.rLog("MapManager", duid, "Warn", "Map", undefined, `Repaint of the stored map failed: ${this.adapter.errorMessage(e)}`, "warn");
+			}
+		}
+	}
+
+	/**
 	 * Saves the generated map results to ioBroker states.
 	 * @param duid Device Unique ID
 	 * @param res The processed map result object

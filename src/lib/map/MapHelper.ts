@@ -19,12 +19,10 @@ export const ROBOROCK_PALETTE = [
 	"#E9E9E9ff", // 5: Reserve/Fallback
 ];
 
-// Legacy Colors used in V1 map (can be deprecated if we fully switch to Palette)
-export const LEGACY_COLORS = {
-	floor: "#23465e",
-	obstacle: "#2b2e30",
-	path: "#FFFFFF",
-};
+// The map surface colours (light and dark) live in src/common/mapDrawing/constants.ts, next to
+// the drawing that uses them. This file used to carry a second copy of LEGACY_COLORS whose floor
+// and obstacle values (#23465e / #2b2e30) matched nothing that was ever drawn.
+export { DARK_MAP_COLORS, getMapSurfaceColors, LEGACY_COLORS } from "../../common/mapDrawing/constants";
 
 export const ALGORITHM_COLORS = {
 	// Colors for the adjacency algorithm visualization if needed

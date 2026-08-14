@@ -110,6 +110,15 @@ appears on the vacuum-only mode alone, because that is the only mode the robot k
 in. Switching the mode sends all three values in a single call. A robot that does not have
 these modes keeps the plain level bars.
 
+The map itself is a PNG the **adapter** renders, not something the browser draws, so it
+cannot follow a dark admin on its own. **Map Colour Scheme** on the *Map* tab decides how
+it is painted: *Light* is the picture the adapter has always produced and stays the
+default, *Dark* uses the floor and wall colours of the Roborock app's own dark theme, and
+*Follow the admin theme* takes whatever the Roborock tab reports. Because there is exactly
+one rendered image per robot, that last option cannot serve two browsers in two themes -
+the one that reported last decides what everyone sees. Changing the setting repaints the
+stored maps at once and does not cost the robots a single request.
+
 ## Reference
 
 <!-- BEGIN:config -->
@@ -137,7 +146,8 @@ Every setting of the adapter instance, taken from the admin configuration defini
 | Setting | Key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | Enable Map Creation | `enable_map_creation` | `checkbox` |  |  |
-| Map Theme | `map_theme` | `select` | `"dark"` | Options: `dark` = Dark, `light` = Light<br>Hidden when `!data.enable_map_creation` |
+| Map Theme | `map_theme` | `select` | `"dark"` | Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.<br>Options: `dark` = Dark, `light` = Light<br>Hidden when `!data.enable_map_creation` |
+| Map Colour Scheme | `map_color_scheme` | `select` | `"light"` | Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.<br>Options: `light` = Light, `dark` = Dark, `auto` = Follow the admin theme<br>Hidden when `!data.enable_map_creation` |
 
 #### Advanced
 
@@ -175,6 +185,13 @@ All device objects live below `roborock.<instance>.Devices.<duid>`:
 | `map` | The rendered map and the room names. |
 | `deviceInfo`, `networkInfo`, `connection` | Model and firmware information, network data and the state of the local/cloud channels. |
 | `dockingStationStatus` | Dock states, only on models with a dock that reports them. |
+
+Two objects live at the instance root rather than under a device:
+
+| State | Content |
+| --- | --- |
+| `loginCode` | Where the six digit code from the login e-mail is entered. |
+| `mapTheme` | `light` or `dark`: the theme the Roborock admin tab last reported. Only consulted while **Map Colour Scheme** is set to *Follow the admin theme*; writing it by hand (from a script or a visualisation) works just as well as letting the tab do it. |
 
 Object names and value lists are localised by the adapter at run time where the robot
 firmware provides translations. The tables below show the English defaults from the

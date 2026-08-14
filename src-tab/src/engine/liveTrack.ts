@@ -76,12 +76,12 @@ export const LIVE_TRACK_STATE = "map.liveTrack";
 /**
  * Colours of the two track kinds, and the casing drawn under both.
  *
- * The surface under the track is the map bitmap, and that bitmap does not follow the admin theme:
- * the adapter paints its floor `#23465e` and its obstacles `#2b2e30` regardless of whether the
- * admin is light or dark (`LEGACY_COLORS` in `src/lib/map/MapHelper.ts`). Theming these two
- * colours would therefore not adapt them to their background - it would only make them wrong in
- * one of the two admin themes, which is the same reasoning that kept the other map-surface colours
- * literal.
+ * The surface under the track is the map bitmap, and the tab has no say in how that is painted:
+ * it is rendered in the adapter, where a light and a dark set exist side by side
+ * (`LEGACY_COLORS` / `DARK_MAP_COLORS` in `src/common/mapDrawing/constants.ts`) and the adapter
+ * option `map_color_scheme` decides which one is used. Theming these two track colours from the
+ * browser would therefore not adapt them to their background - the background follows a setting
+ * this page does not read.
  *
  * What does the theme-proofing is the casing: a dark, semi-transparent line drawn wider and
  * underneath. It separates both tracks from a light surface as well as from a dark one, so the

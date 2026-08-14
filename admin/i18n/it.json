@@ -293,5 +293,9 @@
   "ui_live_track_mopped": "Lavato",
   "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Indirizzo IP o nome dell’interfaccia (ad esempio eth0) a cui viene associato il socket UDP di rilevamento. Vuoto significa tutte le interfacce, il che può non funzionare su host con più reti.",
   "clean_mode_tab": "Modalità di pulizia",
-  "set_clean_motor_mode": "Imposta modalità di pulizia"
+  "set_clean_motor_mode": "Imposta modalità di pulizia",
+  "Map Colour Scheme": "Schema colori della mappa",
+  "Follow the admin theme": "Segui il tema dell'admin",
+  "Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.": "Solo i colori delle stanze. Pavimento, pareti e tragitto percorso vengono impostati dallo schema colori della mappa qui sotto.",
+  "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.": "Pavimento, pareti e tragitto percorso della mappa renderizzata. «Chiaro» è l'immagine che l'adattatore ha sempre prodotto. «Segui il tema dell'admin» adotta il tema segnalato dalla scheda Roborock; poiché esiste una sola immagine renderizzata per robot, è il browser che ha segnalato per ultimo a decidere ciò che vedono tutti."
 }

@@ -114,6 +114,17 @@ Wassermenge, und die Saugstufe MAX+ erscheint nur im Modus *Saugen*, weil der Ro
 nur dort behält. Ein Moduswechsel schickt alle drei Werte in einem einzigen Aufruf. Ein
 Roboter ohne diese Modi behält die einfachen Stufenleisten.
 
+Die Karte selbst ist ein PNG, das der **Adapter** rendert - der Browser zeichnet sie
+nicht und kann deshalb einem dunklen Admin nicht von sich aus folgen. Wie sie gemalt
+wird, entscheidet **Kartenfarbschema** auf dem Reiter *Karte*: *Hell* ist das Bild, das
+der Adapter seit jeher erzeugt, und bleibt die Vorgabe; *Dunkel* nimmt die Boden- und
+Wandfarben aus dem dunklen Theme der Roborock-App; *Dem Admin-Theme folgen* übernimmt,
+was der Roborock-Reiter meldet. Da es pro Roboter genau ein gerendertes Bild gibt, kann
+die letzte Einstellung zwei Browser mit unterschiedlichen Themes nicht getrennt
+bedienen - der zuletzt meldende entscheidet, was alle sehen. Ein Wechsel der Einstellung
+zeichnet die gespeicherten Karten sofort neu und kostet die Roboter keine einzige
+Anfrage.
+
 ## Referenz
 
 <!-- BEGIN:config -->
@@ -141,7 +152,8 @@ Alle Einstellungen der Adapter-Instanz, entnommen aus der Admin-Konfigurationsbe
 | Einstellung | Schlüssel | Typ | Vorgabe | Beschreibung |
 | --- | --- | --- | --- | --- |
 | Kartenerstellung aktivieren | `enable_map_creation` | `checkbox` |  |  |
-| Kartendesign | `map_theme` | `select` | `"dark"` | Auswahl: `dark` = Dunkel, `light` = Hell<br>Ausgeblendet, wenn `!data.enable_map_creation` |
+| Kartendesign | `map_theme` | `select` | `"dark"` | Betrifft nur die Raumfarben. Boden, Wände und Fahrspur werden über das Kartenfarbschema darunter eingestellt.<br>Auswahl: `dark` = Dunkel, `light` = Hell<br>Ausgeblendet, wenn `!data.enable_map_creation` |
+| Kartenfarbschema | `map_color_scheme` | `select` | `"light"` | Boden, Wände und Fahrspur der gerenderten Karte. „Hell“ ist das Bild, das der Adapter seit jeher erzeugt. „Dem Admin-Theme folgen“ übernimmt das Theme, das der Roborock-Tab meldet; da es pro Roboter nur ein gerendertes Bild gibt, entscheidet der zuletzt meldende Browser, was alle sehen.<br>Auswahl: `light` = Hell, `dark` = Dunkel, `auto` = Dem Admin-Theme folgen<br>Ausgeblendet, wenn `!data.enable_map_creation` |
 
 #### Erweitert
 
@@ -179,6 +191,13 @@ Alle Geräteobjekte liegen unter `roborock.<instanz>.Devices.<duid>`:
 | `map` | Die gerenderte Karte und die Raumnamen. |
 | `deviceInfo`, `networkInfo`, `connection` | Modell- und Firmware-Informationen, Netzwerkdaten und der Zustand der lokalen bzw. Cloud-Kanäle. |
 | `dockingStationStatus` | Stationszustände, nur bei Modellen mit einer Station, die sie meldet. |
+
+Zwei Objekte liegen nicht unter einem Gerät, sondern direkt in der Instanz:
+
+| State | Inhalt |
+| --- | --- |
+| `loginCode` | Hier wird der sechsstellige Code aus der Login-Mail eingetragen. |
+| `mapTheme` | `light` oder `dark`: das Theme, das der Roborock-Admin-Tab zuletzt gemeldet hat. Wird nur ausgewertet, solange **Kartenfarbschema** auf *Dem Admin-Theme folgen* steht; von Hand geschrieben (aus einem Skript oder einer Visualisierung) wirkt es genauso wie die Meldung des Tabs. |
 
 Objektnamen und Wertelisten übersetzt der Adapter zur Laufzeit, soweit die
 Roboter-Firmware Übersetzungen liefert. Die folgenden Tabellen zeigen die englischen

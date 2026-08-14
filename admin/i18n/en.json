@@ -293,5 +293,9 @@
   "ui_live_track_mopped": "Mopped",
   "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.",
   "clean_mode_tab": "Cleaning mode",
-  "set_clean_motor_mode": "Set Cleaning Mode"
+  "set_clean_motor_mode": "Set Cleaning Mode",
+  "Map Colour Scheme": "Map Colour Scheme",
+  "Follow the admin theme": "Follow the admin theme",
+  "Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.": "Room colours only. The floor, the walls and the driven path are set by the map colour scheme below.",
+  "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees.": "Floor, walls and driven path of the rendered map. 'Light' is the picture the adapter has always produced. 'Follow the admin theme' takes the theme the Roborock tab reports; since there is only one rendered image per robot, the browser that reported last decides what everyone sees."
 }

@@ -1,11 +1,12 @@
 import type { Canvas, CanvasRenderingContext2D } from "@napi-rs/canvas";
 import { createCanvas, Image, loadImage } from "@napi-rs/canvas";
 import { drawMapV1 } from "../../../common/mapDrawing/drawMapV1";
-import { hexToRgbaString, VISUAL_BLOCK_SIZE } from "../../../common/mapDrawing/constants";
+import { getMapSurfaceColors, hexToRgbaString, VISUAL_BLOCK_SIZE } from "../../../common/mapDrawing/constants";
 import * as Images from "../../../common/images";
 import { Roborock } from "../../../main";
 import { assignRoborockRoomColorsToHex } from "../../roomColoring";
-import { LEGACY_COLORS, ROBOROCK_PALETTE } from "../MapHelper";
+import { ROBOROCK_PALETTE } from "../MapHelper";
+import { LEGACY_COLORS } from "../../../common/mapDrawing/constants";
 // Do not use "import { X, type Y }" — ioBroker runtime (esbuild-register) does not support inline type in named imports
 import { CanvasMapRenderer } from "./CanvasMapRenderer";
 
@@ -202,6 +203,7 @@ export class MapBuilder {
 			dimensionsAreScaled: false,
 			getSegmentColor,
 			roomNames,
+			colors: getMapSurfaceColors(this.resolveColorScheme()),
 		});
 		const t1 = Date.now();
 
@@ -218,6 +220,19 @@ export class MapBuilder {
 		}
 
 		return [cleanMapUncroppedBase64, fullMapUncroppedBase64, croppedMapBase64];
+	}
+
+	/**
+	 * The colour set this render should use.
+	 *
+	 * Read through a guard rather than called directly because `MapBuilder` is handed adapter
+	 * stubs in tests, and a missing theme must degrade to the light set - the picture every
+	 * existing installation already has - instead of failing the whole render.
+	 * @returns `"light"` or `"dark"`.
+	 */
+	private resolveColorScheme(): "light" | "dark" {
+		const adapter = this.adapter as unknown as { getMapColorScheme?: () => "light" | "dark" };
+		return typeof adapter.getMapColorScheme === "function" ? adapter.getMapColorScheme() : "light";
 	}
 
 	private async buildRoomNamesMap(mappedRooms: any, duid?: string): Promise<Map<number, string> | undefined> {

@@ -30,7 +30,14 @@ declare global {
 			downloadRoborockImages?: boolean;
 			sceneExecutionMode?: "local" | "cloud";
 			region: "eu" | "us" | "cn" | "asia";
+			/** Palette family for the room fills. Independent of `map_color_scheme`. */
 			map_theme?: "dark" | "light";
+			/**
+			 * Colour set for the map surface (floor, walls, driven path). `auto` follows the theme
+			 * the admin tab reports through the `mapTheme` state. Default `light`, which is the
+			 * picture the adapter produced before this option existed.
+			 */
+			map_color_scheme?: "light" | "dark" | "auto";
 
 			/** "cloud" = cloud + local (default), "local" = never contact the Roborock cloud. */
 			connectionMode?: "cloud" | "local";

@@ -20,6 +20,7 @@ import { Feature } from "./lib/features/features.enum";
 import { Device, http_api } from "./lib/httpApi";
 import { local_api } from "./lib/localApi";
 import { MapManager } from "./lib/map/MapManager";
+import { isReportableMapTheme, resolveMapColorScheme } from "./lib/map/mapColorScheme";
 import { mqtt_api } from "./lib/mqttApi";
 import { PendingMapEntry, RequestPriority, RoborockRequest, requestsHandler } from "./lib/requestsHandler";
 import { socketHandler } from "./lib/socketHandler";
@@ -72,7 +73,10 @@ export const STATIC_SUBSCRIPTION_PATTERNS = [
 	"Devices.*.floors.*",
 	"Devices.*.deviceStatus.state",
 	"Devices.*.deviceStatus.status",
-	"loginCode"
+	"loginCode",
+	// Root state, written by the admin tab (and settable by hand): which theme the map bitmap
+	// should be painted for. Only consulted when `map_color_scheme` is `auto`.
+	"mapTheme"
 ] as const;
 
 const SCENE_QUEUE_VERSION = 1;
@@ -234,6 +238,7 @@ export class Roborock extends utils.Adapter {
 		}
 
 		this.translationManager.init();
+		await this.initMapThemeState();
 
 		this.sentryInstance = this.getPluginInstance("sentry") as SentryPlugin | undefined;
 		this.translations = this.loadAdminTranslations();
@@ -247,6 +252,7 @@ export class Roborock extends utils.Adapter {
 			region: this.config.region,
 			loginMethod: this.config.loginMethod,
 			map_theme: this.config.map_theme,
+			map_color_scheme: this.config.map_color_scheme,
 			sceneExecutionMode: this.getSceneExecutionMode(),
 			connectionMode: localOnly ? "local" : "cloud",
 			manualDeviceCount: manualDevices.devices.length,
@@ -403,6 +409,77 @@ export class Roborock extends utils.Adapter {
 
 	private getSceneExecutionMode(): SceneExecutionMode {
 		return this.config.sceneExecutionMode === "cloud" ? "cloud" : "local";
+	}
+
+	/**
+	 * Theme a browser last reported through {@link setReportedMapTheme}.
+	 *
+	 * Cached in memory because it is read once per rendered map and the render path must stay
+	 * synchronous; the `mapTheme` state is the durable copy and seeds this on startup.
+	 */
+	private reportedMapTheme: "light" | "dark" | null = null;
+
+	/** State id (relative to the instance) carrying the theme a browser reported. */
+	private static readonly MAP_THEME_STATE = "mapTheme";
+
+	/**
+	 * The colour set the map bitmap is currently painted with.
+	 *
+	 * Called by the V1 renderer on every map it draws. See `src/lib/map/mapColorScheme.ts` for why
+	 * a browser has to report its theme at all and what that means when several are open.
+	 * @returns `"light"` or `"dark"`; `"light"` is the picture every installation had before.
+	 */
+	public getMapColorScheme(): "light" | "dark" {
+		return resolveMapColorScheme(this.config.map_color_scheme, this.reportedMapTheme);
+	}
+
+	/**
+	 * Creates the `mapTheme` state and adopts whatever it already holds.
+	 *
+	 * Without this the first map after a restart would be drawn light even though the admin is
+	 * dark, until a browser happens to reconnect and report again.
+	 */
+	private async initMapThemeState(): Promise<void> {
+		await this.ensureState(Roborock.MAP_THEME_STATE, {
+			name: "Map theme reported by the admin tab",
+			type: "string",
+			role: "state",
+			read: true,
+			write: true,
+			states: { light: "Light", dark: "Dark" },
+		});
+
+		const stored = await this.getStateAsync(Roborock.MAP_THEME_STATE);
+		if (isReportableMapTheme(stored?.val)) {
+			this.reportedMapTheme = stored.val;
+		}
+		this.rLog("System", null, "Info", undefined, undefined, `Map colour scheme: ${this.getMapColorScheme()} (setting '${this.config.map_color_scheme ?? "light"}', reported theme '${this.reportedMapTheme ?? "none"}')`, "debug");
+	}
+
+	/**
+	 * Takes the theme a browser reports and repaints the stored maps when it actually changes
+	 * something.
+	 *
+	 * Guarded twice on purpose: an unchanged report costs nothing, and a report that does not
+	 * change the resolved scheme - which is every report while the option is `light` or `dark` -
+	 * must not trigger a render either. Only a real change of the resolved scheme repaints, and it
+	 * repaints from the map data already stored, so no robot is asked anything.
+	 * @param theme Theme name reported by a client.
+	 */
+	public async setReportedMapTheme(theme: "light" | "dark"): Promise<void> {
+		const before = this.getMapColorScheme();
+		const changed = this.reportedMapTheme !== theme;
+		this.reportedMapTheme = theme;
+
+		if (changed) {
+			await this.setState(Roborock.MAP_THEME_STATE, { val: theme, ack: true });
+		}
+
+		const after = this.getMapColorScheme();
+		if (before === after) return;
+
+		this.rLog("System", null, "Info", undefined, undefined, `Map colour scheme changed to '${after}'; repainting the stored maps.`, "info");
+		await this.mapManager.repaintStoredMaps();
 	}
 
 	async executeSceneProgram(duid: string, sceneId: string | number): Promise<void> {
@@ -1502,6 +1579,17 @@ export class Roborock extends utils.Adapter {
 		// Check for root loginCode (roborock.0.loginCode)
 		if (idParts[2] === "loginCode" && state.val && String(state.val).length === 6) {
 			this.http_api.submitLoginCode(String(state.val));
+			return;
+		}
+
+		// Root mapTheme: normally written by the admin tab through the `set_map_theme` message,
+		// but writable by hand as well so a script or a vis can steer the map without a browser.
+		if (idParts[2] === Roborock.MAP_THEME_STATE) {
+			if (isReportableMapTheme(state.val)) {
+				await this.setReportedMapTheme(state.val);
+			} else {
+				this.rLog("System", null, "Warn", undefined, undefined, `Ignoring write to ${Roborock.MAP_THEME_STATE}: '${String(state.val)}' is neither 'light' nor 'dark'.`, "warn");
+			}
 			return;
 		}
 

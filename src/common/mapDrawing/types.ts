@@ -3,6 +3,8 @@
  * Backend uses CanvasMapRenderer; frontend uses SVGMapRenderer. No duplicate drawing logic.
  */
 
+import type { MapSurfaceColors } from "./constants";
+
 export interface DrawRect {
 	x: number;
 	y: number;
@@ -134,4 +136,9 @@ export interface DrawMapV1Options {
 	roomNames?: Map<number, string> | Record<number, string>;
 	/** Precomputed room labels (e.g. frontend: from segments.list + robotToSvg). If set, used instead of building from pixels. */
 	roomLabels?: DrawRoomLabelInput[];
+	/**
+	 * Surface colours (floor, walls, driven path). Omitted means the light set, i.e. the picture
+	 * the adapter produced before the dark scheme existed.
+	 */
+	colors?: MapSurfaceColors;
 }

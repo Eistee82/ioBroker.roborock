@@ -7,6 +7,7 @@ import { processPaths } from "../pathProcessor";
 import type { PathResult } from "../pathProcessor";
 import { getPixelFromScaledDimensions } from "./coordHelpers";
 import { hexToRgbaString, LEGACY_COLORS, VISUAL_BLOCK_SIZE } from "./constants";
+import type { MapSurfaceColors } from "./constants";
 import type {
 	DrawMapV1Options,
 	DrawObstacleInput,
@@ -96,14 +97,17 @@ export async function drawMapV1(
 	const scaledWidth = dimensionsAreScaled ? dims.width : dims.width * scaleFactor;
 	const scaledHeight = dimensionsAreScaled ? dims.height : dims.height * scaleFactor;
 	const robotToPx = buildRobotToPixel(image, scaleFactor, dimensionsAreScaled);
+	// No caller has to know about themes: leaving `colors` out yields exactly the picture the
+	// adapter drew before the dark set existed.
+	const colors: MapSurfaceColors = options.colors ?? LEGACY_COLORS;
 
 	const pixel = (px: number) => getPixelFromScaledDimensions(scaledWidth, scaledHeight, px);
 
 	// --- Floor + obstacle rects ---
 	const floorRects: DrawRect[] = [];
 	let bounds: DrawMapV1Result["bounds"] | undefined;
-	const floorColor = hexToRgbaString("#E9E9E9");
-	const obstacleColor = hexToRgbaString("#6B7174");
+	const floorColor = hexToRgbaString(colors.floor);
+	const obstacleColor = hexToRgbaString(colors.obstacle);
 	if (image.pixels?.floor) {
 		for (const px of image.pixels.floor) {
 			const { x, y } = pixel(px);
@@ -191,6 +195,10 @@ export async function drawMapV1(
 
 	const lwMain = Math.max(1, VISUAL_BLOCK_SIZE / 2);
 	const lwBackwash = VISUAL_BLOCK_SIZE * 0.5;
+	// Only the main line follows the colour scheme. The app does carry dark values for the mop
+	// band, the backwash and the pure-clean track too, but its light values for those three are
+	// not the ones drawn here - swapping only the dark half would pair a proven colour with an
+	// unproven one, so all three stay white in both schemes. White reads on either ground.
 	renderer.drawPath({
 		segments: pathResult.mopPath,
 		stroke: "rgba(255, 255, 255, 1)",
@@ -200,7 +208,7 @@ export async function drawMapV1(
 	});
 	renderer.drawPath({
 		segments: pathResult.mainPath,
-		stroke: LEGACY_COLORS.path,
+		stroke: colors.path,
 		lineWidth: lwMain,
 		pathLayer: "main",
 	});
