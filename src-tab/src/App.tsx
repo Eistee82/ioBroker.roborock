@@ -71,7 +71,24 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 		this.setState({ ready: true });
 		this.applyThemeToDocument();
 		this.publishMapTheme();
+		// A theme switch in the admin writes the key from another window, which fires `storage`
+		// here. `GenericApp` waits for an `updateTheme` message instead, and that does not reach
+		// every tab - then the page keeps the mode it was opened with until it is reloaded.
+		window.addEventListener("storage", this.onThemeStorage);
 	}
+
+	componentWillUnmount(): void {
+		window.removeEventListener("storage", this.onThemeStorage);
+	}
+
+	/**
+	 * Re-renders when the admin stores a different theme.
+	 * @param event Storage event; ignored unless it concerns the theme key.
+	 */
+	private onThemeStorage = (event: StorageEvent): void => {
+		if (event.key && event.key !== "App.themeName") return;
+		this.forceUpdate();
+	};
 
 	componentDidUpdate(): void {
 		this.applyThemeToDocument();
@@ -227,9 +244,10 @@ function readAdminThemeName(): "dark" | "light" | null {
 	const name = parentName ?? fromStorage(window);
 	if (name && name !== "auto") return name === "dark" || name === "blue" ? "dark" : "light";
 
-	try {
-		return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-	} catch {
-		return null;
-	}
+	// Deliberately no fall back to `prefers-color-scheme` here. This value exists to *correct*
+	// what GenericApp resolved, and the browser preference is not evidence about the admin: an
+	// admin set to dark on a machine whose system is light would be turned light by it - which is
+	// exactly the bug this comment replaces. Without a stored choice there is nothing to correct,
+	// so the caller keeps what it had.
+	return null;
 }
