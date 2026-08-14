@@ -1,5 +1,219 @@
 import { ADAPTER_ERRORS_EN } from "./adapterErrorMapping";
 
+/**
+ * # The cleaning-mode enums, as the Roborock app itself labels them
+ *
+ * The values below are not guesses. They are read out of the decompiled device control plugin
+ * `roborock.vacuum.a65_control_v5208`, module 565, where every entry of the app's own mode picker
+ * carries the protocol value (`strength`) and the i18n key of its label in one object literal, and
+ * out of module 1683 (`CleanSettingMode`, `WaterSettingMode`, `MopSettingMode`). The English and
+ * German texts come from the translation dictionaries compiled into the same bundle (modules 489
+ * and 496). See `_appanalysis/14-editor-methoden.md` §3.2-3.4 and
+ * `lib/protocols/roborock_vacuum_enums.json`.
+ *
+ * Two things the app does that the adapter used to get wrong:
+ *
+ * 1. **105 is not "Off".** Its internal name is `NoClean` / `CleanModeZero`, but the picker shows
+ *    it as **Gentle / Schonend** and lists it *first*, before Quiet. "Off" and "Gentle" are
+ *    different things to a user.
+ * 2. **Not every value is a level.** 106 / 302 / 204 are markers meaning "this room has its own
+ *    setting", and 110 / 306 / 209 mean "SmartPlan decides". The app has no picker entry and no
+ *    icon for any of them; they only ever arrive in `get_status`. They are therefore documented
+ *    here so a reported value renders as text, but they are deliberately absent from the
+ *    selectable sets in `v1VacuumFeatures.ts`.
+ */
+
+/** Marker value: the level is set per room, not globally. Never selectable. */
+const LABEL_PER_ROOM = "Per-Room";
+
+/** Marker value: SmartPlan picks the level. Never selectable. */
+const LABEL_SMART_PLAN = "SmartPlan";
+
+/**
+ * Every `fan_power` value the control plugin knows, with the app's own English label.
+ *
+ * Order of the app's picker is 105, 101, 102, 103, 104 and then 108 - the strength order does not
+ * start at 101. 107 and 109 appear nowhere in the bundle and stay out.
+ */
+export const FAN_POWER_LABELS: Readonly<Record<number, string>> = {
+	101: "Quiet",       // SilentClean
+	102: "Balanced",    // StandardClean / CleanModeNormal
+	103: "Turbo",       // StrongClean
+	104: "Max",         // MaxClean
+	105: "Gentle",      // NoClean / CleanModeZero - shown as Gentle, not as Off
+	106: LABEL_PER_ROOM, // CustomCleanMode
+	108: "Max+",        // MaxPlus / CleanModeMaxPlus
+	110: LABEL_SMART_PLAN // SmartCleanMode
+};
+
+/**
+ * Every `mop_mode` value the control plugin knows, with the app's own English label.
+ *
+ * 303 and 305 share one label on purpose - the app shows "Deep+" for both and lets the firmware
+ * capability decide which of the two it sends.
+ */
+export const MOP_MODE_LABELS: Readonly<Record<number, string>> = {
+	300: "Standard",     // Normal / CleanRouteDailyMode
+	301: "Deep",         // Intensive / CleanRouteSubtlyMode
+	302: LABEL_PER_ROOM, // CustomMopMode
+	303: "Deep+",        // SlowIntensive / CleanRouteDeepSlowMode
+	304: "Fast",         // Fast / CleanRouteFastMode
+	305: "Deep+",        // CleanRouteDeepSlowPearlMode - same label as 303
+	306: LABEL_SMART_PLAN // SmartMopMode
+};
+
+/**
+ * `water_box_mode` labels for robots **without** a vibrating mop module.
+ *
+ * Keys `water_box_small` / `water_box_middle` / `water_box_big` = Low / Medium / High
+ * (Niedrig / Mittel / Hoch).
+ */
+export const WATER_BOX_MODE_LABELS_STANDARD: Readonly<Record<number, string>> = {
+	200: "Off",     // NoWater / WaterModeZero
+	201: "Low",     // LowWater / WaterModeNormal
+	202: "Medium",  // MediumWater / WaterModeMiddle
+	203: "High"     // HighWater
+};
+
+/**
+ * `water_box_mode` labels for robots **with** a vibrating mop module (Roborock's SonicMop).
+ *
+ * Same protocol values, different words: keys `tanos_s_mop_mode_weak` / `_middle` / `_strong` =
+ * Mild / Standard / Intense (Sanft / Standard / Intensiv). Which of the two sets applies is not in
+ * `get_status`, `new_feature_info` or `firmwareFeatures` - see {@link SHAKE_MOP_MODELS}.
+ */
+export const WATER_BOX_MODE_LABELS_SHAKE_MOP: Readonly<Record<number, string>> = {
+	200: "Off",
+	201: "Mild",
+	202: "Standard",
+	203: "Intense"
+};
+
+/** `tanos_s_mop_mode_max` = Extreme / Extrem. Vibrating-mop hardware only, see below. */
+export const WATER_BOX_MODE_EXTREME_LABEL = "Extreme";
+
+/**
+ * Every `water_box_mode` value the control plugin knows, in the standard wording.
+ *
+ * 205 and 206 appear nowhere in the bundle. They are neither proven nor disproven, so they keep
+ * the label the adapter has always given them rather than gaining a made-up one.
+ */
+export const WATER_BOX_MODE_LABELS: Readonly<Record<number, string>> = {
+	...WATER_BOX_MODE_LABELS_STANDARD,
+	204: LABEL_PER_ROOM, // CustomWaterMode - the marker, not the user-defined amount
+	205: "Custom",       // not in the bundle - unchanged
+	206: "Custom",       // not in the bundle - unchanged
+	207: "Custom",       // WaterModeUserCustom - this is the real user-defined amount
+	208: WATER_BOX_MODE_EXTREME_LABEL, // MaxWater
+	209: LABEL_SMART_PLAN              // SmartWaterMode
+};
+
+/**
+ * Models whose water levels the app words as Mild / Standard / Intense.
+ *
+ * The app decides this with `DM.support(MF.Mop_ShakeModule)` (module 565), which resolves against
+ * a model table compiled into the plugin (module 516, 43 device configs, each with a `shortModels`
+ * array and a `features` array). `mf.mop_shake_module` is described there as wiping with a
+ * vibration module - Roborock's SonicMop. The condition is therefore **not** derivable from any
+ * device response, but it is derivable from the model string, which the adapter already has.
+ *
+ * The list is a snapshot of plugin version 5208 and is kept identical to `SHAKE_MOP_MODELS` in
+ * `src-tab/src/engine/modeIcons.ts`, which picks the matching artwork. A model that is not in it
+ * falls back to the standard wording - newer devices may well belong here, and the established
+ * words are the safer error.
+ *
+ * @see lib/protocols/roborock_map_edit.json - `modeIcons.waterBoxMode.shakeMopPredicate`
+ */
+export const SHAKE_MOP_MODELS: ReadonlySet<string> = new Set([
+	"roborock.vacuum.a14", // TanosS
+	"roborock.vacuum.a15", // TanosS
+	"roborock.vacuum.a26", // TopazSV
+	"roborock.vacuum.a27", // TopazSV
+	"roborock.vacuum.a29", // TopazS
+	"roborock.vacuum.a30", // TopazS
+	"roborock.vacuum.a46", // TopazSPlus
+	"roborock.vacuum.a47", // TopazSPlus
+	"roborock.vacuum.a50", // Ultron
+	"roborock.vacuum.a51", // Ultron
+	"roborock.vacuum.a52", // TanosSMax
+	"roborock.vacuum.a62", // TopazSPower
+	"roborock.vacuum.a64", // TopazSC
+	"roborock.vacuum.a65", // TopazSC
+	"roborock.vacuum.a66", // TopazSPlus
+	"roborock.vacuum.a76", // TopazS
+	"roborock.vacuum.a96", // UltronSV
+	"roborock.vacuum.a97"  // UltronSV
+]);
+
+/**
+ * Whether this model words its water levels Mild / Standard / Intense instead of Low / Medium /
+ * High.
+ *
+ * @param model Model string as the adapter publishes it, e.g. `roborock.vacuum.a65`.
+ * @returns True when the vibrating-mop wording applies.
+ */
+export function usesShakeMopWaterLabels(model: string | null | undefined): boolean {
+	return !!model && SHAKE_MOP_MODELS.has(model.trim().toLowerCase());
+}
+
+/**
+ * The i18n keys the Roborock app itself uses for these labels.
+ *
+ * `lib/protocols/roborock_strings.json` ships every one of them in ~30 languages, so a future
+ * change that wants localized `common.states` can resolve them through
+ * `adapter.translationManager.get(key, englishFallback)` exactly the way the error codes already
+ * do - no new translation work needed. Recorded here so the evidence does not live only in a
+ * report.
+ */
+export const MODE_LABEL_TRANSLATION_KEYS = {
+	fan_power: {
+		101: "localization_strings_Common_Protocol_0", // Quiet / Leise
+		102: "localization_strings_Common_Protocol_1", // Balanced / Normal
+		103: "localization_strings_Common_Protocol_2", // Turbo / Turbo
+		104: "localization_strings_Common_Protocol_3", // Max / Max.
+		105: "localization_strings_Common_Protocol_4", // Gentle / Schonend
+		108: "clean_mode_max_plus"                     // MAX+ / MAX+
+	},
+	water_box_mode_standard: {
+		200: "debug_info_close",  // Off / Aus
+		201: "water_box_small",   // Low / Niedrig
+		202: "water_box_middle",  // Medium / Mittel
+		203: "water_box_big",     // High / Hoch
+		207: "localization_strings_Setting_Timer_Common_4", // Custom / Benutzerdefiniert
+		208: "tanos_s_mop_mode_max"                        // Extreme / Extrem
+	},
+	water_box_mode_shake_mop: {
+		201: "tanos_s_mop_mode_weak",   // Mild / Sanft
+		202: "tanos_s_mop_mode_middle", // Standard / Standard
+		203: "tanos_s_mop_mode_strong"  // Intense / Intensiv
+	},
+	mop_mode: {
+		300: "tanos_s_mop_mode_general_frag", // Standard / Standard
+		301: "tanos_s_mop_mode_fine_frag",    // Deep / Gründlich
+		303: "mop_method_careful_slow",       // Deep+ / Gründlich+
+		304: "clean_route_fast_mode_title",   // Fast / Schnell
+		305: "mop_method_careful_slow"        // Deep+ / Gründlich+
+	}
+} as const;
+
+/**
+ * `in_cleaning` - which kind of task the robot could resume.
+ *
+ * `12-plugins-cloud.md` §2.4 flagged a contradiction: the `CleanResumeFlag` declaration comments
+ * claimed 2 = Segment and 3 = Zone, while the executed `CleanResumeFlagCodeMap` mapped the other
+ * way round. `14-editor-methoden.md` §3.5 settles it from a second, independent bundle (module
+ * 522, status parser): that bundle carries no contradicting comment and maps
+ * 2 -> `Zone_Clean`, 3 -> `Segment_Clean`. That is what the adapter had assumed all along.
+ */
+const IN_CLEANING_STATES: Record<number, string> = {
+	0: "None",
+	1: "Global Clean",
+	2: "Zone Clean",
+	3: "Segment Clean",
+	// Only in the earlier bundle (roborock_vacuum_enums.json), not re-proven in module 522.
+	4: "Quick Build Map",
+};
+
 const Z70_TIDY_UP_TASK_STATES: Record<number, string> = {
 	0: "No Need",
 	1: "Need",
@@ -146,7 +360,8 @@ export const VACUUM_CONSTANTS = {
 		stop_zoned_clean: { type: "boolean", def: false },
 		resume_segment_clean: { type: "boolean", def: false },
 		stop_segment_clean: { type: "boolean", def: false },
-		set_custom_mode: { type: "number", def: 102, states: { 101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max", 105: "Off" } },
+		// Selectable levels only - the markers 106 and 110 are status values, never commands.
+		set_custom_mode: { type: "number", def: 102, states: { 101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max", 105: "Gentle" } },
 		find_me: { type: "boolean", def: false },
 		app_goto_target: { type: "json" },
 		set_clean_motor_mode: { type: "json", def: '{"fan_power":102,"mop_mode":300,"water_box_mode":201}' },
@@ -178,10 +393,12 @@ export const VACUUM_CONSTANTS = {
 		clean_time: { type: "number", unit: "min" },
 		battery: { type: "number", unit: "%" },
 		state: { type: "number", states: {} },
-		fan_power: { type: "number", states: { 101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max", 105: "Off" } },
+		// Read-side fallbacks: every value the robot may report, markers included. The selectable
+		// subsets live in v1VacuumFeatures.ts (BASE_FAN / BASE_WATER / BASE_MOP).
+		fan_power: { type: "number", states: FAN_POWER_LABELS },
 		clean_percent: { type: "number", unit: "%" },
-		water_box_mode: { type: "number", states: { 200: "Off", 201: "Mild", 202: "Moderate", 203: "Intense", 204: "Custom", 205: "Custom", 206: "Custom", 207: "Custom", 208: "Custom", 209: "Custom" } },
-		mop_mode: { type: "number", states: { 300: "Standard", 301: "Deep", 303: "Deep+", 304: "Fast" } },
+		water_box_mode: { type: "number", states: WATER_BOX_MODE_LABELS },
+		mop_mode: { type: "number", states: MOP_MODE_LABELS },
 		carpet_mode: {
 			type: "string",
 			states: {
@@ -211,7 +428,7 @@ export const VACUUM_CONSTANTS = {
 		lab_status: { type: "number" },
 		in_fresh_state: { type: "number" },
 		in_returning: { type: "number" },
-		in_cleaning: { type: "number" },
+		in_cleaning: { type: "number", states: IN_CLEANING_STATES },
 		in_warmup: { type: "number" },
 		map_present: { type: "number" },
 		is_exploring: { type: "number" },
@@ -518,15 +735,18 @@ export const VACUUM_CONSTANTS = {
 		isCleanCarouselSelfCleaning: { name: "Dock Self-Cleaning Active", type: "boolean" },
 		isWaterDraining: { name: "Water Draining Active", type: "boolean" },
 		isPumpingWater: { name: "Water Pumping Active", type: "boolean" },
+		// `wind` / `water` are the B01 aliases of fan_power / water_box_mode. B01 handlers build
+		// their own localized states; these stay as the documented fallback. B01 hardware has no
+		// vibrating mop module, so the standard wording is the right one here.
 		wind: {
 			type: "number",
 			def: 102,
-			states: { 101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max", 105: "Off", 108: "Max+" },
+			states: { 101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max", 105: "Gentle", 108: "Max+" },
 		},
 		water: {
 			type: "number",
 			def: 201,
-			states: { 200: "Off", 201: "Mild", 202: "Moderate", 203: "Intense", 204: "Custom" },
+			states: { ...WATER_BOX_MODE_LABELS_STANDARD, 204: LABEL_PER_ROOM },
 		},
 	},
 	consumables: {

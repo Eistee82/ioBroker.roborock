@@ -425,7 +425,7 @@ Values reported by the robot in `Devices.<duid>.deviceStatus`.
 | `exit_dock` |  | `number` |  |  |
 | `explorationEnabled` | Exploration Enabled | `boolean` |  |  |
 | `extra_time` |  | `number` |  |  |
-| `fan_power` |  | `number` |  | `101` = Quiet<br>`102` = Balanced<br>`103` = Turbo<br>`104` = Max<br>`105` = Off |
+| `fan_power` |  | `number` |  | `101` = Quiet<br>`102` = Balanced<br>`103` = Turbo<br>`104` = Max<br>`105` = Gentle<br>`106` = Per-Room<br>`108` = Max+<br>`110` = SmartPlan |
 | `green_laser` |  | `number` |  | `0` = Off<br>`1` = On |
 | `hasCleanFluidModule` | Clean Fluid Module Installed | `boolean` |  |  |
 | `hasDockError` | Dock Error Active | `boolean` |  |  |
@@ -435,7 +435,7 @@ Values reported by the robot in `Devices.<duid>.deviceStatus`.
 | `home_sec_status` |  | `number` |  | `0` = Disconnected<br>`1` = Connected<br>`2` = Disconnecting |
 | `homeSecClientId` | Home Security Client ID | `string` |  |  |
 | `homeSecPasswordEnabled` | Home Security Password Enabled | `boolean` |  |  |
-| `in_cleaning` |  | `number` |  |  |
+| `in_cleaning` |  | `number` |  | `0` = None<br>`1` = Global Clean<br>`2` = Zone Clean<br>`3` = Segment Clean<br>`4` = Quick Build Map |
 | `in_fresh_state` |  | `number` |  |  |
 | `in_returning` |  | `number` |  |  |
 | `in_warmup` |  | `number` |  |  |
@@ -515,7 +515,7 @@ Values reported by the robot in `Devices.<duid>.deviceStatus`.
 | `monitorActive` | Monitor Active | `boolean` |  |  |
 | `monitorPrivacyPolicyAgreed` | Monitor Privacy Policy Agreed | `boolean` |  |  |
 | `mop_forbidden_enable` |  | `number` |  |  |
-| `mop_mode` |  | `number` |  | `300` = Standard<br>`301` = Deep<br>`303` = Deep+<br>`304` = Fast |
+| `mop_mode` |  | `number` |  | `300` = Standard<br>`301` = Deep<br>`302` = Per-Room<br>`303` = Deep+<br>`304` = Fast<br>`305` = Deep+<br>`306` = SmartPlan |
 | `notInGrabMode` | Not In Grab Mode | `boolean` |  |  |
 | `notStart` | Grab Not Started | `boolean` |  |  |
 | `offlineMapEnabled` | Offline Map Enabled | `boolean` |  |  |
@@ -550,13 +550,13 @@ Values reported by the robot in `Devices.<duid>.deviceStatus`.
 | `washingModeLabel` | Washing Mode Label | `string` |  |  |
 | `washingTaskStatus` | Washing Task Status | `number` |  |  |
 | `washPhaseLabel` | Wash Phase | `string` |  |  |
-| `water` |  | `number` |  | `200` = Off<br>`201` = Mild<br>`202` = Moderate<br>`203` = Intense<br>`204` = Custom |
+| `water` |  | `number` |  | `200` = Off<br>`201` = Low<br>`202` = Medium<br>`203` = High<br>`204` = Per-Room |
 | `water_box_carriage_status` |  | `number` |  |  |
-| `water_box_mode` |  | `number` |  | `200` = Off<br>`201` = Mild<br>`202` = Moderate<br>`203` = Intense<br>`204` = Custom<br>`205` = Custom<br>`206` = Custom<br>`207` = Custom<br>`208` = Custom<br>`209` = Custom |
+| `water_box_mode` |  | `number` |  | `200` = Off<br>`201` = Low<br>`202` = Medium<br>`203` = High<br>`204` = Per-Room<br>`205` = Custom<br>`206` = Custom<br>`207` = Custom<br>`208` = Extreme<br>`209` = SmartPlan |
 | `water_box_status` |  | `number` |  |  |
 | `water_shortage_status` |  | `number` |  | `0` = Normal<br>`1` = Water Shortage |
 | `waterShortageActive` | Water Shortage Active | `boolean` |  |  |
-| `wind` |  | `number` |  | `101` = Quiet<br>`102` = Balanced<br>`103` = Turbo<br>`104` = Max<br>`105` = Off<br>`108` = Max+ |
+| `wind` |  | `number` |  | `101` = Quiet<br>`102` = Balanced<br>`103` = Turbo<br>`104` = Max<br>`105` = Gentle<br>`108` = Max+ |
 
 #### `consumables`
 

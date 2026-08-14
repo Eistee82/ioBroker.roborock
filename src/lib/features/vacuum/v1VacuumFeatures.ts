@@ -5,14 +5,30 @@ import { StationService } from "./services/StationService";
 import { V1ConsumableService } from "./services/V1ConsumableService";
 import { V1MapService } from "./services/V1MapService";
 import { getLocalizedErrorStates } from "./adapterErrorMapping";
-import { VACUUM_CONSTANTS } from "./vacuumConstants";
+import {
+	VACUUM_CONSTANTS,
+	WATER_BOX_MODE_EXTREME_LABEL,
+	WATER_BOX_MODE_LABELS_SHAKE_MOP,
+	WATER_BOX_MODE_LABELS_STANDARD,
+	usesShakeMopWaterLabels
+} from "./vacuumConstants";
 import { floorFolderId, normalizeMapFlag, normalizeRoomId } from "../../map/roomKey";
 
 // --- Shared Constants ---
-export const BASE_FAN = { 101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max" };
+// These are the *selectable* levels: what a model profile offers in its pickers. The markers the
+// robot may report but nobody can pick (fan_power 106/110, mop_mode 302/306, water_box_mode
+// 204/209) are documented in vacuumConstants.ts and stay out of here on purpose.
+export const BASE_FAN: Record<number, string> = { 101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max" };
 
-export const BASE_WATER = { 200: "Off", 201: "Mild", 202: "Moderate", 203: "Intense" };
-export const BASE_MOP = { 300: "Standard", 301: "Deep", 303: "Deep+" };
+/**
+ * Water levels in the wording the app uses for robots without a vibrating mop module.
+ *
+ * Robots that have one get Mild / Standard / Intense instead - see
+ * {@link V1VacuumFeatures.applyShakeMopWaterLabels}. The adapter used to hand every robot a mix of
+ * the two ("Mild / Moderate / Intense"), and "Moderate" is a word the app uses in neither set.
+ */
+export const BASE_WATER: Record<number, string> = { ...WATER_BOX_MODE_LABELS_STANDARD };
+export const BASE_MOP: Record<number, string> = { 300: "Standard", 301: "Deep", 303: "Deep+" };
 
 // --- Profile Interface ---
 export interface VacuumProfile {
@@ -32,8 +48,8 @@ export interface VacuumProfile {
 export const DEFAULT_PROFILE: VacuumProfile = {
 	mappings: {
 		fan_power: BASE_FAN,
-		mop_mode: { 300: "Standard", 301: "Deep", 303: "Deep+" },
-		water_box_mode: { 200: "Off", 201: "Mild", 202: "Moderate", 203: "Intense" },
+		mop_mode: BASE_MOP,
+		water_box_mode: BASE_WATER,
 	},
 };
 
@@ -56,9 +72,48 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		// Deep clone profile to avoid mutating shared static objects
 		this.profile = structuredClone(profile);
+		this.applyShakeMopWaterLabels();
 		this.consumableService = new V1ConsumableService(this.deps, this.duid, this.profile);
 		this.stationService = new StationService(this.deps, this.duid);
 		this.mapService = new V1MapService(this.deps, this.duid);
+	}
+
+	/**
+	 * Gives robots with a vibrating mop module the water wording their own app uses.
+	 *
+	 * The app words `water_box_mode` 201/202/203 as Mild / Standard / Intense on those robots and
+	 * as Low / Medium / High on all others, and it decides purely by model - the distinction is in
+	 * a table compiled into the control plugin, not in anything the robot reports. The model string
+	 * is all the adapter needs, so the same 18-model list the admin tab uses for the artwork is
+	 * used here for the words (see `usesShakeMopWaterLabels`).
+	 *
+	 * Only levels that still carry the standard label are renamed, so a model profile that
+	 * deliberately words a level differently (or uses a different value range altogether, like the
+	 * Qrevo Edge 2) keeps what it declared.
+	 *
+	 * **208 (Extreme)** is added for those robots too. The app gates it on the vibrating mop *and*
+	 * firmware bit 45 (`MopShakeWaterMax`), and the bit is not known when the objects are created;
+	 * offering the level to a robot that lacks the bit only means the robot rejects the value,
+	 * whereas withholding it hides a real level from every robot that has it. The half of the
+	 * predicate that is knowable is therefore applied, and the other half is left to the robot.
+	 */
+	private applyShakeMopWaterLabels(): void {
+		const water = this.profile.mappings.water_box_mode;
+		if (!water || !usesShakeMopWaterLabels(this.robotModel)) {
+			return;
+		}
+
+		for (const [value, shakeLabel] of Object.entries(WATER_BOX_MODE_LABELS_SHAKE_MOP)) {
+			const level = Number(value);
+			if (water[level] !== undefined && water[level] === WATER_BOX_MODE_LABELS_STANDARD[level]) {
+				water[level] = shakeLabel;
+			}
+		}
+
+		// Only meaningful next to the regular levels; never invent it for a custom value range.
+		if (water[203] !== undefined && water[208] === undefined) {
+			water[208] = WATER_BOX_MODE_EXTREME_LABEL;
+		}
 	}
 
 	public override async initializeDeviceData(): Promise<void> {
