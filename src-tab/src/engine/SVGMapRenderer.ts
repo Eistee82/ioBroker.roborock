@@ -529,10 +529,16 @@ export class SVGMapRenderer implements IMapRenderer {
 			const left = hasBubble ? bubbleCenterX - bubbleRadius : -textWidth / 2;
 			const right = hasBubble ? textX + textWidth : textWidth / 2;
 			// A picked room is marked at its name, not across its floor: the floor is a bitmap the
-			// adapter renders, and this layer has no polygon to fill. So the badge has to carry the
-			// whole signal, and a 35% wash with a hairline edge did not - on a blue floor it read
-			// as a slightly different blue. It is now opaque, outlined in white and set wider than
-			// the text, which reads as "picked" even against the busiest part of the map.
+			// adapter renders, and this layer has no polygon to fill. So the badge carries the whole
+			// signal.
+			//
+			// White on the map's dark floor, following what the app does for its own overlays: on a
+			// dark ground it switches to white rather than deepening a blue (control plugin
+			// A65:313366, `cleanRectBorderColor #ffffff`). A blue badge on a blue floor is a
+			// different blue, which is exactly how the earlier version read.
+			//
+			// The text inside is dark for the same reason - white on white would vanish - and the
+			// caller sets it, see below.
 			label.select<SVGRectElement>("rect.room-label-selection")
 				.style("display", selectedSegmentIds?.has(d.segmentId) ? "" : "none")
 				.attr("x", left - 7)
@@ -540,9 +546,9 @@ export class SVGMapRenderer implements IMapRenderer {
 				.attr("width", Math.max(right - left, 0) + 14)
 				.attr("height", 24)
 				.attr("rx", 8)
-				.style("fill", "rgba(29, 122, 189, 0.92)")
-				.style("stroke", "#ffffff")
-				.style("stroke-width", "2px")
+				.style("fill", "rgba(255, 255, 255, 0.95)")
+				.style("stroke", "#0a84ff")
+				.style("stroke-width", "2.5px")
 				.style("vector-effect", "non-scaling-stroke");
 		});
 	}

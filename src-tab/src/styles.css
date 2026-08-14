@@ -59,14 +59,28 @@ body,
  * It used to be a 28% wash with a 1.5px edge, which on a light floor was barely a tint.
  */
 /*
- * The zone has to read as a zone at a glance, against a map that is itself blue and busy.
+ * Cleaning zone, in the app's own colours.
  *
- * Note the edge is NOT set here: `MapEngine` writes `stroke-width` as an inline style, divided
- * by the zoom, and an inline style beats this rule. Its weight lives in `ZONE_STROKE_BASE`.
+ * The app keeps two sets and picks by the ground it draws on (control plugin A65:303524 for
+ * light, A65:313366 for dark):
+ *
+ *     light   cleanRectColor #007AFF33   cleanRectBorderColor #007AFF
+ *     dark    cleanRectColor #FFFFFF4D   cleanRectBorderColor #ffffff
+ *
+ * The adapter paints its map floor `#23465e` whatever the admin theme is, so the dark set is
+ * the right one here regardless of light or dark admin.
+ *
+ * Worth noting what the app does NOT do: it uses *less* opacity than the turquoise wash that
+ * sat here before (30% against 55%) and still reads better, because the colour is white against
+ * a dark blue floor rather than a tint of the floor's own family. Piling on opacity had only
+ * made it milky.
+ *
+ * The edge is NOT set here: `MapEngine` writes `stroke-width` as an inline style, divided by the
+ * zoom, and an inline style beats this rule. Its weight lives in `ZONE_STROKE_BASE`.
  */
 .zone-rect {
-	fill: rgba(46, 196, 192, 0.55);
-	stroke: #26d9d4;
+	fill: rgba(255, 255, 255, 0.30);
+	stroke: #ffffff;
 	cursor: move;
 }
 

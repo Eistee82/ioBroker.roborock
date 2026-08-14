@@ -87,7 +87,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 	 * document inherits from there.
 	 */
 	private applyThemeToDocument(): void {
-		const theme = createRoborockTheme(this.state.theme);
+		const theme = createRoborockTheme(this.resolveTheme());
 		const root = document.documentElement;
 
 		for (const [name, value] of Object.entries(themeCssVariables(theme))) {
@@ -103,9 +103,36 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 		document.body.style.backgroundColor = ground;
 	}
 
+	/**
+	 * The theme to draw with, corrected against the admin the tab is embedded in.
+	 *
+	 * `GenericApp` reads the mode once from `localStorage['App.themeName']` and then listens for an
+	 * `updateTheme` message. Inside an admin tab that is not always enough: the tab is an iframe
+	 * whose document is loaded from `/adapter/roborock/tab.html`, and a tab opened before the admin
+	 * has written that key - or one whose message never arrives - keeps the light default while the
+	 * admin around it is dark.
+	 *
+	 * So the value is checked against the surrounding window, which is the admin itself and the
+	 * authority on its own theme. Reading across frames is allowed here because both documents come
+	 * from the same origin; a foreign origin throws, and then the value stays as it was.
+	 * @returns The base theme, with the mode corrected when the admin disagrees.
+	 */
+	private resolveTheme(): IobTheme {
+		const own = this.state.theme;
+		const admin = readAdminThemeName();
+		if (!admin) return own;
+
+		const adminIsDark = admin === "dark";
+		if (adminIsDark === (own.palette.mode === "dark")) return own;
+
+		// `GenericApp.createTheme` builds the very theme it would have built itself, so the
+		// correction stays inside the framework's own palettes rather than inventing one.
+		return this.createTheme(admin) as IobTheme;
+	}
+
 	render(): React.JSX.Element {
 		// The admin decides light or dark; the Roborock palette is layered on top of that choice.
-		const theme: IobTheme = createRoborockTheme(this.state.theme);
+		const theme: IobTheme = createRoborockTheme(this.resolveTheme());
 
 		if (!this.state.loaded || !this.state.ready) {
 			return (
@@ -142,5 +169,36 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 				</ThemeProvider>
 			</StyledEngineProvider>
 		);
+	}
+}
+
+/**
+ * Reads the theme name the surrounding admin uses.
+ *
+ * Checked in the order of how authoritative each source is: the admin's own window first, then
+ * this document's storage, then what the browser reports. Each step is guarded on its own -
+ * reading `localStorage` of a cross-origin frame throws, and a tab must not go blank over a
+ * colour.
+ * @returns The theme name, or null when nothing could be read.
+ */
+function readAdminThemeName(): "dark" | "light" | null {
+	const fromStorage = (target: Window | null): string | null => {
+		try {
+			return target?.localStorage?.getItem("App.themeName") ?? null;
+		} catch {
+			// Different origin, or storage disabled. Not an error worth a log line every render.
+			return null;
+		}
+	};
+
+	// `window.parent` is the window itself when the tab is not embedded, so this covers both.
+	const parentName = window.parent !== window ? fromStorage(window.parent) : null;
+	const name = parentName ?? fromStorage(window);
+	if (name && name !== "auto") return name === "dark" || name === "blue" ? "dark" : "light";
+
+	try {
+		return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+	} catch {
+		return null;
 	}
 }
