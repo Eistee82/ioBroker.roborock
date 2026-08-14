@@ -773,6 +773,17 @@ describe("MapEditService", () => {
 			});
 		});
 
+		it("publishes the current set even when the edit itself is refused", async () => {
+			withMap();
+			onRobot.no_go = Array.from({ length: MAX_COUNT_WALL_OR_FBZ }, (_, i) => [i, 0, i + 1, 0, i + 1, 1, i, 1]);
+
+			await expect(runCommand("add_no_go_zone", [0, 0, 100, 100])).rejects.toThrow(/limit is 10 per kind/);
+
+			// The list is how a user works out which index to remove, so a refusal has to show it.
+			const state = await mockAdapter.getStateAsync(`Devices.${mockRobot.duid}.mapEdit.zones`);
+			expect(JSON.parse(String(state.val)).no_go).toHaveLength(MAX_COUNT_WALL_OR_FBZ);
+		});
+
 		it("wraps the payload once the robot reports feature bit 26", async () => {
 			withMap();
 			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, { val: RPC_RETRY_FEATURE_BIT, ack: true });

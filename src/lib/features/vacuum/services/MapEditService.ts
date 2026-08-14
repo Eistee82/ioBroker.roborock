@@ -909,6 +909,14 @@ export class MapEditService {
 	) {}
 
 	/**
+	 * The set of walls and zones a `save_map` is on its way with.
+	 *
+	 * Published once the robot confirms; before that the state keeps showing what the robot
+	 * actually holds, so a write that never lands does not leave a lie behind.
+	 */
+	private pendingOverlays: MapOverlays | null = null;
+
+	/**
 	 * Declares the command states for the editor methods.
 	 * @param addCommand The feature class' own `addCommand`, so the states land in the usual place.
 	 */
@@ -1199,7 +1207,9 @@ export class MapEditService {
 			`${description} Writing back the complete set (${countOverlays(overlays)} record(s), was ${before})${mapSlot === null ? "" : ` on map slot ${mapSlot}`}, because save_map keeps only what it is sent.`,
 			"info");
 
-		await this.publishOverlays(overlays);
+		// Published for real once the robot confirms; until then `mapEdit.zones` still shows what
+		// `readOverlays` found, which is what is actually on the robot.
+		this.pendingOverlays = overlays;
 		return { method: "save_map", params: await this.wrap("save_map", payload) };
 	}
 
@@ -1277,7 +1287,12 @@ export class MapEditService {
 		const parser = new MapParser(this.deps.adapter);
 		const mapData = await parser.parsedata(decoded, null, { isHistoryMap: false, duid: this.duid });
 
-		return readOverlaysFromMap(mapData as unknown as Record<string, unknown>);
+		const overlays = readOverlaysFromMap(mapData as unknown as Record<string, unknown>);
+
+		// Published even when the edit is then refused: this is what is on the robot right now, and
+		// an index only means something next to the list it counts into.
+		await this.publishOverlays(overlays);
+		return overlays;
 	}
 
 	/**
@@ -1474,6 +1489,12 @@ export class MapEditService {
 	 */
 	public async resolveDeferredResult(method: string, response: unknown): Promise<void> {
 		const confirmed = await this.pollUntilConfirmed(method, response);
+
+		if (method === "save_map") {
+			const written = this.pendingOverlays;
+			this.pendingOverlays = null;
+			if (confirmed && written) await this.publishOverlays(written);
+		}
 
 		if (confirmed && MapEditService.SEGMENT_EDIT_COMMANDS.includes(method)) {
 			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined, `${method} finished; re-reading the rooms and the map because the segment IDs have changed.`, "info");
