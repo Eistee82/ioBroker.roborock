@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, MenuItem, Stack, TextField } from "@mui/material";
+import { Box, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { I18n } from "@iobroker/adapter-react-v5";
 import type { ModeModel } from "../engine/types";
@@ -16,14 +16,23 @@ interface ModeBarProps {
 	onChange: (command: string, value: string) => void;
 }
 
+/** Edge length of an icon inside the switch bar. Large enough to read the pictogram at a glance. */
+const BAR_ICON_SIZE = 34;
+
 /**
- * Suction, mop and water selectors. Their options come from the command objects the device
- * handler published, so a device that does not offer a mode simply has no selector here.
+ * Suction, mop route and water level, drawn the way the robot's own app draws them: every step
+ * visible side by side as a picture, with the one in effect standing out.
  *
- * Each option carries the Roborock app's own icon where the value is proven to belong to one
- * (see `engine/modeIcons.ts`); everything else stays text. The light or dark variant follows the
- * admin theme, and because it is read from the live theme object here, switching the admin to dark
- * mode swaps the icons on the spot rather than on the next reload.
+ * They used to be dropdowns with a 20px icon, which hid the choice behind a click and shrank the
+ * pictogram to a speck - although these settings are picked *by* their picture. Showing all steps
+ * at once also makes it obvious how many there are, which differs per robot and, in the app, per
+ * cleaning mode.
+ *
+ * The groups sit next to each other rather than stacked, because this bar floats above the map and
+ * a tall block would cover what it is meant to control. On a narrow window they wrap instead.
+ *
+ * The light or dark icon variant follows the admin theme, read from the live theme object, so
+ * switching the admin to dark swaps the icons on the spot rather than on the next reload.
  */
 export function ModeBar({ modes, assetBase, onChange }: ModeBarProps): React.JSX.Element | null {
 	const theme = useTheme();
@@ -36,75 +45,92 @@ export function ModeBar({ modes, assetBase, onChange }: ModeBarProps): React.JSX
 	return (
 		<Stack
 			direction="row"
-			spacing={1}
-			sx={{ px: 1.5, py: 1.25 }}
+			spacing={2.5}
+			sx={{ px: 1.5, py: 1, flexWrap: "wrap", rowGap: 1.5 }}
 		>
 			{modes.map(mode => {
-				// The app draws the level in effect differently from the rest, and the picker assets
-				// come as that very pair, so the select mirrors it instead of inventing a highlight.
-				const iconFor = (value: string): string | null =>
-					modeIconUrl(assetBase, mode.command, value, themeType, value === mode.value ? "selected" : "normal");
-				// Only reserve room for the closed field's icon when this selector has icons at all,
-				// so a device without artwork keeps the compact width it has today.
-				const hasIcons = mode.options.some(option => iconFor(option.value) !== null);
+				const label = I18n.t(mode.labelKey);
+				const current = mode.options.find(option => option.value === mode.value);
 
 				return (
-					<TextField
-						key={mode.command}
-						select
-						size="small"
-						label={I18n.t(mode.labelKey)}
-						// An unknown value must not silently pick the first option.
-						value={mode.value ?? ""}
-						onChange={event => onChange(mode.command, event.target.value)}
-						// Wider with icons than without: the icon now takes 32px plus its gap, and the
-						// longest label of the eleven languages ("2 Durchgänge") must still fit
-						// beside it rather than being cut off.
-						sx={{ minWidth: hasIcons ? 176 : 132 }}
-						slotProps={{
-							select: {
-								// The closed field renders the same icon + label pair as the open list.
-								renderValue: value => {
-									const selected = mode.options.find(option => option.value === String(value));
-									if (!selected) {
-										return null;
-									}
-									return (
-										<Stack
-											direction="row"
-											spacing={1}
-											alignItems="center"
-										>
-											<ModeIcon
-												src={iconFor(selected.value)}
-												alt=""
-											/>
-											<Box component="span">{selected.label}</Box>
-										</Stack>
-									);
-								}
-							}
-						}}
-					>
-						{mode.options.map(option => (
-							<MenuItem
-								key={option.value}
-								value={option.value}
+					<Box key={mode.command}>
+						{/* Name and the step in effect, as in the app: the value is what one looks for. */}
+						<Stack
+							direction="row"
+							spacing={0.75}
+							alignItems="baseline"
+							sx={{ mb: 0.5, minHeight: 20 }}
+						>
+							<Typography
+								variant="caption"
+								sx={{ color: "text.secondary", lineHeight: 1 }}
 							>
-								<Stack
-									direction="row"
-									spacing={1}
-									alignItems="center"
+								{label}
+							</Typography>
+							{current ? (
+								<Typography
+									variant="caption"
+									sx={{ color: "primary.main", fontWeight: 600, lineHeight: 1 }}
 								>
-									<ModeIcon
-										src={iconFor(option.value)}
-										alt=""
-									/>
-									<Box component="span">{option.label}</Box>
-								</Stack>
-							</MenuItem>
-						))}
-					</TextField>
+									{current.label}
+								</Typography>
+							) : null}
+						</Stack>
+
+						<ToggleButtonGroup
+							exclusive
+							size="small"
+							// An unknown value must not light up the first step as if it were selected.
+							value={mode.value ?? null}
+							onChange={(_event, value) => {
+								// Null arrives when the active button is clicked again; the robot has no
+								// "no mode", so that is a no-op rather than a command.
+								if (typeof value === "string") onChange(mode.command, value);
+							}}
+							aria-label={label}
+						>
+							{mode.options.map(option => {
+								const selected = option.value === mode.value;
+								const icon = modeIconUrl(assetBase, mode.command, option.value, themeType, selected ? "selected" : "normal");
+
+								return (
+									<Tooltip
+										key={option.value}
+										title={option.label}
+									>
+										<ToggleButton
+											value={option.value}
+											aria-label={option.label}
+											sx={{
+												px: icon ? 0.75 : 1.25,
+												py: 0.5,
+												// Without an icon the text carries the meaning and needs room;
+												// with one, a square keeps the row of pictograms even.
+												minWidth: icon ? BAR_ICON_SIZE + 12 : 0,
+												textTransform: "none",
+												lineHeight: 1
+											}}
+										>
+											{icon ? (
+												<ModeIcon
+													src={icon}
+													size={BAR_ICON_SIZE}
+													alt={option.label}
+												/>
+											) : (
+												<Typography
+													variant="body2"
+													sx={{ lineHeight: 1 }}
+												>
+													{option.label}
+												</Typography>
+											)}
+										</ToggleButton>
+									</Tooltip>
+								);
+							})}
+						</ToggleButtonGroup>
+					</Box>
 				);
 			})}
 		</Stack>
