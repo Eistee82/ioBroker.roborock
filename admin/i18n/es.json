@@ -281,5 +281,8 @@
   "ui_state_arm_resetting": "Reiniciando el brazo",
   "ui_state_program_mode": "Modo programa",
   "ui_state_fully_charged": "Totalmente cargado",
-  "ui_state_offline": "Sin conexión"
+  "ui_state_offline": "Sin conexión",
+  "ui_live_track": "Trazado en vivo",
+  "ui_live_track_driven": "Recorrido",
+  "ui_live_track_mopped": "Fregado"
 }

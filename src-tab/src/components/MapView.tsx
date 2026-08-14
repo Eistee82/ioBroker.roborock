@@ -20,6 +20,7 @@ import { ActionDock } from "./ActionDock";
 import { ModeBar } from "./ModeBar";
 import { ConsumablesPanel } from "./ConsumablesPanel";
 import { DockPanel } from "./DockPanel";
+import { LiveTrackLegend } from "./LiveTrackLegend";
 import { ObstacleDialog } from "./ObstacleDialog";
 
 interface MapViewProps {
@@ -91,6 +92,8 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [consumables, setConsumables] = useState<ConsumablePartModel[]>([]);
 	const [dock, setDock] = useState<DockModel>({ controls: [], status: [], faulty: false });
 	const [hasMap, setHasMap] = useState(false);
+	// Only true while the robot actually reports a live track; the colour key follows it.
+	const [hasLiveTrack, setHasLiveTrack] = useState(false);
 	const [goToActive, setGoToActive] = useState(false);
 	const [error, setError] = useState<string>("");
 	const [photo, setPhoto] = useState<ObstaclePhotoModel | null>(null);
@@ -130,6 +133,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			onConsumables: setConsumables,
 			onDock: setDock,
 			onMapPresence: setHasMap,
+			onLiveTrack: setHasLiveTrack,
 			onGoToMode: setGoToActive,
 			onError: setError,
 			onObstaclePhoto: setPhoto
@@ -240,6 +244,13 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 						) : null}
 					</Stack>
 				</FloatingSurface>
+
+				{/* Only while there is a track to explain - see LiveTrackLegend. */}
+				{hasLiveTrack ? (
+					<FloatingSurface>
+						<LiveTrackLegend present={hasLiveTrack} />
+					</FloatingSurface>
+				) : null}
 
 				<FloatingSurface sx={{ ml: "auto" }}>
 					<StatusStrip status={status} />

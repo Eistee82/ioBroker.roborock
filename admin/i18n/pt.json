@@ -281,5 +281,8 @@
   "ui_state_arm_resetting": "A repor o braço",
   "ui_state_program_mode": "Modo de programa",
   "ui_state_fully_charged": "Totalmente carregado",
-  "ui_state_offline": "Offline"
+  "ui_state_offline": "Offline",
+  "ui_live_track": "Rastro ao vivo",
+  "ui_live_track_driven": "Percorrido",
+  "ui_live_track_mopped": "Esfregado"
 }

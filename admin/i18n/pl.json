@@ -281,5 +281,8 @@
   "ui_state_arm_resetting": "Resetowanie ramienia",
   "ui_state_program_mode": "Tryb programu",
   "ui_state_fully_charged": "W pełni naładowany",
-  "ui_state_offline": "Offline"
+  "ui_state_offline": "Offline",
+  "ui_live_track": "Ślad na żywo",
+  "ui_live_track_driven": "Przejechane",
+  "ui_live_track_mopped": "Umyte"
 }

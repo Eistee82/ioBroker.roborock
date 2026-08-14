@@ -15,6 +15,16 @@ import type {
 	PathLayer,
 } from "@adapter/common/mapDrawing/types";
 import { VISUAL_BLOCK_SIZE } from "@adapter/common/mapDrawing/constants";
+import {
+	LIVE_ROBOT_COLORS,
+	LIVE_ROBOT_SIZE,
+	LIVE_TRACK_COLORS,
+	LIVE_TRACK_WIDTH,
+	liveRobotHeadingPoints,
+	liveTrackPathD,
+	type LiveRobotPose,
+	type LiveTrackSegment,
+} from "./liveTrack";
 
 /**
  * Size the room name is drawn at, in SVG user units.
@@ -119,6 +129,10 @@ export interface SVGMapRendererGroups {
 	zonesOverlayGroup?: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
 	/** Optional so a caller that does not draw furniture keeps working unchanged. */
 	furnitureGroup?: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
+	/** Live driven/mopped track; absent means the caller does not show live data. */
+	liveTrackGroup?: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
+	/** Live position marker, kept apart from the track so either can be cleared alone. */
+	liveRobotGroup?: d3.Selection<SVGGElement, unknown, HTMLElement, unknown>;
 }
 
 export interface SVGMapRendererOptions {
@@ -581,6 +595,100 @@ export class SVGMapRenderer implements IMapRenderer {
 				.style("stroke", w.stroke)
 				.style("stroke-width", `${w.lineWidth}px`);
 		}
+	}
+
+	/**
+	 * Draws the live driven/mopped track.
+	 *
+	 * Every run is painted twice: a dark casing first, the colour on top. That is what makes the
+	 * overlay independent of what lies underneath it - the map bitmap does not follow the admin
+	 * theme, and the historic white path may run right along the same stretch.
+	 *
+	 * The runs are drawn in the order they arrive, so a mopped run that follows a driven one covers
+	 * the shared point between them rather than the other way round. All casings go down before any
+	 * colour, otherwise the casing of a later run would cut into the colour of an earlier one.
+	 *
+	 * The layer is cleared on every call. This is a live channel: a snapshot supersedes its
+	 * predecessor completely, and merging the two would accumulate a track that no longer matches
+	 * what the robot reports.
+	 *
+	 * @param segments The runs, already in SVG user units.
+	 */
+	drawLiveTrack(segments: LiveTrackSegment[]): void {
+		const g = this.opts.groups.liveTrackGroup;
+		if (!g) return;
+		g.selectAll("*").remove();
+		if (!segments.length) return;
+
+		const runs = segments
+			.map(segment => ({ mopped: segment.mopped, d: liveTrackPathD(segment.points) }))
+			.filter(run => run.d !== "");
+		if (!runs.length) return;
+
+		for (const run of runs) {
+			g.append("path")
+				.attr("class", "live-track-casing")
+				.attr("d", run.d)
+				.style("fill", "none")
+				.style("stroke", LIVE_TRACK_COLORS.casing)
+				.style("stroke-width", `${LIVE_TRACK_WIDTH.track + LIVE_TRACK_WIDTH.casingExtra}px`)
+				.style("stroke-linecap", "round")
+				.style("stroke-linejoin", "round");
+		}
+
+		for (const run of runs) {
+			g.append("path")
+				.attr("class", run.mopped ? "live-track live-track-mopped" : "live-track live-track-driven")
+				.attr("d", run.d)
+				.style("fill", "none")
+				.style("stroke", run.mopped ? LIVE_TRACK_COLORS.mopped : LIVE_TRACK_COLORS.driven)
+				.style("stroke-width", `${LIVE_TRACK_WIDTH.track}px`)
+				.style("stroke-linecap", "round")
+				.style("stroke-linejoin", "round");
+		}
+	}
+
+	/**
+	 * Draws the live position marker: a disc with a heading wedge.
+	 *
+	 * This is a marker of its own rather than a second use of {@link drawRobot}, because the live
+	 * position and the map's `ROBOT_POSITION` are two independent channels that arrive at different
+	 * times. Sharing one element would let whichever redrew last win, and the map's zoom handler
+	 * re-applies the map's position on every wheel tick - the stale value would snap back the
+	 * moment the user zoomed.
+	 *
+	 * @param pose The marker, or null to clear the layer - which is what a snapshot without a
+	 *             position means, and it must not leave a stale robot behind.
+	 */
+	drawLiveRobot(pose: LiveRobotPose | null): void {
+		const g = this.opts.groups.liveRobotGroup;
+		if (!g) return;
+		g.selectAll("*").remove();
+		if (!pose) return;
+
+		const marker = g
+			.append("g")
+			.attr("class", "live-robot")
+			.attr("transform", `translate(${pose.x}, ${pose.y}) rotate(${pose.rotation})`);
+
+		marker
+			.append("polygon")
+			.attr("class", "live-robot-heading")
+			.attr("points", liveRobotHeadingPoints())
+			.style("fill", LIVE_ROBOT_COLORS.heading)
+			.style("stroke", LIVE_ROBOT_COLORS.outline)
+			.style("stroke-width", "0.8px")
+			.style("stroke-linejoin", "round");
+
+		marker
+			.append("circle")
+			.attr("class", "live-robot-body")
+			.attr("cx", 0)
+			.attr("cy", 0)
+			.attr("r", LIVE_ROBOT_SIZE.radius)
+			.style("fill", LIVE_ROBOT_COLORS.body)
+			.style("stroke", LIVE_ROBOT_COLORS.outline)
+			.style("stroke-width", "1.2px");
 	}
 
 	drawPredictedPath(input: DrawPredictedPathInput): void {

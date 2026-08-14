@@ -281,5 +281,8 @@
   "ui_state_arm_resetting": "Скидання маніпулятора",
   "ui_state_program_mode": "Програмний режим",
   "ui_state_fully_charged": "Повністю заряджений",
-  "ui_state_offline": "Не в мережі"
+  "ui_state_offline": "Не в мережі",
+  "ui_live_track": "Живий слід",
+  "ui_live_track_driven": "Пройдено",
+  "ui_live_track_mopped": "Вимито"
 }

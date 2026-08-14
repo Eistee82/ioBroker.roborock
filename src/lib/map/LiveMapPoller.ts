@@ -26,6 +26,16 @@ import {
 	resolveLiveMapIntervalSeconds
 } from "../requestPolicy";
 import { MapManager } from "./MapManager";
+import {
+	DYNAMIC_DATA_BUNDLE_ID,
+	DYNAMIC_DATA_METHOD,
+	type DynamicChannelState,
+	buildDynamicDataParams,
+	hasDynamicChannelChanged,
+	parseDynamicChannels,
+	parseDynamicDataResponse,
+	parseDynamicSnapshot
+} from "./dynamicData";
 import { buildMapDiffParams, evaluateMapDiff, supportsIncrementalMap } from "./mapDiff";
 
 /** RPC the app uses to ask what changed since a given map nonce. */
@@ -46,9 +56,14 @@ export type LiveMapAdapter = {
 		sendRequest(duid: string, method: string, params: unknown, options?: { priority?: number; timeout?: number }): Promise<unknown>;
 	};
 	getStateAsync(id: string): Promise<{ val?: unknown } | null | undefined>;
+	ensureState(id: string, common: Record<string, unknown>): Promise<unknown>;
+	setStateChangedAsync(id: string, value: { val: unknown; ack: boolean }): Promise<unknown>;
 	rLog(...args: any[]): void;
 	errorMessage(error: unknown): string;
 };
+
+/** State that carries the driven track, its mop markers and the robot position for the UI. */
+export const LIVE_TRACK_STATE = "map.liveTrack";
 
 /** The part of a device feature handler this poller needs. */
 export type LiveMapHandler = {
@@ -69,6 +84,10 @@ type DeviceState = {
 	owned: boolean;
 	/** Whether the last cycle used the diff, for logging the branch only once. */
 	loggedBranch: "incremental" | "full" | null;
+	/** State of the dynamic bundle at the last fetch, to notice when it was replaced or grew. */
+	lastDynamicChannel: DynamicChannelState | null;
+	/** The robot answered `get_dynamic_data` with an error; do not ask it again. */
+	dynamicUnsupported: boolean;
 };
 
 export class LiveMapPoller {
@@ -205,6 +224,11 @@ export class LiveMapPoller {
 		state.diffFailures = 0;
 		state.owned = true;
 
+		// The track is worth having even when the raster did not change: the robot moves on
+		// unchanged ground most of the time. Fetching it here costs one local round trip and
+		// spares the UI the complete map, which only arrives over the cloud.
+		await this.refreshDynamicTrack(duid, raw, state);
+
 		const decision = evaluateMapDiff(raw, nonce);
 		if (decision.nonceStale) {
 			MapManager.forgetMapNonce(duid);
@@ -217,6 +241,58 @@ export class LiveMapPoller {
 
 		this.adapter.rLog("MapManager", duid, "Debug", "1.0", undefined, `Live map: ${decision.reason}, fetching the full map.`, "debug");
 		await handler.updateMap();
+	}
+
+	/**
+	 * Fetches driven track, mop markers and robot position when the robot reports new ones.
+	 *
+	 * The trigger is the channel's **nonce**, not the `count` the answer also carries: measured on
+	 * a driving S7 Max Ultra, `count` stayed at 0 for the whole run while `maxLen` grew from 47 to
+	 * 71. Waiting for `count` therefore misses every movement. See `PROJECT_STATE.md`, section
+	 * "Live-Karte".
+	 *
+	 * Failures are deliberately quiet: this is an extra on top of the map, and a robot that does
+	 * not know the method must not lose the map because of it.
+	 * @param duid Device Unique ID.
+	 * @param rawDiff The untouched `get_dynamic_map_diff` answer.
+	 * @param state Bookkeeping for this device.
+	 */
+	private async refreshDynamicTrack(duid: string, rawDiff: unknown, state: DeviceState): Promise<void> {
+		if (state.dynamicUnsupported) return;
+
+		const channel = parseDynamicChannels(rawDiff).get(DYNAMIC_DATA_BUNDLE_ID);
+		if (!channel || channel.maxLen <= 0) return;
+		if (!hasDynamicChannelChanged(state.lastDynamicChannel, channel)) return;
+
+		try {
+			const params = buildDynamicDataParams(channel.nonce, DYNAMIC_DATA_BUNDLE_ID, 0, channel.maxLen);
+			const answer = await this.adapter.requestsHandler.sendRequest(duid, DYNAMIC_DATA_METHOD, params, { priority: 0 });
+			const response = parseDynamicDataResponse(answer);
+			if (response.result !== null && response.result !== 0) {
+				this.adapter.rLog("MapManager", duid, "Debug", "1.0", undefined, `${DYNAMIC_DATA_METHOD} answered result ${response.result}; keeping the previous track.`, "debug");
+				return;
+			}
+			if (!response.data.length) return;
+
+			const snapshot = parseDynamicSnapshot(response.data);
+			const id = `Devices.${duid}.${LIVE_TRACK_STATE}`;
+			await this.adapter.ensureState(id, { name: "Live track", type: "string", role: "json", read: true, write: false, def: "" });
+			await this.adapter.setStateChangedAsync(id, { val: JSON.stringify(snapshot), ack: true });
+			state.lastDynamicChannel = channel;
+		} catch (error: unknown) {
+			// An unavailable channel says nothing about the robot's abilities - keep asking later.
+			if (isChannelUnavailableError(error)) return;
+			state.dynamicUnsupported = true;
+			this.adapter.rLog(
+				"MapManager",
+				duid,
+				"Info",
+				"1.0",
+				undefined,
+				`${DYNAMIC_DATA_METHOD} failed (${this.adapter.errorMessage(error)}). This robot apparently does not deliver the live track; the map itself is unaffected.`,
+				"info"
+			);
+		}
 	}
 
 	/**
@@ -312,7 +388,16 @@ export class LiveMapPoller {
 	private getState(duid: string): DeviceState {
 		let state = this.states.get(duid);
 		if (!state) {
-			state = { nextDueAt: 0, inFlight: false, diffFailures: 0, diffGaveUp: false, owned: false, loggedBranch: null };
+			state = {
+				nextDueAt: 0,
+				inFlight: false,
+				diffFailures: 0,
+				diffGaveUp: false,
+				owned: false,
+				loggedBranch: null,
+				lastDynamicChannel: null,
+				dynamicUnsupported: false
+			};
 			this.states.set(duid, state);
 		}
 		return state;

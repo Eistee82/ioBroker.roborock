@@ -153,6 +153,13 @@ export interface MapEngineHost {
 	onDock?: (dock: DockModel) => void;
 	/** True as soon as any map content arrived; the shell then hides the "waiting for map" hint. */
 	onMapPresence?: (hasMap: boolean) => void;
+	/**
+	 * True while the live driven/mopped track has anything to show.
+	 *
+	 * The shell uses it to show the colour key, which is the only thing that tells the two track
+	 * colours apart - and which would be a riddle on a map that carries no track.
+	 */
+	onLiveTrack?: (present: boolean) => void;
 	/** True while the user is placing a go-to target. */
 	onGoToMode?: (active: boolean) => void;
 	/** A failure that belongs into the UI instead of the browser console. */

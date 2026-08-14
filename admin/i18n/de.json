@@ -281,5 +281,8 @@
   "ui_state_arm_resetting": "Arm wird zurückgesetzt",
   "ui_state_program_mode": "Programmmodus",
   "ui_state_fully_charged": "Vollständig geladen",
-  "ui_state_offline": "Offline"
+  "ui_state_offline": "Offline",
+  "ui_live_track": "Live-Spur",
+  "ui_live_track_driven": "Gefahren",
+  "ui_live_track_mopped": "Gewischt"
 }

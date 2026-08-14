@@ -9,6 +9,13 @@ import { floorScopeKey, normalizeMapFlag, normalizeRoomId, roomNameCacheKey } fr
 import type { DrawFurnitureInput } from "./SVGMapRenderer";
 import { ROOM_LABEL_BASE_FONT, SVGMapRenderer } from "./SVGMapRenderer";
 import { ROBOT_STATES, dockActivity, robotPhase } from "./robotStates";
+import {
+	LIVE_TRACK_STATE,
+	buildLiveRobotPose,
+	buildLiveTrackSegments,
+	parseLiveSnapshot,
+	type LiveSnapshot,
+} from "./liveTrack";
 import { furnitureAssetFileName, furnitureGraphic, furnitureRect } from "./furniture";
 import type { Furniture } from "@adapter/lib/map/v1/types";
 
@@ -378,6 +385,11 @@ export class MapEngine {
 	private backwashPathGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private pureCleanPathGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 
+	/** Live driven/mopped track from `get_dynamic_data`, see `engine/liveTrack.ts`. */
+	private liveTrackGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
+	/** Live position marker; separate layer so it can outlive or predate the track. */
+	private liveRobotGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
+
 	// Element Groups
 	private furnitureGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private chargerGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
@@ -458,6 +470,11 @@ export class MapEngine {
 	/** Dock fault state of this device, or null when the device publishes none. */
 	private dockErrorStateId: string | null = null;
 
+	/** Latest `get_dynamic_data` snapshot, or null while the device publishes none. */
+	private liveSnapshot: LiveSnapshot | null = null;
+	/** Last value handed to `onLiveTrack`, so the callback only fires on a real change. */
+	private lastLiveTrackPresence: boolean | null = null;
+
 	/** True once the user panned/zoomed by hand; a resize then keeps their view. */
 	private userAdjustedView = false;
 	/** Pointer position when the current gesture started, to tell a click from a pan. */
@@ -489,6 +506,8 @@ export class MapEngine {
 		this.mopPathGroup = d3.select(null) as any;
 		this.backwashPathGroup = d3.select(null) as any;
 		this.pureCleanPathGroup = d3.select(null) as any;
+		this.liveTrackGroup = d3.select(null) as any;
+		this.liveRobotGroup = d3.select(null) as any;
 		this.furnitureGroup = d3.select(null) as any;
 		this.chargerGroup = d3.select(null) as any;
 		this.robotGroup = d3.select(null) as any;
@@ -603,11 +622,18 @@ export class MapEngine {
 		// but below charger, obstacles and robot, which have to stay readable on top of it.
 		this.furnitureGroup = this.mainGroup.append("g").attr("class", "furniture-models");
 
+		// The live track goes above the furniture on purpose: it answers "what did it just clean",
+		// and a piece of furniture drawn over it would hide exactly the stretch the user is looking
+		// for. Above the historic paths for the same reason.
+		this.liveTrackGroup = this.mainGroup.append("g").attr("class", "live-track");
+
 		this.chargerGroup = this.mainGroup.append("g").attr("class", "charger");
 		this.obstacleGroup = this.mainGroup.append("g").attr("class", "obstacles");
 		this.zoneGroup = this.mainGroup.append("g").attr("class", "zones");
 		this.zonesOverlayGroup = this.mainGroup.append("g").attr("class", "zones-overlay");
 		this.robotGroup = this.mainGroup.append("g").attr("class", "robot");
+		// Directly above the map's own robot, which is hidden while a live position exists.
+		this.liveRobotGroup = this.mainGroup.append("g").attr("class", "live-robot-marker");
 		this.pinGroup = this.mainGroup.append("g").attr("class", "pins");
 		this.roomNameGroup = this.mainGroup.append("g").attr("class", "room-names");
 
@@ -880,6 +906,8 @@ export class MapEngine {
 		this.mopPathGroup.selectAll("*").remove();
 		this.backwashPathGroup.selectAll("*").remove();
 		this.pureCleanPathGroup.selectAll("*").remove();
+		this.liveSnapshot = null;
+		this.drawLiveOverlay();
 		this.rects = [];
 		this.drawZones();
 		this.currentMapBase64Clean = null;
@@ -901,6 +929,9 @@ export class MapEngine {
 		const q10StatusStateId = `${deviceRoot}.deviceStatus.status`;
 		const q10CleaningInfoStateId = `${deviceRoot}.deviceStatus.cleaning_info`;
 		const q10CurrentCleanRoomIdsStateId = `${deviceRoot}.deviceStatus.current_clean_room_ids`;
+		// The live channel. Absent on an adapter version that does not publish it yet, which simply
+		// means the overlay stays empty - every other layer is unaffected.
+		const liveTrackStateId = `${deviceRoot}.${LIVE_TRACK_STATE}`;
 
 		// Status bar and mode selectors. deviceStatus.state is the V1 robot state that the UI
 		// used to guess locally; deviceStatus.status is its B01/Q10 counterpart.
@@ -925,6 +956,7 @@ export class MapEngine {
 			q10CleaningInfoStateId,
 			q10CurrentCleanRoomIdsStateId,
 			connectionPreferredStateId,
+			liveTrackStateId,
 			...statusKeyByStateId.keys()
 		];
 
@@ -947,6 +979,14 @@ export class MapEngine {
 				const raw = state && state.val !== null && state.val !== undefined ? Number(state.val) : NaN;
 				this.statusValues[statusKey] = Number.isFinite(raw) ? raw : null;
 				this.renderStatusBar();
+				return;
+			}
+
+			if (id === liveTrackStateId) {
+				// One branch for both cases: an empty state and a broken payload both mean "nothing
+				// live to show", and `parseLiveSnapshot` answers either with null.
+				this.liveSnapshot = state ? parseLiveSnapshot(state.val) : null;
+				this.drawLiveOverlay();
 				return;
 			}
 
@@ -1586,12 +1626,7 @@ export class MapEngine {
 			}
 		}
 
-		const modelFolder =
-			this.model ||
-			(this.currentRobotDuid && this.robotModels[this.currentRobotDuid]) ||
-			(Object.keys(this.robotModels).length ? this.robotModels[Object.keys(this.robotModels)[0]] : null) ||
-			"roborock.vacuum.a147";
-		const baseUrl = `${ASSET_BASE}/${modelFolder}/drawable-mdpi/`;
+		const baseUrl = this.assetBaseUrl();
 		const renderer = this.createSvgRenderer(baseUrl, params);
 
 		drawMapV1(this.map as any, renderer, {
@@ -1600,8 +1635,55 @@ export class MapEngine {
 			roomLabels: roomLabels?.length ? roomLabels : undefined,
 		});
 		renderer.drawFurniture(this.buildFurnitureItems(this.map.FURNITURES, params, baseUrl));
+		// The map geometry may have changed with this redraw, so the overlay has to be converted
+		// again - otherwise it would keep sitting on the geometry of the previous map.
+		this.drawLiveOverlay();
 		this.applyRoomLabelZoomBehavior();
 		this.syncRoomSelectionWithLabels(roomLabels?.map((label) => label.segmentId) ?? []);
+	}
+
+	/**
+	 * Draws the live track and the live position marker, or clears both.
+	 *
+	 * Called from two directions: when a new snapshot arrives, and when the map underneath was
+	 * redrawn. Both have to go through here, because the overlay only means anything together with
+	 * the geometry it was converted against.
+	 *
+	 * **The map's own robot is hidden while a live position is known.** The two channels report the
+	 * same robot at different ages - the map's `ROBOT_POSITION` is as old as the last full map,
+	 * the live one is seconds old - and showing both would put two robots in two rooms with no way
+	 * for the user to tell which is real. As soon as the live position is gone the map's robot is
+	 * shown again, so a device without the live channel is unchanged.
+	 *
+	 * A Q10 map places its robot in its own overlay pipeline and reports no `get_dynamic_data`, so
+	 * nothing is drawn there; the guard is `getMapParams()` returning the geometry either way.
+	 */
+	private drawLiveOverlay(): void {
+		// Before `init()` there is nothing to draw into; the reset path can reach this first.
+		if (this.liveTrackGroup.empty() || this.liveRobotGroup.empty()) return;
+
+		// V1 geometry only. `getMapParams()` also answers for a Q10 map, but that pipeline places
+		// everything through `Q10MapGeometry` instead - converting the live track with the V1
+		// formula would put it on the map at the wrong spot rather than not at all. Those devices
+		// do not answer `get_dynamic_data` in the first place, so nothing is lost by refusing.
+		const params = this.map && isQ10MapData(this.map) ? null : this.getMapParams();
+		const toSvg = params ? (point: Point): Point => this.robotToSvg(point, params) : null;
+
+		const segments = toSvg ? buildLiveTrackSegments(this.liveSnapshot, toSvg) : [];
+		const pose = toSvg ? buildLiveRobotPose(this.liveSnapshot, toSvg) : null;
+
+		const renderer = this.createSvgRenderer(this.assetBaseUrl(), params);
+		renderer.drawLiveTrack(segments);
+		renderer.drawLiveRobot(pose);
+
+		if (pose) this.robotGroup.style("display", "none");
+		else this.robotGroup.style("display", null);
+
+		const present = segments.length > 0 || pose !== null;
+		if (present !== this.lastLiveTrackPresence) {
+			this.lastLiveTrackPresence = present;
+			this.host.onLiveTrack?.(present);
+		}
 	}
 
 	/**
@@ -1662,6 +1744,23 @@ export class MapEngine {
 		return items;
 	}
 
+	/**
+	 * Folder the current device's Roborock graphics live in, ending in a slash.
+	 *
+	 * Shared by every V1 draw path so they cannot drift apart. The fallback model only decides
+	 * which artwork is attempted; a file that is not there is handled by the probing in
+	 * {@link SVGMapRenderer}, never shown as a broken image.
+	 * @returns The URL prefix of the density folder.
+	 */
+	private assetBaseUrl(): string {
+		const modelFolder =
+			this.model ||
+			(this.currentRobotDuid && this.robotModels[this.currentRobotDuid]) ||
+			(Object.keys(this.robotModels).length ? this.robotModels[Object.keys(this.robotModels)[0]] : null) ||
+			"roborock.vacuum.a147";
+		return `${ASSET_BASE}/${modelFolder}/drawable-mdpi/`;
+	}
+
 	private createSvgRenderer(baseUrl: string, params: MapParams | null): SVGMapRenderer {
 		return this.createSvgRendererWithOptions(baseUrl, params, {});
 	}
@@ -1685,6 +1784,8 @@ export class MapEngine {
 				roomNameGroup: this.roomNameGroup,
 				zonesOverlayGroup: this.zonesOverlayGroup,
 				furnitureGroup: this.furnitureGroup,
+				liveTrackGroup: this.liveTrackGroup,
+				liveRobotGroup: this.liveRobotGroup,
 			},
 			pathMainWidth: this.rescaler.pathMainWidth(),
 			pathMopWidth: this.rescaler.pathMopWidth(),

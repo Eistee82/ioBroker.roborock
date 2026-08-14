@@ -281,5 +281,8 @@
   "ui_state_arm_resetting": "机械臂复位中",
   "ui_state_program_mode": "程序模式",
   "ui_state_fully_charged": "已充满",
-  "ui_state_offline": "离线"
+  "ui_state_offline": "离线",
+  "ui_live_track": "实时轨迹",
+  "ui_live_track_driven": "已行驶",
+  "ui_live_track_mopped": "已拖地"
 }
