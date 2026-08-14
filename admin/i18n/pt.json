@@ -183,7 +183,6 @@
   "Listen for device broadcasts (UDP 58866)": "Escutar difusões de dispositivos (UDP 58866)",
   "Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges).": "Desligado: só são usados dispositivos com endereço IP configurado estaticamente. Útil quando as difusões são filtradas (VLAN, isolamento de clientes WLAN, pontes LXC ou Docker).",
   "Network interface for discovery": "Interface de rede para a deteção",
-  "IP address of the interface the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Endereço IP da interface à qual o socket UDP de deteção é associado. Vazio significa todas as interfaces, o que pode falhar em anfitriões com várias redes.",
   "JSON array of { duid, localKey, ip, pv }. The localKey is a device secret and is stored encrypted.": "Array JSON de { duid, localKey, ip, pv }. A localKey é um segredo do dispositivo e é armazenada encriptada.",
   "ui_device": "Dispositivo",
   "ui_floor": "Piso",
@@ -284,5 +283,6 @@
   "ui_state_offline": "Offline",
   "ui_live_track": "Rastro ao vivo",
   "ui_live_track_driven": "Percorrido",
-  "ui_live_track_mopped": "Esfregado"
+  "ui_live_track_mopped": "Esfregado",
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Endereço IP ou nome da interface (por exemplo, eth0) à qual o socket UDP de descoberta se liga. Vazio significa todas as interfaces, o que pode falhar em hosts com várias redes."
 }

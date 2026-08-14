@@ -183,7 +183,6 @@
   "Listen for device broadcasts (UDP 58866)": "Listen for device broadcasts (UDP 58866)",
   "Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges).": "Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges).",
   "Network interface for discovery": "Network interface for discovery",
-  "IP address of the interface the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP address of the interface the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.",
   "JSON array of { duid, localKey, ip, pv }. The localKey is a device secret and is stored encrypted.": "JSON array of { duid, localKey, ip, pv }. The localKey is a device secret and is stored encrypted.",
   "ui_device": "Device",
   "ui_floor": "Floor",
@@ -284,5 +283,6 @@
   "ui_state_offline": "Offline",
   "ui_live_track": "Live track",
   "ui_live_track_driven": "Driven",
-  "ui_live_track_mopped": "Mopped"
+  "ui_live_track_mopped": "Mopped",
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks."
 }

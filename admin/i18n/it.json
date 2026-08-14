@@ -183,7 +183,6 @@
   "Listen for device broadcasts (UDP 58866)": "Ascolta i broadcast dei dispositivi (UDP 58866)",
   "Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges).": "Disattivato: vengono usati solo i dispositivi con indirizzo IP configurato staticamente. Utile quando i broadcast vengono filtrati (VLAN, isolamento client WLAN, bridge LXC o Docker).",
   "Network interface for discovery": "Interfaccia di rete per il rilevamento",
-  "IP address of the interface the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Indirizzo IP dell'interfaccia a cui viene associato il socket UDP di rilevamento. Vuoto significa tutte le interfacce, cosa che può fallire su host con più reti.",
   "JSON array of { duid, localKey, ip, pv }. The localKey is a device secret and is stored encrypted.": "Array JSON di { duid, localKey, ip, pv }. La localKey è un segreto del dispositivo e viene memorizzata cifrata.",
   "ui_device": "Dispositivo",
   "ui_floor": "Piano",
@@ -284,5 +283,6 @@
   "ui_state_offline": "Non in linea",
   "ui_live_track": "Tracciato live",
   "ui_live_track_driven": "Percorso",
-  "ui_live_track_mopped": "Lavato"
+  "ui_live_track_mopped": "Lavato",
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Indirizzo IP o nome dell’interfaccia (ad esempio eth0) a cui viene associato il socket UDP di rilevamento. Vuoto significa tutte le interfacce, il che può non funzionare su host con più reti."
 }

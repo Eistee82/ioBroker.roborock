@@ -183,7 +183,6 @@
   "Listen for device broadcasts (UDP 58866)": "Luisteren naar apparaatbroadcasts (UDP 58866)",
   "Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges).": "Uit: alleen apparaten met een statisch geconfigureerd IP-adres worden gebruikt. Handig wanneer broadcasts worden gefilterd (VLAN, WLAN-clientisolatie, LXC- of Docker-bridges).",
   "Network interface for discovery": "Netwerkinterface voor detectie",
-  "IP address of the interface the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-adres van de interface waaraan de UDP-detectiesocket wordt gebonden. Leeg betekent alle interfaces, wat kan mislukken op hosts met meerdere netwerken.",
   "JSON array of { duid, localKey, ip, pv }. The localKey is a device secret and is stored encrypted.": "JSON-array van { duid, localKey, ip, pv }. De localKey is een apparaatgeheim en wordt versleuteld opgeslagen.",
   "ui_device": "Apparaat",
   "ui_floor": "Verdieping",
@@ -284,5 +283,6 @@
   "ui_state_offline": "Offline",
   "ui_live_track": "Live spoor",
   "ui_live_track_driven": "Gereden",
-  "ui_live_track_mopped": "Gedweild"
+  "ui_live_track_mopped": "Gedweild",
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-adres of interfacenaam (bijvoorbeeld eth0) waaraan de UDP-detectiesocket wordt gebonden. Leeg betekent alle interfaces, wat kan mislukken op hosts met meerdere netwerken."
 }

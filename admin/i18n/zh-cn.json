@@ -183,7 +183,6 @@
   "Listen for device broadcasts (UDP 58866)": "监听设备广播（UDP 58866）",
   "Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges).": "关闭：仅使用配置了静态 IP 地址的设备。当广播被过滤时（VLAN、无线客户端隔离、LXC 或 Docker 网桥）很有用。",
   "Network interface for discovery": "用于设备发现的网络接口",
-  "IP address of the interface the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "UDP 发现套接字绑定的接口 IP 地址。留空表示所有接口，在拥有多个网络的主机上可能失败。",
   "JSON array of { duid, localKey, ip, pv }. The localKey is a device secret and is stored encrypted.": "由 { duid, localKey, ip, pv } 组成的 JSON 数组。localKey 是设备密钥，以加密方式存储。",
   "ui_device": "设备",
   "ui_floor": "楼层",
@@ -284,5 +283,6 @@
   "ui_state_offline": "离线",
   "ui_live_track": "实时轨迹",
   "ui_live_track_driven": "已行驶",
-  "ui_live_track_mopped": "已拖地"
+  "ui_live_track_mopped": "已拖地",
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "UDP 发现套接字绑定的 IP 地址或接口名称（例如 eth0）。留空表示所有接口，这在具有多个网络的主机上可能会失败。"
 }

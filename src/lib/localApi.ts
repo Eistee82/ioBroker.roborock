@@ -5,6 +5,7 @@ import * as dgram from "node:dgram";
 import { isIP, Socket, SocketConstructorOpts } from "node:net";
 import * as ping from "ping";
 import type { Roborock } from "../main";
+import { listBindableInterfaces, resolveInterfaceAddress } from "./networkInterfaces";
 
 const UDP_DISCOVERY_PORT = 58866;
 const TCP_CONNECTION_PORT = 58867;
@@ -1123,7 +1124,16 @@ export class local_api {
 		const trimmed = configured.trim();
 		if (trimmed === "" || trimmed === "0.0.0.0") return undefined;
 		if (isIP(trimmed) === 0) {
-			this.adapter.rLog("UDP", null, "Warn", "N/A", undefined, `Configured UDP bind address "${trimmed}" is not a valid IP address. Binding to all interfaces instead.`, "warn");
+			// "eth0" is the obvious thing to type on Linux, and on a container host it is the more
+			// stable answer than an IP that changes with the lease. Resolve it before complaining.
+			const resolved = resolveInterfaceAddress(trimmed);
+			if (resolved) {
+				this.adapter.rLog("UDP", null, "Info", "N/A", undefined, `UDP bind address "${trimmed}" resolved to ${resolved}.`, "debug");
+				return resolved;
+			}
+			const known = listBindableInterfaces();
+			const hint = known.length ? ` Known interfaces: ${known.join(", ")}.` : "";
+			this.adapter.rLog("UDP", null, "Warn", "N/A", undefined, `Configured UDP bind address "${trimmed}" is neither an IP address nor a network interface. Binding to all interfaces instead.${hint}`, "warn");
 			return undefined;
 		}
 		return trimmed;

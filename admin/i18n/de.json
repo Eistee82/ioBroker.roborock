@@ -183,7 +183,6 @@
   "Listen for device broadcasts (UDP 58866)": "Auf Geräte-Broadcasts hören (UDP 58866)",
   "Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges).": "Aus: Es werden nur Geräte mit statisch konfigurierter IP-Adresse verwendet. Hilfreich, wenn Broadcasts gefiltert werden (VLAN, WLAN-Client-Isolation, LXC- oder Docker-Bridges).",
   "Network interface for discovery": "Netzwerkschnittstelle für die Gerätesuche",
-  "IP address of the interface the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-Adresse der Schnittstelle, an die der UDP-Discovery-Socket gebunden wird. Leer bedeutet alle Schnittstellen, was auf Hosts mit mehreren Netzen fehlschlagen kann.",
   "JSON array of { duid, localKey, ip, pv }. The localKey is a device secret and is stored encrypted.": "JSON-Array aus { duid, localKey, ip, pv }. Der localKey ist ein Gerätegeheimnis und wird verschlüsselt gespeichert.",
   "ui_device": "Gerät",
   "ui_floor": "Etage",
@@ -284,5 +283,6 @@
   "ui_state_offline": "Offline",
   "ui_live_track": "Live-Spur",
   "ui_live_track_driven": "Gefahren",
-  "ui_live_track_mopped": "Gewischt"
+  "ui_live_track_mopped": "Gewischt",
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-Adresse oder Schnittstellenname (zum Beispiel eth0), an die der UDP-Discovery-Socket gebunden wird. Leer bedeutet alle Schnittstellen, was auf Hosts mit mehreren Netzen fehlschlagen kann."
 }

@@ -183,7 +183,6 @@
   "Listen for device broadcasts (UDP 58866)": "Слушать широковещательные пакеты устройств (UDP 58866)",
   "Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges).": "Выключено: используются только устройства со статически настроенным IP-адресом. Полезно, если широковещательные пакеты фильтруются (VLAN, изоляция клиентов Wi-Fi, мосты LXC или Docker).",
   "Network interface for discovery": "Сетевой интерфейс для поиска устройств",
-  "IP address of the interface the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-адрес интерфейса, к которому привязывается UDP-сокет обнаружения. Пусто означает все интерфейсы, что может не работать на хостах с несколькими сетями.",
   "JSON array of { duid, localKey, ip, pv }. The localKey is a device secret and is stored encrypted.": "JSON-массив из { duid, localKey, ip, pv }. localKey — секрет устройства, он хранится в зашифрованном виде.",
   "ui_device": "Устройство",
   "ui_floor": "Этаж",
@@ -284,5 +283,6 @@
   "ui_state_offline": "Не в сети",
   "ui_live_track": "Текущий маршрут",
   "ui_live_track_driven": "Пройдено",
-  "ui_live_track_mopped": "Вымыто"
+  "ui_live_track_mopped": "Вымыто",
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-адрес или имя интерфейса (например, eth0), к которому привязывается UDP-сокет обнаружения. Пусто означает все интерфейсы, что может не работать на хостах с несколькими сетями."
 }
