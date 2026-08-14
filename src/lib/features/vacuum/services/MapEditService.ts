@@ -79,7 +79,14 @@ export function applyRetryEnvelope(params: unknown, retrySupported: boolean): un
 	if (!retrySupported) return params;
 
 	if (Array.isArray(params)) {
-		return { data: params, need_retry: 1 } satisfies RetryEnvelope;
+		// Plain annotation instead of `satisfies`: the adapter ships TypeScript sources, and
+		// js-controller compiles them at startup with the esbuild bundled in its own
+		// node_modules. That copy is older than the running toolchain and rejects `satisfies`
+		// outright - "Expected ';' but found 'satisfies'" - which takes the whole instance down
+		// before it ever connects. Nothing here may use syntax newer than that esbuild knows,
+		// however green the local typecheck is.
+		const envelope: RetryEnvelope = { data: params, need_retry: 1 };
+		return envelope;
 	}
 	if (params !== null && typeof params === "object") {
 		return { ...(params as Record<string, unknown>), need_retry: 1 };
