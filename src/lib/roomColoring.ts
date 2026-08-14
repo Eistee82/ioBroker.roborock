@@ -7,10 +7,10 @@
  */
 export const PALETTE_LIGHT_NORMAL = [
 	"#DFDFDFff", // 0: Background
-	"#82BEFF", // 1: Pale Blue
-	"#FF9478", // 2: Pale Orange
-	"#2BCDBB", // 3: Pale Teal
-	"#FFCF4E", // 4: Pale Yellow
+	"#BCDAFC", // 1: Pale Blue
+	"#FAC6B6", // 2: Pale Orange
+	"#73EBE6", // 3: Pale Teal
+	"#FAE59E", // 4: Pale Yellow
 	"#E9E9E9ff", // 5: Fallback
 ];
 
@@ -21,10 +21,10 @@ export const PALETTE_LIGHT_NORMAL = [
  */
 export const PALETTE_LIGHT_HIGHLIGHT = [
 	"#DFDFDFff", // 0: Background
-	"#50A4FF", // 1: Roborock Blue
-	"#FF744D", // 2: Vibrant Orange
-	"#008FA8", // 3: Vibrant Teal
-	"#F5AF10", // 4: Vibrant Yellow
+	"#98C9FF", // 1: Roborock Blue
+	"#FFB196", // 2: Vibrant Orange
+	"#1FE7DB", // 3: Vibrant Teal
+	"#FFDD63", // 4: Vibrant Yellow
 	"#E9E9E9ff", // 5: Fallback
 ];
 
@@ -35,10 +35,10 @@ export const PALETTE_LIGHT_HIGHLIGHT = [
  */
 export const PALETTE_DARK_NORMAL = [
 	"#DFDFDFff", // 0: Background
-	"#4579B5", // 1: Dark Blue
-	"#C05A40", // 2: Dark Orange
-	"#007E81", // 3: Dark Teal
-	"#BD7C00", // 4: Dark Yellow
+	"#7596BC", // 1: Dark Blue
+	"#B06C54", // 2: Dark Orange
+	"#46BEB7", // 3: Dark Teal
+	"#B59C5C", // 4: Dark Yellow
 	"#E9E9E9ff", // 5: Fallback
 ];
 
@@ -49,10 +49,10 @@ export const PALETTE_DARK_NORMAL = [
  */
 export const PALETTE_DARK_HIGHLIGHT = [
 	"#DFDFDFff", // 0: Background
-	"#5394DF", // 1: Lighter Dark Blue
-	"#EA6B4B", // 2: Lighter Dark Orange
-	"#00B1B6", // 3: Lighter Dark Teal
-	"#E99900", // 4: Lighter Dark Yellow
+	"#73AAE9", // 1: Lighter Dark Blue
+	"#D97E5F", // 2: Lighter Dark Orange
+	"#25D1C7", // 3: Lighter Dark Teal
+	"#E5BE5A", // 4: Lighter Dark Yellow
 	"#E9E9E9ff", // 5: Fallback
 ];
 
