@@ -31,6 +31,13 @@ type Rule = { name: string; pattern: RegExp; since: string; instead: string };
 
 const FORBIDDEN: Rule[] = [
 	{
+		name: "inline type modifier in a named import",
+		// `import { A, type B }` and the multi-line form. `import type { B }` on its own is fine.
+		pattern: /^\s*type\s+[A-Za-z_$][\w$]*\s*,?\s*$|[{,]\s*type\s+[A-Za-z_$][\w$]*\s*[,}]/,
+		since: "TypeScript 4.5",
+		instead: "a separate `import type { X } from ...` statement"
+	},
+	{
 		name: "satisfies",
 		// Only the operator, not an identifier that happens to contain the word.
 		pattern: /(?<![\w.$])satisfies\s+[A-Z_$]/,

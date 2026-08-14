@@ -29,13 +29,16 @@ import { MapManager } from "./MapManager";
 import {
 	DYNAMIC_DATA_BUNDLE_ID,
 	DYNAMIC_DATA_METHOD,
-	type DynamicChannelState,
 	buildDynamicDataParams,
 	hasDynamicChannelChanged,
 	parseDynamicChannels,
 	parseDynamicDataResponse,
 	parseDynamicSnapshot
 } from "./dynamicData";
+// Separate statement on purpose: the esbuild that js-controller compiles this with does not
+// understand a `type` modifier inside a named import list and aborts the instance over it. Same
+// reason as the note in `v1/MapBuilder.ts`.
+import type { DynamicChannelState } from "./dynamicData";
 import { buildMapDiffParams, evaluateMapDiff, findOutdatedBlock, supportsIncrementalMap } from "./mapDiff";
 
 /** RPC the app uses to ask what changed since a given map nonce. */
