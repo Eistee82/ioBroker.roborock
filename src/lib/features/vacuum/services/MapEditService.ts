@@ -719,6 +719,81 @@ export function readMaxMultiMap(raw: unknown): number | null {
 	return Number.isInteger(max) && max > 0 ? max : null;
 }
 
+// ---------------------------------------------------------------------------
+// Splitting and merging rooms - `split_segment`, `merge_segment`
+// (report sections 1.3, 1.4 and 2.2)
+// ---------------------------------------------------------------------------
+
+/** `MAX_BLOCK_NO` (module 1507): a map holds at most this many segments. */
+export const MAX_BLOCK_NO = 32;
+
+/** A merge needs at least this many segments (`map_edit_merge_restriction`). */
+export const MIN_MERGE_SEGMENTS = 2;
+
+/**
+ * Reads a split request a user wrote into the command state.
+ *
+ * Report section 1.3: the parameter is `[blockID, x1, y1, x2, y2]` - the segment to divide and the
+ * two end points of the dividing line, in the robot's own millimetres. The app computes them as
+ * `50 * cell` with the y axis mirrored, which is the same unit the map states report.
+ * @param raw Value of the command state, already JSON-parsed by the adapter where possible.
+ * @returns The five numbers, validated.
+ * @throws If the value is not a well-formed split request.
+ */
+export function parseSplitSegment(raw: unknown): number[] {
+	if (!Array.isArray(raw) || raw.length !== 5) {
+		throw new Error("split_segment expects [segmentId, x1, y1, x2, y2]: the room to divide and the two end points of the dividing line, in millimetres.");
+	}
+
+	const values = raw.map((entry, index) => {
+		const value = typeof entry === "number" ? entry : Number(entry);
+		if (!Number.isFinite(value)) {
+			throw new Error(`split_segment value ${index} is not a number: ${JSON.stringify(entry)}`);
+		}
+		return Math.round(value);
+	});
+
+	if (values[0] < 0) {
+		throw new Error(`split_segment needs a segment id as its first value, got ${values[0]}.`);
+	}
+	if (values[1] === values[3] && values[2] === values[4]) {
+		throw new Error("split_segment needs a dividing line with two different end points.");
+	}
+	return values;
+}
+
+/**
+ * Reads a merge request a user wrote into the command state.
+ *
+ * Report section 1.4: the parameter is a flat array of segment ids, at least two of them. Whether
+ * they actually touch is left to the robot - the app checks it with a flood fill over the map's own
+ * adjacency, which the adapter does not have.
+ * @param raw Value of the command state, already JSON-parsed by the adapter where possible.
+ * @returns The segment ids, validated.
+ * @throws If the value is not a well-formed merge request.
+ */
+export function parseMergeSegment(raw: unknown): number[] {
+	if (!Array.isArray(raw)) {
+		throw new Error("merge_segment expects a JSON array of segment ids, for example [16,17].");
+	}
+
+	const ids = raw.map((entry, index) => {
+		const id = typeof entry === "number" ? entry : Number(entry);
+		if (!Number.isInteger(id) || id < 0) {
+			throw new Error(`merge_segment entry ${index} is not a segment id: ${JSON.stringify(entry)}`);
+		}
+		return id;
+	});
+
+	if (ids.length < MIN_MERGE_SEGMENTS) {
+		throw new Error(`merge_segment needs at least ${MIN_MERGE_SEGMENTS} rooms, got ${ids.length}.`);
+	}
+	if (new Set(ids).size !== ids.length) {
+		throw new Error(`merge_segment got the same room twice: [${ids.join(", ")}].`);
+	}
+	return ids;
+}
+
 /**
  * How the robot is meant to treat carpets (`CarPetCleanModeSettingMap`, report section 1.7).
  *
@@ -802,6 +877,9 @@ export class MapEditService {
 	/** Command that removes one wall or zone, or clears them all. */
 	public static readonly ZONE_REMOVE_COMMAND = "remove_map_zone";
 
+	/** The two commands that change segment ids and therefore invalidate room-bound settings. */
+	public static readonly SEGMENT_EDIT_COMMANDS: readonly string[] = ["split_segment", "merge_segment"];
+
 	/** Commands this service registers and handles. */
 	public static readonly COMMANDS: readonly string[] = [
 		"set_clean_sequence",
@@ -811,6 +889,7 @@ export class MapEditService {
 		"set_carpet_mode",
 		...Object.keys(MapEditService.ZONE_ADD_COMMANDS),
 		MapEditService.ZONE_REMOVE_COMMAND,
+		...MapEditService.SEGMENT_EDIT_COMMANDS,
 	];
 
 	/**
@@ -818,11 +897,15 @@ export class MapEditService {
 	 * @param duid Device this service belongs to.
 	 * @param getMapFlag Map an edit applies to when the payload does not name one; the feature class
 	 * knows the active map, the service does not.
+	 * @param onSegmentsChanged Re-reads the room states after a split or a merge. The segment ids
+	 * change during both (report section 2.2), so the states the adapter holds point nowhere until
+	 * they are read again.
 	 */
 	constructor(
 		private readonly deps: FeatureDependencies,
 		private readonly duid: string,
-		private readonly getMapFlag: () => number = () => 0
+		private readonly getMapFlag: () => number = () => 0,
+		private readonly onSegmentsChanged: () => Promise<void> = async () => {}
 	) {}
 
 	/**
@@ -899,10 +982,46 @@ export class MapEditService {
 			name: translations["remove_map_zone"] || "Remove a wall or zone ({\"kind\":\"no_go\",\"index\":0}, or \"all\")",
 			desc: translations["map_zone_write_hint"] || MapEditService.ZONE_WRITE_HINT_EN,
 		} as CommandSpec);
+
+		addCommand("split_segment", {
+			type: "json",
+			role: "json",
+			def: "",
+			name: translations["split_segment"] || "Divide a room ([segmentId, x1, y1, x2, y2] in mm)",
+			desc: this.segmentEditHint(),
+		} as CommandSpec);
+
+		addCommand("merge_segment", {
+			type: "json",
+			role: "json",
+			def: "",
+			name: translations["merge_segment"] || "Combine rooms ([segmentId, segmentId, ...])",
+			desc: this.segmentEditHint(),
+		} as CommandSpec);
 	}
 
 	/** English fallback for the note every zone command carries; see `map_zone_write_hint`. */
 	private static readonly ZONE_WRITE_HINT_EN = "The robot stores walls and zones as one set without ids, so every change rewrites all of them. The adapter reads the current set off the robot's map first and writes it back complete; if the map cannot be read, nothing is written. The current set is listed under mapEdit.zones, and the index used for removal is the position within its own list.";
+
+	/**
+	 * Roborock's own warning, `map_edit_segment_prompt`, plus what the adapter does about it.
+	 *
+	 * Report section 2.2: the app shows the first sentence whenever room-bound cleaning modes, a
+	 * cleaning order or room-bound schedules exist, because splitting and merging renumber the
+	 * segments (`RoomIdDidChanged`). Everything that referred to a room by its old id then refers to
+	 * nothing.
+	 * @returns The text for the state's description.
+	 */
+	private segmentEditHint(): string {
+		const translations = this.deps.adapter.translations;
+		return `${translations["map_edit_segment_prompt"] || MapEditService.SEGMENT_EDIT_WARNING_EN} ${translations["map_edit_segment_hint"] || MapEditService.SEGMENT_EDIT_HINT_EN}`;
+	}
+
+	/** Roborock's own wording of the warning; see `map_edit_segment_prompt`. */
+	private static readonly SEGMENT_EDIT_WARNING_EN = "After combining or dividing rooms, all related settings and schedules become invalid.";
+
+	/** What the adapter adds to that warning; see `map_edit_segment_hint`. */
+	private static readonly SEGMENT_EDIT_HINT_EN = "The reason is that the room IDs change. Room-bound cleaning modes, the cleaning order and schedules that name a room have to be set up again afterwards. The adapter re-reads the rooms and the map once the robot confirms the change.";
 
 	/** Whether the given command is handled by this service. */
 	public handles(method: string): boolean {
@@ -959,6 +1078,39 @@ export class MapEditService {
 
 		if (method === MapEditService.ZONE_REMOVE_COMMAND) {
 			return this.buildSaveMap((overlays) => this.removeZone(overlays, parseZoneRemoval(params)));
+		}
+
+		if (method === "split_segment") {
+			const info = parseSplitSegment(params);
+			const rooms = await this.readSegmentIds(method);
+
+			if (!rooms.has(info[0])) {
+				throw new Error(`split_segment: room ${info[0]} is not on the current map (known: ${[...rooms].join(", ")}).`);
+			}
+			// The report words the app's own check two ways: section 1.3 says "more than 31", while
+			// section 2.3 and `roborock_map_edit.json` both say "refused from 31 rooms on". Two of
+			// three say 31, and a split refused one room early costs nothing next to one the robot
+			// rejects after the fact, so 31 it is.
+			if (rooms.size >= MAX_BLOCK_NO - 1) {
+				throw new Error(`split_segment: the map already holds ${rooms.size} rooms, and the app stops offering a split from ${MAX_BLOCK_NO - 1} on (the firmware's limit is ${MAX_BLOCK_NO}). Combine two rooms first.`);
+			}
+
+			this.warnAboutSegmentEdit(`Dividing room ${info[0]} along ${info.slice(1).join(", ")}.`);
+			return { method, params: await this.wrap(method, info) };
+		}
+
+		if (method === "merge_segment") {
+			const ids = parseMergeSegment(params);
+			const rooms = await this.readSegmentIds(method);
+
+			const missing = ids.filter((id) => !rooms.has(id));
+			if (missing.length > 0) {
+				throw new Error(`merge_segment: room(s) ${missing.join(", ")} are not on the current map (known: ${[...rooms].join(", ")}).`);
+			}
+
+			// Whether the rooms touch is checked by the robot; the adapter has no adjacency to test.
+			this.warnAboutSegmentEdit(`Combining rooms ${ids.join(", ")}.`);
+			return { method, params: await this.wrap(method, ids) };
 		}
 
 		throw new Error(`MapEditService cannot build a request for '${method}'.`);
@@ -1185,6 +1337,36 @@ export class MapEditService {
 	}
 
 	/**
+	 * Reads which segments are on the current map, refusing to go on when it cannot.
+	 *
+	 * A split or a merge that names a room the robot does not have is at best rejected and at worst
+	 * applied to the wrong one; both are checked against what the robot itself reports rather than
+	 * against anything the adapter cached.
+	 * @param method The command being checked, for the error message.
+	 * @returns The segment ids on the current map.
+	 * @throws If the room list cannot be read.
+	 */
+	private async readSegmentIds(method: string): Promise<Set<number>> {
+		const mapping = await this.readRoomMapping(this.getMapFlag());
+		if (mapping.size === 0) {
+			throw new Error(`${method} needs the current room list, and get_room_mapping returned none. Wait until the map is loaded and try again - this call renumbers the rooms, so it must not be sent blind.`);
+		}
+		return new Set(mapping.keys());
+	}
+
+	/**
+	 * Repeats Roborock's own warning in the log before a split or a merge goes out.
+	 *
+	 * Report section 2.2: room-bound cleaning modes, the cleaning order and room-bound schedules all
+	 * refer to a segment id, and both calls renumber the segments. The app warns about this on
+	 * screen; the adapter has no screen, so it warns here and on the state itself.
+	 * @param what A sentence describing the change.
+	 */
+	private warnAboutSegmentEdit(what: string): void {
+		this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined, `${what} ${MapEditService.SEGMENT_EDIT_WARNING_EN} The room IDs change, so room-bound cleaning modes, the cleaning order and schedules that name a room have to be set up again. The rooms and the map are re-read once the robot confirms.`, "warn");
+	}
+
+	/**
 	 * Reads the current segment-to-cloud-room assignment from the robot.
 	 * @param mapFlag Map whose rooms are wanted.
 	 * @returns Segment id to what the robot knows about it.
@@ -1284,16 +1466,38 @@ export class MapEditService {
 	 * without an `id` is `retry_id_invalid`.
 	 *
 	 * Without this the call would simply be left hanging, so the outcome is logged either way.
+	 *
+	 * A confirmed `split_segment` or `merge_segment` also triggers the room refresh: the segment ids
+	 * have changed by then (report section 2.2) and the states the adapter holds point nowhere.
 	 * @param method The command that was deferred.
 	 * @param response Whatever the robot answered.
 	 */
 	public async resolveDeferredResult(method: string, response: unknown): Promise<void> {
+		const confirmed = await this.pollUntilConfirmed(method, response);
+
+		if (confirmed && MapEditService.SEGMENT_EDIT_COMMANDS.includes(method)) {
+			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined, `${method} finished; re-reading the rooms and the map because the segment IDs have changed.`, "info");
+			try {
+				await this.onSegmentsChanged();
+			} catch (e: unknown) {
+				this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined, `Could not re-read the rooms after ${method}: ${this.deps.adapter.errorMessage(e)}. The room states still carry the old segment IDs until the next update.`, "warn");
+			}
+		}
+	}
+
+	/**
+	 * Polls `retry_request` until the robot confirms a deferred call.
+	 * @param method The command that was sent.
+	 * @param response Whatever the robot answered.
+	 * @returns True when the call went through, false when it was deferred and never confirmed.
+	 */
+	private async pollUntilConfirmed(method: string, response: unknown): Promise<boolean> {
 		const retryId = readRetryId(response);
-		if (retryId === null) return;
+		if (retryId === null) return true;
 
 		if (retryId === undefined) {
 			this.deps.adapter.rLog("Requests", this.duid, "Error", "1.0", undefined, `${method}: the robot answered 'retry' without an id (retry_id_invalid).`, "error");
-			return;
+			return false;
 		}
 
 		for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
@@ -1308,16 +1512,17 @@ export class MapEditService {
 				});
 			} catch (e: unknown) {
 				this.deps.adapter.rLog("Requests", this.duid, "Error", "1.0", undefined, `${method}: retry_request ${attempt} failed: ${this.deps.adapter.errorMessage(e)}`, "error");
-				return;
+				return false;
 			}
 
 			if (readRetryId(result) === null) {
 				this.deps.adapter.rLog("Requests", this.duid, "Info", "1.0", undefined, `${method} confirmed after ${attempt} retry poll(s).`, "info");
-				return;
+				return true;
 			}
 		}
 
 		this.deps.adapter.rLog("Requests", this.duid, "Error", "1.0", undefined, `${method}: still unconfirmed after ${RETRY_MAX_ATTEMPTS} retry polls (reach_max_retry_count).`, "error");
+		return false;
 	}
 
 	/**

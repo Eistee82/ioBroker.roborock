@@ -78,7 +78,12 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.consumableService = new V1ConsumableService(this.deps, this.duid, this.profile);
 		this.stationService = new StationService(this.deps, this.duid);
 		this.mapService = new V1MapService(this.deps, this.duid);
-		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex());
+		// Splitting or merging rooms renumbers the segments, so everything the adapter holds about
+		// them is stale the moment the robot confirms; the service asks for a refresh at that point.
+		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex(), async () => {
+			await this.updateRoomMapping();
+			await this.updateMap();
+		});
 	}
 
 	/**

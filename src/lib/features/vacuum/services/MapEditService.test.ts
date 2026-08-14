@@ -14,13 +14,16 @@ import {
 	MAP_RECORD_TYPES,
 	MapEditService,
 	MATTER_FEATURE_BIT,
+	MAX_BLOCK_NO,
 	MAX_COUNT_WALL_OR_FBZ,
 	parseCarpetCleanMode,
 	parseCarpetMode,
 	parseCleanSequence,
 	parseFurnitures,
+	parseMergeSegment,
 	parseRoomMapping,
 	parseRoomNaming,
+	parseSplitSegment,
 	parseZoneInput,
 	parseZoneRemoval,
 	readMaxMultiMap,
@@ -879,6 +882,107 @@ describe("MapEditService", () => {
 		it("rejects anything that is not a settings object", () => {
 			expect(() => parseCarpetMode("on")).toThrow(/settings object/);
 			expect(() => parseCarpetMode([{ enable: 1 }, { enable: 0 }])).toThrow(/exactly one/);
+		});
+	});
+
+	describe("splitting and merging rooms (report sections 1.3, 1.4 and 2.2)", () => {
+		it("registers both states and puts Roborock's own warning on them", async () => {
+			const commands = (vacuum as any).commands;
+			expect(commands.split_segment.type).toBe("json");
+			expect(commands.merge_segment.type).toBe("json");
+
+			await vacuum.createCommandObjects();
+			for (const name of MapEditService.SEGMENT_EDIT_COMMANDS) {
+				const obj = mockAdapter.objects[`Devices.${mockRobot.duid}.commands.${name}`];
+				expect(obj.common.write).toBe(true);
+				// map_edit_segment_prompt, the text the app shows before the same operation.
+				expect(String(obj.common.desc)).toMatch(/settings and schedules become invalid|Einstellungen und Zeitpläne/i);
+			}
+		});
+
+		it("sends the five numbers of a split straight through", async () => {
+			const sent = await runCommand("split_segment", [3, 1000, 2000, 1000, 5000]);
+			expect(sent.method).toBe("split_segment");
+			expect(sent.params).toEqual([3, 1000, 2000, 1000, 5000]);
+		});
+
+		it("sends the flat list of ids of a merge", async () => {
+			const sent = await runCommand("merge_segment", [2, 3]);
+			expect(sent.method).toBe("merge_segment");
+			expect(sent.params).toEqual([2, 3]);
+		});
+
+		it("warns in the log, because the adapter has no screen to warn on", async () => {
+			const warnings: string[] = [];
+			const original = mockAdapter.rLog.bind(mockAdapter);
+			mockAdapter.rLog = (...args: any[]) => {
+				if (args[6] === "warn") warnings.push(String(args[5]));
+				return original(...(args as Parameters<typeof original>));
+			};
+
+			await runCommand("merge_segment", [2, 3]);
+
+			expect(warnings.some((line) => /settings and schedules become invalid/.test(line))).toBe(true);
+			expect(warnings.some((line) => /room IDs change/.test(line))).toBe(true);
+		});
+
+		it("re-reads the rooms and the map once the robot confirms", async () => {
+			await runCommand("split_segment", [3, 0, 0, 0, 1000]);
+
+			// The old segment ids point nowhere after a split (RoomIdDidChanged), so the room states
+			// have to be built again from what the robot reports now.
+			const after = mockRobot.seen.slice(mockRobot.seen.findIndex((entry) => entry.method === "split_segment"));
+			expect(after.map((entry) => entry.method)).toContain("get_room_mapping");
+			expect(after.map((entry) => entry.method)).toContain("get_map_v1");
+		});
+
+		it("re-reads them only after a deferred call was actually confirmed", async () => {
+			mockRobot.deferOnce.add("merge_segment");
+			mockRobot.retryPollsNeeded = 1;
+
+			await runCommand("merge_segment", [2, 3]);
+
+			const afterPoll = mockRobot.seen.slice(mockRobot.seen.map((entry) => entry.method).lastIndexOf("retry_request"));
+			expect(afterPoll.map((entry) => entry.method)).toContain("get_room_mapping");
+		});
+
+		it("refuses a room that is not on the map", async () => {
+			await expect(runCommand("split_segment", [99, 0, 0, 0, 1000])).rejects.toThrow(/not on the current map/);
+			await expect(runCommand("merge_segment", [2, 99])).rejects.toThrow(/not on the current map/);
+		});
+
+		it("refuses when the room list cannot be read, rather than renumber blind", async () => {
+			mockRobot.roomMapping = [];
+			await expect(runCommand("split_segment", [3, 0, 0, 0, 1000])).rejects.toThrow(/returned none/);
+			await expect(runCommand("merge_segment", [2, 3])).rejects.toThrow(/returned none/);
+		});
+
+		it("refuses a split once the map holds as many rooms as the app allows", async () => {
+			// The app stops offering a split from 31 rooms on; MAX_BLOCK_NO itself is 32.
+			mockRobot.roomMapping = Array.from({ length: MAX_BLOCK_NO - 1 }, (_, i) => [i + 1, String(i + 1), 12]);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).rejects.toThrow(/already holds 31 rooms/);
+
+			mockRobot.roomMapping = Array.from({ length: MAX_BLOCK_NO - 2 }, (_, i) => [i + 1, String(i + 1), 12]);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).resolves.toBeDefined();
+		});
+
+		it("wraps both payloads when the retry bit is set", async () => {
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, { val: RPC_RETRY_FEATURE_BIT, ack: true });
+
+			expect((await runCommand("split_segment", [3, 0, 0, 0, 1000])).params).toEqual({ data: [3, 0, 0, 0, 1000], need_retry: 1 });
+			expect((await runCommand("merge_segment", [2, 3])).params).toEqual({ data: [2, 3], need_retry: 1 });
+		});
+
+		it("rejects a malformed request instead of sending it", () => {
+			expect(() => parseSplitSegment([3, 0, 0])).toThrow(/expects \[segmentId/);
+			expect(() => parseSplitSegment([3, 0, 0, 0, "x"])).toThrow(/not a number/);
+			expect(() => parseSplitSegment([-1, 0, 0, 0, 1000])).toThrow(/segment id as its first value/);
+			expect(() => parseSplitSegment([3, 5, 5, 5, 5])).toThrow(/two different end points/);
+
+			expect(() => parseMergeSegment([16])).toThrow(/at least 2 rooms/);
+			expect(() => parseMergeSegment([16, 16])).toThrow(/same room twice/);
+			expect(() => parseMergeSegment("16,17")).toThrow(/JSON array/);
+			expect(() => parseMergeSegment([16, -1])).toThrow(/not a segment id/);
 		});
 	});
 
