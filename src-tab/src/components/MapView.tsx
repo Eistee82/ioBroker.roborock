@@ -282,16 +282,17 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			</Stack>
 
 			{/*
-			 * Bottom left: the controls, as one column of floating windows the way the app arranges
-			 * them - the settings above, the run controls under them.
+			 * Bottom left: the cleaning settings, on their own.
 			 *
 			 * They used to span the full width of the map, which put a wide band across the very
 			 * thing they control. Anchored to the left corner and sized by their content, they leave
 			 * the map's centre and right side free; `maxWidth` keeps them inside a narrow window
 			 * instead of letting them run past the edge.
+			 *
+			 * The run controls sit centred below, separately - see there for why they do not share
+			 * this column.
 			 */}
 			<Stack
-				spacing={1.5}
 				alignItems="flex-start"
 				sx={{
 					position: "absolute",
@@ -312,7 +313,30 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 						onCleanCountChange={onCleanCountChange}
 					/>
 				</FloatingSurface>
+			</Stack>
 
+			{/*
+			 * Bottom centre: the run controls, deliberately not in the column on the left.
+			 *
+			 * Start is the one control reached without looking, so it stays where the hand expects
+			 * it - centred, as in the app. The settings beside it are chosen deliberately and may
+			 * live in the corner; Start may not wander with them.
+			 *
+			 * Centred by translating half its own width, so the box stays centred whatever its
+			 * label says: "Start Zonenreinigung" is far wider than "Start". A full-width flex row
+			 * would do the same but would lay an invisible band across the map, and that band
+			 * swallows clicks meant for the rooms underneath.
+			 */}
+			<Box
+				sx={{
+					position: "absolute",
+					left: "50%",
+					bottom: 12,
+					transform: "translateX(-50%)",
+					maxWidth: "calc(100% - 24px)",
+					pointerEvents: "none"
+				}}
+			>
 				<FloatingSurface sx={{ maxWidth: "100%" }}>
 					<ActionDock
 						phase={status.phase}
@@ -330,7 +354,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 						onClearRooms={() => engineRef.current?.clearRooms()}
 					/>
 				</FloatingSurface>
-			</Stack>
+			</Box>
 
 			<ObstacleDialog
 				photo={photo}
