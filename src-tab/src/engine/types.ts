@@ -91,10 +91,20 @@ export interface ConsumableMetricModel {
 	text: string;
 }
 
+/**
+ * Which unit of the appliance a consumable sits in.
+ *
+ * The Roborock app splits its own supplies page into exactly these two sections; see
+ * `CONSUMABLE_GROUPS` in `consumables.ts` for where that is taken from.
+ */
+export type ConsumableGroup = "robot" | "station";
+
 /** One physical part, grouping every value the adapter publishes for it. */
 export interface ConsumablePartModel {
 	part: string;
 	name: string;
+	/** Robot part or station part - the panel shows the two under separate headings. */
+	group: ConsumableGroup;
 	metrics: ConsumableMetricModel[];
 	/** Remaining share of the declared lifetime, or null when no range is published. */
 	percent: number | null;

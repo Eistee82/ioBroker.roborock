@@ -33,8 +33,10 @@ import type { Furniture } from "@adapter/lib/map/v1/types";
  */
 export const ASSET_BASE = "../../files/roborock/assets";
 import { buildCleaningModeTabs } from "./cleaningModes";
+import { CONSUMABLE_LABEL_OVERRIDES, consumableGroup } from "./consumables";
 import type {
 	CleaningModeTab,
+	ConsumableGroup,
 	ConsumablePartModel,
 	DockControlModel,
 	DockStatusModel,
@@ -218,6 +220,8 @@ interface ConsumableMetric {
 interface ConsumablePart {
 	part: string;
 	name: string;
+	/** Robot part or station part; see `CONSUMABLE_GROUPS` in `consumables.ts`. */
+	group: ConsumableGroup;
 	metrics: ConsumableMetric[];
 	/** State name inside `resetConsumables`, or null when the device offers no reset. */
 	resetCommand: string | null;
@@ -1234,6 +1238,7 @@ export class MapEngine {
 				part = {
 					part: partName,
 					name: reset?.name || this.objectName(value.common?.name, partName),
+					group: consumableGroup(partName, stateName),
 					metrics: [],
 					resetCommand: reset?.command ?? null,
 				};
@@ -1258,6 +1263,10 @@ export class MapEngine {
 					metric.name = metric.name.slice(part.name.length).trim() || metric.name;
 				}
 			}
+
+			// Only now, because the stripping above matches against the adapter's own wording.
+			const override = CONSUMABLE_LABEL_OVERRIDES[part.part];
+			if (override) part.name = this.t(override.key, override.fallback);
 		}
 
 		this.updateConsumableValues();
@@ -1313,6 +1322,7 @@ export class MapEngine {
 			return {
 				part: part.part,
 				name: part.name,
+				group: part.group,
 				metrics,
 				percent: hasRange ? (percent ?? 0) : null,
 				due,

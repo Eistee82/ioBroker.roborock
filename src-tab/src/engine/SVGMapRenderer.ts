@@ -528,16 +528,22 @@ export class SVGMapRenderer implements IMapRenderer {
 			}
 			const left = hasBubble ? bubbleCenterX - bubbleRadius : -textWidth / 2;
 			const right = hasBubble ? textX + textWidth : textWidth / 2;
+			// A picked room is marked at its name, not across its floor: the floor is a bitmap the
+			// adapter renders, and this layer has no polygon to fill. So the badge has to carry the
+			// whole signal, and a 35% wash with a hairline edge did not - on a blue floor it read
+			// as a slightly different blue. It is now opaque, outlined in white and set wider than
+			// the text, which reads as "picked" even against the busiest part of the map.
 			label.select<SVGRectElement>("rect.room-label-selection")
 				.style("display", selectedSegmentIds?.has(d.segmentId) ? "" : "none")
-				.attr("x", left - 4)
-				.attr("y", -10)
-				.attr("width", Math.max(right - left, 0) + 8)
-				.attr("height", 20)
-				.attr("rx", 6)
-				.style("fill", "rgba(45, 156, 219, 0.35)")
-				.style("stroke", "#2d9cdb")
-				.style("stroke-width", "1.5px");
+				.attr("x", left - 7)
+				.attr("y", -12)
+				.attr("width", Math.max(right - left, 0) + 14)
+				.attr("height", 24)
+				.attr("rx", 8)
+				.style("fill", "rgba(29, 122, 189, 0.92)")
+				.style("stroke", "#ffffff")
+				.style("stroke-width", "2px")
+				.style("vector-effect", "non-scaling-stroke");
 		});
 	}
 
