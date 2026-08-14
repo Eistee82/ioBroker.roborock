@@ -36,7 +36,7 @@ import {
 	parseDynamicDataResponse,
 	parseDynamicSnapshot
 } from "./dynamicData";
-import { buildMapDiffParams, evaluateMapDiff, supportsIncrementalMap } from "./mapDiff";
+import { buildMapDiffParams, evaluateMapDiff, findOutdatedBlock, supportsIncrementalMap } from "./mapDiff";
 
 /** RPC the app uses to ask what changed since a given map nonce. */
 export const MAP_DIFF_METHOD = "get_dynamic_map_diff";
@@ -230,8 +230,25 @@ export class LiveMapPoller {
 		await this.refreshDynamicTrack(duid, raw, state);
 
 		const decision = evaluateMapDiff(raw, nonce);
+
+		// Second opinion, and the one that actually catches a frozen map. `evaluateMapDiff` believes
+		// the robot's `count` fields; measured at the device those stay 0 even after the entire map
+		// has been replaced, and a diff carrying a nonce the robot no longer knows is answered with
+		// zeros rather than an error. The per-channel nonces do not lie: if one of them moved, the
+		// map on screen is out of date no matter what the counts claim.
+		let outdated: string | null = null;
+		if (!decision.fetchFullMap) {
+			outdated = findOutdatedBlock(this.channelNonces(raw), MapManager.getBlockNonces(duid));
+		}
+
 		if (decision.nonceStale) {
 			MapManager.forgetMapNonce(duid);
+		}
+
+		if (outdated) {
+			this.adapter.rLog("MapManager", duid, "Debug", "1.0", undefined, `Live map: ${outdated}, fetching the full map although the diff reported no change.`, "debug");
+			await handler.updateMap();
+			return;
 		}
 
 		if (!decision.fetchFullMap) {
@@ -241,6 +258,19 @@ export class LiveMapPoller {
 
 		this.adapter.rLog("MapManager", duid, "Debug", "1.0", undefined, `Live map: ${decision.reason}, fetching the full map.`, "debug");
 		await handler.updateMap();
+	}
+
+	/**
+	 * Pulls the per-channel nonces out of a diff answer.
+	 * @param rawDiff The untouched `get_dynamic_map_diff` answer.
+	 * @returns Channel number to nonce; empty when the answer carries none.
+	 */
+	private channelNonces(rawDiff: unknown): Map<number, number> {
+		const nonces = new Map<number, number>();
+		for (const [channel, state] of parseDynamicChannels(rawDiff)) {
+			if (state.nonce > 0) nonces.set(channel, state.nonce);
+		}
+		return nonces;
 	}
 
 	/**

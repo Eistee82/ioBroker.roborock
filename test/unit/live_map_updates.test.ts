@@ -5,7 +5,9 @@ import { MapManager } from "../../src/lib/map/MapManager";
 import {
 	MAP_DIFF_COUNT,
 	evaluateMapDiff,
+	extractBlockNonces,
 	extractMapNonce,
+	findOutdatedBlock,
 	supportsIncrementalMap
 } from "../../src/lib/map/mapDiff";
 import { MockRobot } from "../../src/lib/mock/MockRobot";
@@ -108,6 +110,19 @@ describe("map nonce", () => {
 
 	it("returns null when the map carries no nonce entry", () => {
 		expect(extractMapNonce({ NONCEDATA: [{ type: 1, unixTime: 5 }] })).toBeNull();
+	});
+
+	it("treats a zero as no nonce, because the robot then reports nothing as changed", () => {
+		// Measured at the device: a map whose type-35 entry is 0 makes every later diff come back
+		// with `count: 0` for every block, even after the map has been replaced entirely. Passing
+		// the 0 on kept the poller on the incremental branch, where it concluded "nothing changed"
+		// forever and the shown map froze at the state it had when the zero first appeared.
+		expect(extractMapNonce({ NONCEDATA: [{ type: 35, unixTime: 0 }] })).toBeNull();
+		expect(extractMapNonce({ NONCEDATA: [{ type: 35, unixTime: -1 }] })).toBeNull();
+	});
+
+	it("still finds a later, valid entry when an earlier one is unusable", () => {
+		expect(extractMapNonce({ NONCEDATA: [{ type: 35, unixTime: 0 }, { type: 35, unixTime: 4242 }] })).toBe(4242);
 	});
 
 	it.each([[undefined], [null], [{}], [{ NONCEDATA: "nope" }]])("returns null for %s", (mapData) => {
@@ -410,5 +425,56 @@ describe("LiveMapPoller", () => {
 		env.poller.start();
 		await env.tick();
 		expect(env.diffCalls()).toHaveLength(1);
+	});
+});
+
+describe("per-channel nonces", () => {
+	it("reads the channel nonces and leaves out the map nonce itself", () => {
+		// Shape taken from the test device: entry type 35 is the map nonce, every other type is
+		// the channel number the diff answers under.
+		const map = {
+			NONCEDATA: [
+				{ type: 35, unixTime: 1786726275 },
+				{ type: 3, unixTime: 1786721586 },
+				{ type: 11, unixTime: 1786726193 }
+			]
+		};
+
+		const nonces = extractBlockNonces(map);
+		expect(nonces.get(3)).toBe(1786721586);
+		expect(nonces.get(11)).toBe(1786726193);
+		expect(nonces.has(35)).toBe(false);
+	});
+
+	it("skips entries that carry no usable nonce", () => {
+		const nonces = extractBlockNonces({ NONCEDATA: [{ type: 3, unixTime: 0 }, { type: 6, unixTime: "x" }, { type: 11, unixTime: 5 }] });
+		expect(nonces.has(3)).toBe(false);
+		expect(nonces.has(6)).toBe(false);
+		expect(nonces.get(11)).toBe(5);
+	});
+
+	it.each([[undefined], [null], [{}], [{ NONCEDATA: "nope" }]])("answers with an empty map for %s", (mapData) => {
+		expect(extractBlockNonces(mapData).size).toBe(0);
+	});
+
+	it("spots a channel whose nonce moved", () => {
+		const answer = new Map([[3, 999], [11, 5]]);
+		const held = new Map([[3, 111], [11, 5]]);
+		expect(findOutdatedBlock(answer, held)).toContain("channel 3");
+	});
+
+	it("stays quiet while every shared channel matches", () => {
+		const same = new Map([[3, 111], [11, 5]]);
+		expect(findOutdatedBlock(same, new Map(same))).toBeNull();
+	});
+
+	it("ignores channels the held map does not mention", () => {
+		// The robot lists channels it supports; the map only carries those it has data for. A
+		// channel missing from the map is not evidence that the map is stale.
+		expect(findOutdatedBlock(new Map([[42, 7]]), new Map([[3, 111]]))).toBeNull();
+	});
+
+	it("says nothing when no map is held yet", () => {
+		expect(findOutdatedBlock(new Map([[3, 999]]), new Map())).toBeNull();
 	});
 });

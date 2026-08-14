@@ -5,7 +5,7 @@ import { MapBuilder as MapBuilderB01 } from "./b01/MapBuilder";
 import { B01DeviceStatus, B01MapData, Q10RuntimeDebugSummary } from "./b01/types";
 import { Q10MapBuilder } from "./q10/Q10MapBuilder";
 import { Q10MapCreator } from "./q10/Q10MapCreator";
-import { extractMapNonce } from "./mapDiff";
+import { extractBlockNonces, extractMapNonce } from "./mapDiff";
 import { enrichSegmentNamesFromRoomStates, normalizeMapFlag } from "./roomKey";
 import { applyQ10PathOnlyToB01, applyQ10RuntimeStatePatch, mergeQ10RuntimeState } from "./q10/Q10YxMapParser";
 import type { Q10RuntimeStatePatch, Q10SourcePathPoint } from "./q10/types";
@@ -54,6 +54,9 @@ export class MapManager {
 	 */
 	private static readonly mapNonceByDevice = new Map<string, number>();
 
+	/** Per-channel nonces of the last map, keyed by duid; see {@link getBlockNonces}. */
+	private static readonly blockNoncesByDevice = new Map<string, Map<number, number>>();
+
 	/**
 	 * Nonce of the last complete V1 map parsed for a device.
 	 * @param duid Device Unique ID.
@@ -70,6 +73,16 @@ export class MapManager {
 	 */
 	public static forgetMapNonce(duid: string): void {
 		MapManager.mapNonceByDevice.delete(duid);
+		MapManager.blockNoncesByDevice.delete(duid);
+	}
+
+	/**
+	 * Per-channel nonces of the map last parsed for a device.
+	 * @param duid Device Unique ID.
+	 * @returns Channel number to nonce; empty when no map with nonces has been seen yet.
+	 */
+	public static getBlockNonces(duid: string): Map<number, number> {
+		return MapManager.blockNoncesByDevice.get(duid) ?? new Map();
 	}
 
 	constructor(adapter: Roborock) {
@@ -172,6 +185,17 @@ export class MapManager {
 						MapManager.mapNonceByDevice.delete(duid);
 					} else {
 						MapManager.mapNonceByDevice.set(duid, nonce);
+					}
+
+					// The per-channel nonces are what actually catches a stale map. The map nonce
+					// alone does not: a diff sent with one the robot no longer knows comes back
+					// with zeros everywhere instead of an error, and the poller then believes
+					// nothing changed for as long as the adapter runs.
+					const blockNonces = extractBlockNonces(mapData);
+					if (blockNonces.size) {
+						MapManager.blockNoncesByDevice.set(duid, blockNonces);
+					} else {
+						MapManager.blockNoncesByDevice.delete(duid);
 					}
 				}
 

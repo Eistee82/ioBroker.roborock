@@ -167,7 +167,68 @@ export function extractMapNonce(mapData: unknown): number | null {
 		const { type, unixTime } = entry as { type?: unknown; unixTime?: unknown };
 		if (type !== MAP_NONCE_ENTRY_TYPE) continue;
 		if (typeof unixTime !== "number" || !Number.isFinite(unixTime)) continue;
+		// A zero is the robot saying it has no nonce for this map yet, not a nonce of zero. Passing
+		// it on froze the map for good: measured at the device, a diff carrying nonce 0 comes back
+		// with `count: 0` for every block even when the whole map has been replaced in the
+		// meantime, so the poller concluded "nothing changed" on every single cycle and never
+		// fetched another map. Treating it as "no nonce" puts the device on the full-map branch,
+		// which is slower but correct.
+		if (unixTime <= 0) continue;
 		return unixTime;
+	}
+
+	return null;
+}
+
+/**
+ * Reads the per-block nonces out of a parsed V1 map.
+ *
+ * Besides the map nonce (entry type 35) the `NONCEDATA` block carries one entry per data channel,
+ * and its `type` is the channel number the diff answers under. Verified against the device: a map
+ * holding `{type: 3, unixTime: 1786721586}` gets a diff answer of `"3": {nonce: 1786721586, …}`,
+ * likewise for 11 and 15.
+ *
+ * This is the reliable way to notice that a map is out of date. The `count` fields cannot do it -
+ * measured while driving, they stay at 0 even when a channel grows, and a diff sent with a nonce
+ * the robot does not know comes back with zeros for everything rather than an error.
+ * @param mapData Parse result of `MapParser.parsedata`, or anything at all.
+ * @returns Channel number to nonce; empty when the map carries none.
+ */
+export function extractBlockNonces(mapData: unknown): Map<number, number> {
+	const result = new Map<number, number>();
+	if (!mapData || typeof mapData !== "object") return result;
+
+	const blocks = (mapData as { NONCEDATA?: unknown }).NONCEDATA;
+	if (!Array.isArray(blocks)) return result;
+
+	for (const entry of blocks) {
+		if (!entry || typeof entry !== "object") continue;
+		const { type, unixTime } = entry as { type?: unknown; unixTime?: unknown };
+		if (typeof type !== "number" || !Number.isInteger(type)) continue;
+		if (type === MAP_NONCE_ENTRY_TYPE) continue;
+		if (typeof unixTime !== "number" || !Number.isFinite(unixTime) || unixTime <= 0) continue;
+		result.set(type, unixTime);
+	}
+
+	return result;
+}
+
+/**
+ * Finds a channel whose nonce in the diff answer differs from the one in the map we hold.
+ *
+ * @param answerNonces Channel nonces the robot just reported.
+ * @param mapNonces Channel nonces of the map currently shown, from {@link extractBlockNonces}.
+ * @returns A loggable reason, or `null` when every shared channel still matches.
+ */
+export function findOutdatedBlock(answerNonces: Map<number, number>, mapNonces: Map<number, number>): string | null {
+	if (!mapNonces.size) return null;
+
+	for (const [channel, nonce] of answerNonces) {
+		const known = mapNonces.get(channel);
+		// A channel the map does not mention says nothing: the robot lists channels it supports,
+		// the map only those it carries data for.
+		if (known === undefined) continue;
+		if (known !== nonce) return `channel ${channel} moved from ${known} to ${nonce}`;
 	}
 
 	return null;
