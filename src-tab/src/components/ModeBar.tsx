@@ -26,8 +26,14 @@ interface ModeBarProps {
 	onCleanCountChange: (count: number) => void;
 }
 
-/** Edge length of an icon inside the switch bar. Large enough to read the pictogram at a glance. */
-const BAR_ICON_SIZE = 34;
+/**
+ * Edge length of an icon inside the switch bar.
+ *
+ * The artwork is 168px square, so this is a matter of taste and not of resolution. It went 20 -> 34
+ * -> 51 on the user's judgement; at 51 the pictogram carries the row the way it does in the app,
+ * and the panel's minimum width follows from it.
+ */
+const BAR_ICON_SIZE = 51;
 
 /**
  * The rows in the order the robot's own app lists them: suction, water, passes, route.
@@ -182,6 +188,7 @@ export function ModeBar({
 			>
 				<ToggleButtonGroup
 					exclusive
+					fullWidth
 					size="small"
 					// An unknown value must not light up the first step as if it were selected.
 					value={mode.value ?? null}
@@ -209,7 +216,8 @@ export function ModeBar({
 										py: 0.5,
 										// Without an icon the text carries the meaning and needs room;
 										// with one, a square keeps the row of pictograms even.
-										minWidth: icon ? BAR_ICON_SIZE + 12 : 0,
+										flex: 1,
+										minWidth: 0,
 										textTransform: "none",
 										lineHeight: 1,
 									}}
@@ -238,7 +246,16 @@ export function ModeBar({
 	};
 
 	return (
-		<Stack sx={{ p: `${PANEL_PADDING_PX}px`, gap: 1.5 }}>
+		/*
+		 * A minimum width, so every row is as wide as the widest one and its buttons share that
+		 * width evenly - the two passes each take half, as in the app. Without it the panel is
+		 * only as wide as its content, `fullWidth` then means "as wide as these two buttons
+		 * happen to be", and the rows end up ragged: five suction steps long, two passes short.
+		 *
+		 * The value covers five icon buttons at 34px plus their padding and the panel's own; a
+		 * row that needs more still grows, since this is a minimum and not a fixed width.
+		 */
+		<Stack sx={{ p: `${PANEL_PADDING_PX}px`, gap: 1.5, minWidth: 5 * (BAR_ICON_SIZE + 16) + 2 * PANEL_PADDING_PX }}>
 			{tabs.length ? (
 				<ModeRow
 					label={I18n.t("clean_mode_tab")}
@@ -246,6 +263,7 @@ export function ModeBar({
 				>
 					<ToggleButtonGroup
 						exclusive
+						fullWidth
 						size="small"
 						value={currentTab ? String(currentTab.mode) : null}
 						onChange={(_event, value) => {
@@ -266,7 +284,7 @@ export function ModeBar({
 									key={tab.mode}
 									value={String(tab.mode)}
 									aria-label={label}
-									sx={{ px: 1.25, py: 0.5, textTransform: "none", lineHeight: 1, gap: 0.5 }}
+									sx={{ flex: 1, px: 1.25, py: 0.5, textTransform: "none", lineHeight: 1, gap: 0.5 }}
 								>
 									{/* The app marks the active tab with a tick; the highlight alone is
 									    easy to miss on a bar that floats above a coloured map. */}
@@ -293,6 +311,7 @@ export function ModeBar({
 			>
 				<ToggleButtonGroup
 					exclusive
+					fullWidth
 					size="small"
 					value={String(cleanCount)}
 					onChange={(_event, value) => {
@@ -309,7 +328,7 @@ export function ModeBar({
 							// needs no translation. The spoken name is the full wording, so a screen
 							// reader says "2 passes" rather than "times two".
 							aria-label={I18n.t(count === 2 ? "ui_repeat_twice" : "ui_repeat_once")}
-							sx={{ px: 1.25, py: 0.5, minWidth: BAR_ICON_SIZE + 12, textTransform: "none", lineHeight: 1 }}
+							sx={{ flex: 1, px: 1.25, py: 0.5, minWidth: 0, textTransform: "none", lineHeight: 1 }}
 						>
 							<Typography
 								className="rr-numeric"
