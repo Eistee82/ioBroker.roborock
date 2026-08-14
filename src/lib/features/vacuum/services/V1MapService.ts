@@ -186,6 +186,9 @@ export class V1MapService {
 	 * are present on the loaded map, so rooms exist only where they are 100% assigned to that floor.
 	 */
 	public async updateRoomMapping(): Promise<boolean> {
+		// Runs before the request so the orphan state also disappears on devices whose
+		// get_room_mapping keeps failing.
+		await this.removeLegacyCleanCountState();
 		try {
 			let rawResult: any = null;
 			for (let i = 0; i < 3; i++) {
@@ -243,12 +246,34 @@ export class V1MapService {
 
 			// Ensure floors parent exists (single-map / empty multi-map devices may not get it from updateMultiMapsList)
 			await this.deps.ensureFolder(`Devices.${this.duid}.floors`);
-			await this.deps.ensureState(`Devices.${this.duid}.floors.cleanCount`, { name: "Clean count", type: "number", write: true, def: 1 });
 			return stored;
 		} catch (e: any) {
 			this.adapter.rLog("System", this.duid, "Warn", undefined, undefined, `Failed to update room mapping: ${e.message}`, "warn");
 		}
 		return false;
+	}
+
+	/**
+	 * Older adapter versions created a writable `floors.cleanCount` state. Nothing ever read it:
+	 * the repeat count actually used comes from `commands.set_clean_repeat_times` (falling back
+	 * to `deviceStatus.repeat`), and that command is the only one the firmware accepts — with a
+	 * range of 1..2. The orphan state suggested both a per-floor scope and an unlimited value
+	 * range, neither of which exists, so it is removed instead of wired up.
+	 */
+	private legacyCleanCountRemoved = false;
+	private async removeLegacyCleanCountState(): Promise<void> {
+		if (this.legacyCleanCountRemoved) return;
+		this.legacyCleanCountRemoved = true;
+
+		const stateId = `Devices.${this.duid}.floors.cleanCount`;
+		try {
+			const existing = await this.adapter.getObjectAsync(stateId);
+			if (!existing) return;
+			await this.adapter.delObjectAsync(stateId);
+			this.adapter.rLog("MapManager", this.duid, "Info", "1.0", undefined, "Removed the unused floors.cleanCount state; the repeat count is set through commands.set_clean_repeat_times (1 or 2).", "info");
+		} catch (e: unknown) {
+			this.adapter.rLog("MapManager", this.duid, "Debug", "1.0", undefined, `Could not remove legacy floors.cleanCount state: ${this.adapter.errorMessage(e)}`, "debug");
+		}
 	}
 
 	public async updateMultiMapsList(): Promise<any[] | null> {

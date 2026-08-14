@@ -10,7 +10,12 @@ declare global {
 			loginMethod: "email" | "password";
 			username: string;
 			password: string;
+			/** Poll cadence (seconds) while the robot is idle/docked. */
 			updateInterval: number;
+			/** Poll cadence (seconds) while the robot is cleaning or moving. Clamped to 2..60. */
+			activePollInterval?: number;
+			/** Upper bound (seconds) of the exponential backoff after failed polls. Clamped to 30..900. */
+			pollBackoffMaxInterval?: number;
 
 			enable_map_creation: boolean;
 			cameraPin: string;

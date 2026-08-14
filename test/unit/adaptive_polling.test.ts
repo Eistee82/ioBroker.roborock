@@ -14,7 +14,7 @@ type PollEnv = {
 	setDeviceState: (state: number) => void;
 };
 
-function createPollEnv(options: { updateInterval?: number } = {}): PollEnv {
+function createPollEnv(options: { updateInterval?: number; activePollInterval?: number; pollBackoffMaxInterval?: number } = {}): PollEnv {
 	let deviceState = IDLE_STATE;
 	let tickFn: (() => Promise<void>) | undefined;
 
@@ -30,7 +30,11 @@ function createPollEnv(options: { updateInterval?: number } = {}): PollEnv {
 	const devices = [{ duid: "duid-1", online: true, deviceStatus: {} }];
 
 	const adapter: any = {
-		config: { updateInterval: options.updateInterval ?? 60 },
+		config: {
+			updateInterval: options.updateInterval ?? 60,
+			activePollInterval: options.activePollInterval,
+			pollBackoffMaxInterval: options.pollBackoffMaxInterval
+		},
 		rLog: vi.fn(),
 		catchError: vi.fn(),
 		errorMessage: (e: unknown): string => (e instanceof Error ? e.message : String(e)),
@@ -165,6 +169,37 @@ describe("adaptive polling", () => {
 		await env.tick(20); // four more slow ticks (5s interval), device itself stays backed off
 		expect(env.adapter.updateDeviceInfo.mock.calls.length).toBeGreaterThan(infoCallsAfterFirst);
 		expect(env.handler.updateStatus).toHaveBeenCalledTimes(1);
+	});
+
+	it("honours the configured active cadence from the admin settings", async () => {
+		const slow = createPollEnv({ updateInterval: 60, activePollInterval: 20 });
+		slow.setDeviceState(CLEANING_STATE);
+		await slow.tick(60);
+
+		const fast = createPollEnv({ updateInterval: 60, activePollInterval: 2 });
+		fast.setDeviceState(CLEANING_STATE);
+		await fast.tick(60);
+
+		// 60s at 20s cadence -> a handful of polls; at 2s -> roughly ten times as many.
+		expect(slow.handler.updateStatus.mock.calls.length).toBeLessThanOrEqual(5);
+		expect(fast.handler.updateStatus.mock.calls.length).toBeGreaterThan(20);
+	});
+
+	it("honours the configured backoff cap after repeated failures", async () => {
+		const env = createPollEnv({ updateInterval: 60, pollBackoffMaxInterval: 900 });
+		env.handler.updateStatus.mockRejectedValue(new ChannelUnavailableError("down"));
+
+		await env.tick(1);
+		await env.tick(1000);
+		const withHighCap = env.handler.updateStatus.mock.calls.length;
+
+		const lowCap = createPollEnv({ updateInterval: 60, pollBackoffMaxInterval: 60 });
+		lowCap.handler.updateStatus.mockRejectedValue(new ChannelUnavailableError("down"));
+		await lowCap.tick(1);
+		await lowCap.tick(1000);
+
+		// A 60s cap retries far more often over the same outage than a 900s cap.
+		expect(lowCap.handler.updateStatus.mock.calls.length).toBeGreaterThan(withHighCap * 2);
 	});
 
 	it("drops all adaptive state when polling stops", async () => {
