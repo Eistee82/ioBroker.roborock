@@ -267,6 +267,7 @@ Beschreibbare Objekte in `Devices.<duid>.commands`.
 | `resume_zoned_clean` | Resume Zone Clean | `boolean` | `button` | `false` |  | 33/34 |
 | `set_clean_motor_mode` | Set Custom Cleaning Mode | `string` | `value` |  | modellabhängig | 33/34 |
 | `set_clean_repeat_times` | Clean Repeat Times | `number` | `value` | `1` | `1` = 1x<br>`2` = 2x | 33/34 |
+| `set_clean_sequence` | Cleaning order (segment IDs, [] resets) | `string` | `json` | `"[]"` |  | 33/34 |
 | `set_custom_mode` | Fan Power | `number` | `level` |  | modellabhängig | 33/34 |
 | `set_mop_mode` | Mop Mode | `number` | `level` |  | modellabhängig | 33/34 |
 | `set_voice_chat_volume` | Set Voice Chat Volume | `number` | `value` | `0` |  | 1/34 |
@@ -655,39 +656,39 @@ Der Adapter bringt 34 Modellprofile mit. Ein Roboter, dessen Modell-ID hier nich
 
 | Modell | Modell-ID | Protokoll | Befehlsobjekte | Funktionen |
 | --- | --- | --- | --- | --- |
-| Roborock S6 Pure (a08) | `roborock.vacuum.a08` | V1 | 19 | 2 |
-| Roborock S6 MaxV (a10) | `roborock.vacuum.a10` | V1 | 19 | 6 |
-| Roborock Q Revo Pro (a101) | `roborock.vacuum.a101` | V1 | 25 | 19 |
-| Roborock Qrevo S (a104) | `roborock.vacuum.a104` | V1 | 19 | 14 |
-| Roborock Qrevo Master (a117) | `roborock.vacuum.a117` | V1 | 24 | 22 |
-| Roborock Qrevo Curv (a135) | `roborock.vacuum.a135` | V1 | 24 | 29 |
-| Roborock Saros 10R (a144) | `roborock.vacuum.a144` | V1 | 24 | 23 |
-| Roborock Saros 10 (a147) | `roborock.vacuum.a147` | V1 | 24 | 28 |
-| Roborock S7 (a15) | `roborock.vacuum.a15` | V1 | 19 | 7 |
-| Roborock Qrevo Edge (a156) | `roborock.vacuum.a156` | V1 | 24 | 22 |
-| Roborock Qrevo Curv Series (a159) | `roborock.vacuum.a159` | V1 | 24 | 22 |
-| Roborock Qrevo L (a168) | `roborock.vacuum.a168` | V1 | 24 | 22 |
-| Roborock Saros Z70 (a179) | `roborock.vacuum.a179` | V1 | 165 | 28 |
-| Roborock Qrevo Edge Series (a187) | `roborock.vacuum.a187` | V1 | 24 | 22 |
-| Roborock S4 Max (a19) | `roborock.vacuum.a19` | V1 | 19 | 1 |
-| Roborock Qrevo Slim (a21) | `roborock.vacuum.a21` | V1 | 24 | 22 |
-| Roborock S7 MaxV (Pro/Ultra) (a27) | `roborock.vacuum.a27` | V1 | 24 | 24 |
-| Roborock Saros 20 (a288) | `roborock.vacuum.a288` | V1 | 24 | 28 |
-| Roborock Qrevo Edge 2 (a298) | `roborock.vacuum.a298` | V1 | 24 | 22 |
-| Roborock Q7 Max (a38) | `roborock.vacuum.a38` | V1 | 19 | 7 |
-| Roborock Q7 (a40) | `roborock.vacuum.a40` | V1 | 19 | 5 |
-| Roborock S8 (a51) | `roborock.vacuum.a51` | V1 | 19 | 14 |
-| Roborock S7 Pro Ultra (a62) | `roborock.vacuum.a62` | V1 | 19 | 10 |
-| Roborock S7 Max Ultra (a65) | `roborock.vacuum.a65` | V1 | 19 | 13 |
-| Roborock S8 Pro Ultra (a70) | `roborock.vacuum.a70` | V1 | 24 | 20 |
-| Roborock Q5 Pro (a72) | `roborock.vacuum.a72` | V1 | 19 | 14 |
-| Roborock Q8 Max (a73) | `roborock.vacuum.a73` | V1 | 19 | 14 |
-| Roborock Q Revo (a75) | `roborock.vacuum.a75` | V1 | 19 | 17 |
-| Roborock Qrevo MaxV (a87) | `roborock.vacuum.a87` | V1 | 20 | 23 |
-| Roborock S8 MaxV Ultra (a97) | `roborock.vacuum.a97` | V1 | 24 | 28 |
-| Roborock S4 | `roborock.vacuum.s4` | V1 | 19 | 0 |
-| Roborock S5 Max | `roborock.vacuum.s5e` | V1 | 19 | 3 |
-| Roborock S6 | `roborock.vacuum.s6` | V1 | 19 | 3 |
+| Roborock S6 Pure (a08) | `roborock.vacuum.a08` | V1 | 20 | 2 |
+| Roborock S6 MaxV (a10) | `roborock.vacuum.a10` | V1 | 20 | 6 |
+| Roborock Q Revo Pro (a101) | `roborock.vacuum.a101` | V1 | 26 | 19 |
+| Roborock Qrevo S (a104) | `roborock.vacuum.a104` | V1 | 20 | 14 |
+| Roborock Qrevo Master (a117) | `roborock.vacuum.a117` | V1 | 25 | 22 |
+| Roborock Qrevo Curv (a135) | `roborock.vacuum.a135` | V1 | 25 | 29 |
+| Roborock Saros 10R (a144) | `roborock.vacuum.a144` | V1 | 25 | 23 |
+| Roborock Saros 10 (a147) | `roborock.vacuum.a147` | V1 | 25 | 28 |
+| Roborock S7 (a15) | `roborock.vacuum.a15` | V1 | 20 | 7 |
+| Roborock Qrevo Edge (a156) | `roborock.vacuum.a156` | V1 | 25 | 22 |
+| Roborock Qrevo Curv Series (a159) | `roborock.vacuum.a159` | V1 | 25 | 22 |
+| Roborock Qrevo L (a168) | `roborock.vacuum.a168` | V1 | 25 | 22 |
+| Roborock Saros Z70 (a179) | `roborock.vacuum.a179` | V1 | 166 | 28 |
+| Roborock Qrevo Edge Series (a187) | `roborock.vacuum.a187` | V1 | 25 | 22 |
+| Roborock S4 Max (a19) | `roborock.vacuum.a19` | V1 | 20 | 1 |
+| Roborock Qrevo Slim (a21) | `roborock.vacuum.a21` | V1 | 25 | 22 |
+| Roborock S7 MaxV (Pro/Ultra) (a27) | `roborock.vacuum.a27` | V1 | 25 | 24 |
+| Roborock Saros 20 (a288) | `roborock.vacuum.a288` | V1 | 25 | 28 |
+| Roborock Qrevo Edge 2 (a298) | `roborock.vacuum.a298` | V1 | 25 | 22 |
+| Roborock Q7 Max (a38) | `roborock.vacuum.a38` | V1 | 20 | 7 |
+| Roborock Q7 (a40) | `roborock.vacuum.a40` | V1 | 20 | 5 |
+| Roborock S8 (a51) | `roborock.vacuum.a51` | V1 | 20 | 14 |
+| Roborock S7 Pro Ultra (a62) | `roborock.vacuum.a62` | V1 | 20 | 10 |
+| Roborock S7 Max Ultra (a65) | `roborock.vacuum.a65` | V1 | 20 | 13 |
+| Roborock S8 Pro Ultra (a70) | `roborock.vacuum.a70` | V1 | 25 | 20 |
+| Roborock Q5 Pro (a72) | `roborock.vacuum.a72` | V1 | 20 | 14 |
+| Roborock Q8 Max (a73) | `roborock.vacuum.a73` | V1 | 20 | 14 |
+| Roborock Q Revo (a75) | `roborock.vacuum.a75` | V1 | 20 | 17 |
+| Roborock Qrevo MaxV (a87) | `roborock.vacuum.a87` | V1 | 21 | 23 |
+| Roborock S8 MaxV Ultra (a97) | `roborock.vacuum.a97` | V1 | 25 | 28 |
+| Roborock S4 | `roborock.vacuum.s4` | V1 | 20 | 0 |
+| Roborock S5 Max | `roborock.vacuum.s5e` | V1 | 20 | 3 |
+| Roborock S6 | `roborock.vacuum.s6` | V1 | 20 | 3 |
 | roborock.vacuum.sc01 | `roborock.vacuum.sc01` | B01 | 16 | 0 |
 
 <!-- END:models -->

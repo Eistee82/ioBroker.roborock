@@ -13,6 +13,22 @@ export class MockRobot {
 	public roomMapping: any[];
 	public timers: any[];
 
+	/** Ordered segment ids of the cleaning sequence; empty means "robot decides". */
+	public cleanSequence: number[] = [];
+
+	/**
+	 * Makes the robot defer the next call to one of these methods with `{result: "retry", id}`,
+	 * the way firmware with feature bit 26 does. The entry is consumed on the first call.
+	 */
+	public deferOnce = new Set<string>();
+	/** Retry ids handed out by {@link deferOnce}, and how many polls each still needs. */
+	private pendingRetries = new Map<number, number>();
+	private nextRetryId = 1000;
+	/** How many `retry_request` polls a deferred call needs before it reports success. */
+	public retryPollsNeeded = 1;
+	/** Every request the robot saw, for payload assertions. */
+	public readonly seen: { method: string; params: any }[] = [];
+
 	constructor(duid: string = MOCK_ROBOT_DATA.duid, model: string = MOCK_ROBOT_DATA.model) {
 		this.duid = duid;
 		this.model = model;
@@ -31,8 +47,26 @@ export class MockRobot {
 		}
 	}
 
-	public handleRequest(method: string, params: any[] = []): any {
+	public handleRequest(method: string, params: any = []): any {
+		this.seen.push({ method, params });
+
+		if (method === "retry_request") {
+			return this.handleRetryRequest(params);
+		}
+
+		if (this.deferOnce.has(method)) {
+			this.deferOnce.delete(method);
+			const retryId = this.nextRetryId++;
+			this.pendingRetries.set(retryId, this.retryPollsNeeded);
+			return { result: "retry", id: retryId };
+		}
+
 		switch (method) {
+			case "get_clean_sequence":
+				return this.cleanSequence;
+			case "set_clean_sequence":
+				this.cleanSequence = MockRobot.unwrapRetryEnvelope(params) as number[];
+				return ["ok"];
 			case "get_prop":
 				return this.handleGetProp(params);
 			case "get_status":
@@ -80,6 +114,38 @@ export class MockRobot {
 				// Return generic success for unknown commands to prevent crashes
 				return ["ok"];
 		}
+	}
+
+	/**
+	 * Strips the `{data, need_retry}` envelope firmware with feature bit 26 expects, so payload
+	 * assertions can look at the parameters the method itself defines.
+	 * @param params Raw parameters as received.
+	 * @returns The unwrapped payload.
+	 */
+	public static unwrapRetryEnvelope(params: any): any {
+		if (params && typeof params === "object" && !Array.isArray(params) && "need_retry" in params) {
+			return "data" in params ? params.data : params;
+		}
+		return params;
+	}
+
+	/**
+	 * Answers a `retry_request` poll: still `retry` until the configured number of polls is reached,
+	 * then `["ok"]`.
+	 * @param params `{retry_id, method, retry_count}`.
+	 * @returns The poll answer.
+	 */
+	private handleRetryRequest(params: any): any {
+		const retryId = params?.retry_id;
+		const remaining = this.pendingRetries.get(retryId);
+		if (remaining === undefined) return ["unknown_id"];
+
+		if (remaining <= 1) {
+			this.pendingRetries.delete(retryId);
+			return ["ok"];
+		}
+		this.pendingRetries.set(retryId, remaining - 1);
+		return { result: "retry", id: retryId };
 	}
 
 	/**

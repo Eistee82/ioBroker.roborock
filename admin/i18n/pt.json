@@ -115,6 +115,7 @@
   "sensor_dirty_time": "Tempo desde a última limpeza dos sensores",
   "set_carpet_clean_mode": "Modo de evitar carpetes",
   "set_carpet_mode": "Impulso de carpete",
+  "set_clean_sequence": "Ordem de limpeza (IDs de segmento, [] repõe)",
   "set_custom_mode": "Defina o modo personalizado ou potência de sucção",
   "set_dust_collection_mode": "Empty Mode",
   "set_dust_collection_switch_status": "Auto Emptying",

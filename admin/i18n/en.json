@@ -115,6 +115,7 @@
   "sensor_dirty_time": "Time since last cleaning of sensors",
   "set_carpet_clean_mode": "Carpet Avoidance Mode",
   "set_carpet_mode": "Carpet Boost",
+  "set_clean_sequence": "Cleaning order (segment IDs, [] resets)",
   "set_custom_mode": "Set custom mode or suction power",
   "set_dust_collection_mode": "Empty Mode",
   "set_dust_collection_switch_status": "Auto Emptying",

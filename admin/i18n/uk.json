@@ -115,6 +115,7 @@
   "sensor_dirty_time": "Час після останнього очищення датчиків",
   "set_carpet_clean_mode": "Режим уникнення килимів",
   "set_carpet_mode": "Carpet Boost",
+  "set_clean_sequence": "Порядок прибирання (ID сегментів, [] скидає)",
   "set_custom_mode": "Встановіть індивідуальний режим або потужність всмоктування",
   "set_dust_collection_mode": "Empty Mode",
   "set_dust_collection_switch_status": "Auto Emptying",

@@ -115,6 +115,7 @@
   "sensor_dirty_time": "Время с момента последней очистки датчиков",
   "set_carpet_clean_mode": "Режим предотвращения ковров",
   "set_carpet_mode": "Ковровое усиление",
+  "set_clean_sequence": "Порядок уборки (ID сегментов, [] сбрасывает)",
   "set_custom_mode": "Установите собственный режим или мощность всасывания.",
   "set_dust_collection_mode": "Empty Mode",
   "set_dust_collection_switch_status": "Auto Emptying",

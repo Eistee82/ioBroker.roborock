@@ -115,6 +115,7 @@
   "sensor_dirty_time": "Zeit seit der letzten Reinigung der Sensoren",
   "set_carpet_clean_mode": "Teppichvermeidungsmodus",
   "set_carpet_mode": "Teppich-Boost",
+  "set_clean_sequence": "Reinigungsreihenfolge (Segment-IDs, [] setzt zurück)",
   "set_custom_mode": "Stellen Sie den benutzerdefinierten Modus oder die Saugleistung ein",
   "set_dust_collection_mode": "Entleerungsmodus",
   "set_dust_collection_switch_status": "Automatisches Entleeren",

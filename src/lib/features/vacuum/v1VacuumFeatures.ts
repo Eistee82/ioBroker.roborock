@@ -1,6 +1,7 @@
 import PQueue from "p-queue";
 import { BaseDeviceFeatures, DeviceModelConfig, FeatureDependencies } from "../baseDeviceFeatures";
 import { Feature } from "../features.enum";
+import { MapEditService } from "./services/MapEditService";
 import { StationService } from "./services/StationService";
 import { V1ConsumableService } from "./services/V1ConsumableService";
 import { V1MapService } from "./services/V1MapService";
@@ -66,6 +67,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected detectionComplete = false;
 
 	protected mapService: V1MapService;
+	protected mapEditService: MapEditService;
 
 	constructor(dependencies: FeatureDependencies, duid: string, robotModel: string, config: DeviceModelConfig = { staticFeatures: [] }, profile: VacuumProfile = DEFAULT_PROFILE) {
 		super(dependencies, duid, robotModel, config);
@@ -76,6 +78,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.consumableService = new V1ConsumableService(this.deps, this.duid, this.profile);
 		this.stationService = new StationService(this.deps, this.duid);
 		this.mapService = new V1MapService(this.deps, this.duid);
+		this.mapEditService = new MapEditService(this.deps, this.duid);
 	}
 
 	/**
@@ -227,6 +230,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			def: 1,
 			states: { 1: "1x", 2: "2x" }
 		});
+
+		this.mapEditService.registerCommands((name, spec) => this.addCommand(name, spec));
 	}
 
 	public async detectAndApplyRuntimeFeatures(statusData: Readonly<Record<string, any>>): Promise<boolean> {
@@ -326,7 +331,18 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		await this.mapService.updateRoomMapping();
 	}
 
+	public override async onCommandResult(requestedMethod: string, finalMethod: string, response: unknown, params?: unknown): Promise<void> {
+		await super.onCommandResult(requestedMethod, finalMethod, response, params);
+		if (this.mapEditService.handles(requestedMethod)) {
+			await this.mapEditService.resolveDeferredResult(finalMethod, response);
+		}
+	}
+
 	public override async getCommandParams(method: string, params?: unknown, id?: string): Promise<unknown> {
+		if (this.mapEditService.handles(method)) {
+			return this.mapEditService.buildRequest(method, params);
+		}
+
 		if (method === "reset_consumable" && id) {
 			const obj = await this.deps.adapter.getObjectAsync(id);
 			if (obj && obj.native && obj.native.resetParam) {

@@ -115,6 +115,7 @@
   "sensor_dirty_time": "Tijd sinds de laatste reiniging van sensoren",
   "set_carpet_clean_mode": "Tapijtvermijdingsmodus",
   "set_carpet_mode": "Tapijtboost",
+  "set_clean_sequence": "Schoonmaakvolgorde (segment-ID's, [] zet terug)",
   "set_custom_mode": "Stel de aangepaste modus of zuigkracht in",
   "set_dust_collection_mode": "Empty Mode",
   "set_dust_collection_switch_status": "Auto Emptying",

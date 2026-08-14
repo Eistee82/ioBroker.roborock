@@ -115,6 +115,7 @@
   "sensor_dirty_time": "Temps écoulé depuis le dernier nettoyage des capteurs",
   "set_carpet_clean_mode": "Mode d'évitement de tapis",
   "set_carpet_mode": "Boost de tapis",
+  "set_clean_sequence": "Ordre de nettoyage (ID de segments, [] réinitialise)",
   "set_custom_mode": "Définir le mode personnalisé ou la puissance d'aspiration",
   "set_dust_collection_mode": "Empty Mode",
   "set_dust_collection_switch_status": "Auto Emptying",
