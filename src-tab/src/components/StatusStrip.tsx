@@ -1,15 +1,18 @@
 import React from "react";
-import { Box, Chip, Stack, Typography } from "@mui/material";
+import { Box, Chip, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import BatteryFullIcon from "@mui/icons-material/BatteryFull";
 import CropFreeIcon from "@mui/icons-material/CropFree";
 import ScheduleIcon from "@mui/icons-material/Schedule";
 import LanIcon from "@mui/icons-material/Lan";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import CenterFocusStrongIcon from "@mui/icons-material/CenterFocusStrong";
 import { I18n } from "@iobroker/adapter-react-v5";
 import type { StatusModel } from "../engine/types";
 
 interface StatusStripProps {
 	status: StatusModel;
+	/** Returns the map to the fit that was computed for it. */
+	onResetZoom: () => void;
 }
 
 /**
@@ -38,8 +41,13 @@ function Reading({ icon, label, value }: { icon: React.ReactNode; label: string;
 /**
  * The live readings of the selected robot. Everything is already resolved by the engine, so
  * this component never has to know a state code or a model.
+ *
+ * The view reset sits at the end of the strip rather than with the run controls: it changes what is
+ * *shown*, not what the robot does, and everything else that only looks at the map - which robot,
+ * which floor, which channel - is up here as well. In the bottom panel it stood among Start, Stop
+ * and Dock, where the only harmless button was the one that looked like the rest of them.
  */
-export function StatusStrip({ status }: StatusStripProps): React.JSX.Element {
+export function StatusStrip({ status, onResetZoom }: StatusStripProps): React.JSX.Element {
 	return (
 		<Stack
 			direction="row"
@@ -78,6 +86,16 @@ export function StatusStrip({ status }: StatusStripProps): React.JSX.Element {
 					value={status.connectionChannel}
 				/>
 			) : null}
+
+			<Tooltip title={I18n.t("ui_reset_view")}>
+				<IconButton
+					size="small"
+					aria-label={I18n.t("ui_reset_view")}
+					onClick={onResetZoom}
+				>
+					<CenterFocusStrongIcon fontSize="small" />
+				</IconButton>
+			</Tooltip>
 
 			{status.errorText ? (
 				<Chip

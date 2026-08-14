@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Divider, IconButton, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { Button, Divider, IconButton, Stack, Tooltip } from "@mui/material";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PauseIcon from "@mui/icons-material/Pause";
 import StopIcon from "@mui/icons-material/Stop";
@@ -8,11 +8,10 @@ import PlaceIcon from "@mui/icons-material/Place";
 import CloseIcon from "@mui/icons-material/Close";
 import AddIcon from "@mui/icons-material/Add";
 import RemoveIcon from "@mui/icons-material/Remove";
-import CenterFocusStrongIcon from "@mui/icons-material/CenterFocusStrong";
-import CleaningServicesIcon from "@mui/icons-material/CleaningServices";
 import BackspaceIcon from "@mui/icons-material/Backspace";
 import { I18n } from "@iobroker/adapter-react-v5";
 import type { RobotPhase, RoomSelectionModel, ZoneModel } from "../engine/types";
+import { PANEL_PADDING_PX } from "./FloatingSurface";
 
 interface ActionDockProps {
 	/** What the robot is doing; decides which of Start / Resume / Pause / Stop / Dock is shown. */
@@ -20,7 +19,6 @@ interface ActionDockProps {
 	goToActive: boolean;
 	rooms: RoomSelectionModel;
 	zones: ZoneModel;
-	cleanCount: number;
 	onStart: () => void;
 	onPause: () => void;
 	onStop: () => void;
@@ -28,10 +26,47 @@ interface ActionDockProps {
 	onToggleGoTo: () => void;
 	onAddZone: () => void;
 	onRemoveZone: () => void;
-	onCleanCountChange: (count: number) => void;
+	/** Starts a segment run for the rooms picked in the map. */
 	onCleanRooms: () => void;
 	onClearRooms: () => void;
-	onResetZoom: () => void;
+}
+
+/**
+ * What pressing Start would actually do, and therefore what it has to be called.
+ *
+ * The button used to say "Start" no matter what was drawn or picked on the map, while a second
+ * button next to it cleaned the selected rooms. Two buttons for one intent is one too many, so the
+ * run button now names its job.
+ *
+ * ## Zones win over rooms when both exist
+ *
+ * There is one RPC per run - `app_zoned_clean` and `app_segment_clean` are alternatives, not a
+ * pair - so with zones drawn *and* rooms picked something has to give. It is the rooms, for two
+ * reasons:
+ *
+ *  - The engine already resolves it that way: {@link MapEngine.start} sends `app_zoned_clean`
+ *    whenever a zone exists. A label that promised room cleaning while the engine cleaned zones
+ *    would be a lie, and a second, contradictory rule in the shell is worse than one rule in
+ *    one place.
+ *  - A zone is a rectangle the user drew a moment ago and can still see on the map; a room
+ *    highlight survives longer and is the likelier leftover. Cleaning the smaller, freshly drawn
+ *    thing is also the cheaper mistake to correct.
+ *
+ * The app never gets into this situation - drawing a zone and picking rooms are two different
+ * bottom-menu modes there - which is why there is no app behaviour to copy here.
+ *
+ * @param rooms Room selection of the current map.
+ * @param zones Zones drawn on the current map.
+ * @returns Translation key of the label, and which callback the button belongs to.
+ */
+export function startIntent(rooms: RoomSelectionModel, zones: ZoneModel): { labelKey: string; target: "zones" | "rooms" | "all" } {
+	if (zones.count > 0) {
+		return { labelKey: "ui_start_zones", target: "zones" };
+	}
+	if (rooms.selected > 0) {
+		return { labelKey: "ui_start_rooms", target: "rooms" };
+	}
+	return { labelKey: "ui_start", target: "all" };
 }
 
 /**
@@ -63,6 +98,10 @@ interface ActionDockProps {
  *             → Start and Dock, deliberately: an empty control bar is worse than one button
  *               too many, and guessing must never take a working control away.
  *
+ * Resume is deliberately *not* renamed after zones or rooms: it continues the run the robot is
+ * already in, and that run was started with whatever was drawn back then. See {@link startIntent}
+ * for the naming of Start itself.
+ *
  * @param props
  */
 export function ActionDock(props: ActionDockProps): React.JSX.Element {
@@ -75,6 +114,10 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 	const showStop = phase === "cleaning" || phase === "paused" || phase === "returning";
 	const showDock = phase !== "docked" && phase !== "returning";
 
+	const intent = startIntent(rooms, zones);
+	// The engine turns Start into a zoned run by itself; only the segment run is a separate call.
+	const onStartClick = intent.target === "rooms" ? props.onCleanRooms : props.onStart;
+
 	return (
 		<Stack
 			direction="row"
@@ -82,7 +125,7 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 			alignItems="center"
 			flexWrap="wrap"
 			useFlexGap
-			sx={{ px: 1.5, py: 1.25 }}
+			sx={{ p: `${PANEL_PADDING_PX}px` }}
 		>
 			{showPause ? (
 				<Button
@@ -109,9 +152,9 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 					variant="contained"
 					color="primary"
 					startIcon={<PlayArrowIcon />}
-					onClick={props.onStart}
+					onClick={onStartClick}
 				>
-					{I18n.t("ui_start")}
+					{I18n.t(intent.labelKey)}
 				</Button>
 			) : null}
 
@@ -142,14 +185,6 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 					onClick={props.onToggleGoTo}
 				>
 					{props.goToActive ? <CloseIcon /> : <PlaceIcon />}
-				</IconButton>
-			</Tooltip>
-			<Tooltip title={I18n.t("ui_reset_view")}>
-				<IconButton
-					aria-label={I18n.t("ui_reset_view")}
-					onClick={props.onResetZoom}
-				>
-					<CenterFocusStrongIcon />
 				</IconButton>
 			</Tooltip>
 
@@ -183,38 +218,13 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 					</IconButton>
 				</span>
 			</Tooltip>
-			{/* Two passes at most: the adapter command `set_clean_repeat_times` allows no more. */}
-			<TextField
-				select
-				size="small"
-				label={I18n.t("ui_repeat")}
-				value={String(props.cleanCount)}
-				onChange={event => props.onCleanCountChange(Number(event.target.value))}
-				// The longest translation is the German "2 Durchgänge". A fixed width truncated it,
-				// and the surrounding flex row shrank the field further, so give it a floor and
-				// keep it out of the shrinking.
-				sx={{ minWidth: 168, flexShrink: 0 }}
-			>
-				<MenuItem value="1">{I18n.t("ui_repeat_once")}</MenuItem>
-				<MenuItem value="2">{I18n.t("ui_repeat_twice")}</MenuItem>
-			</TextField>
 
 			<Divider
 				orientation="vertical"
 				flexItem
 			/>
 
-			{/* Rooms */}
-			<Button
-				variant="outlined"
-				color="secondary"
-				startIcon={<CleaningServicesIcon />}
-				disabled={rooms.selected === 0}
-				onClick={props.onCleanRooms}
-			>
-				{I18n.t("ui_clean_rooms")}
-				{rooms.selected > 0 ? <span className="rr-numeric">&nbsp;({rooms.selected})</span> : null}
-			</Button>
+			{/* Rooms. The run button starts them; this only drops the selection again. */}
 			<Tooltip title={I18n.t("ui_clear_selection")}>
 				<span>
 					<IconButton
@@ -226,18 +236,6 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 					</IconButton>
 				</span>
 			</Tooltip>
-
-			<Typography
-				variant="caption"
-				color="text.secondary"
-				sx={{ maxWidth: 260 }}
-			>
-				{rooms.selected > 0
-					? I18n.t("ui_selected_rooms").replace("%s", String(rooms.selected))
-					: rooms.available === 0
-						? I18n.t("ui_no_rooms")
-						: I18n.t("ui_rooms_hint")}
-			</Typography>
 		</Stack>
 	);
 }

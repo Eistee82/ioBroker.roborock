@@ -257,7 +257,10 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				) : null}
 
 				<FloatingSurface sx={{ ml: "auto" }}>
-					<StatusStrip status={status} />
+					<StatusStrip
+						status={status}
+						onResetZoom={() => engineRef.current?.resetZoom()}
+					/>
 				</FloatingSurface>
 			</Stack>
 
@@ -278,23 +281,37 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				/>
 			</Stack>
 
-			{/* Bottom: the controls, floating over the map instead of in a side column. */}
+			{/*
+			 * Bottom left: the controls, as one column of floating windows the way the app arranges
+			 * them - the settings above, the run controls under them.
+			 *
+			 * They used to span the full width of the map, which put a wide band across the very
+			 * thing they control. Anchored to the left corner and sized by their content, they leave
+			 * the map's centre and right side free; `maxWidth` keeps them inside a narrow window
+			 * instead of letting them run past the edge.
+			 */}
 			<Stack
 				spacing={1.5}
-				alignItems="center"
-				sx={{ position: "absolute", left: 12, right: 12, bottom: 12, pointerEvents: "none" }}
+				alignItems="flex-start"
+				sx={{
+					position: "absolute",
+					left: 12,
+					bottom: 12,
+					maxWidth: "calc(100% - 24px)",
+					pointerEvents: "none"
+				}}
 			>
-				{modes.length || cleaningModes.tabs.length ? (
-					<FloatingSurface>
-						<ModeBar
-							modes={modes}
-							cleaningModes={cleaningModes}
-							assetBase={assetBase}
-							onChange={(command, value) => engineRef.current?.setMode(command, value)}
-							onSelectCleaningMode={payload => engineRef.current?.setCleaningMode(payload)}
-						/>
-					</FloatingSurface>
-				) : null}
+				<FloatingSurface sx={{ maxWidth: "100%" }}>
+					<ModeBar
+						modes={modes}
+						cleaningModes={cleaningModes}
+						assetBase={assetBase}
+						cleanCount={cleanCount}
+						onChange={(command, value) => engineRef.current?.setMode(command, value)}
+						onSelectCleaningMode={payload => engineRef.current?.setCleaningMode(payload)}
+						onCleanCountChange={onCleanCountChange}
+					/>
+				</FloatingSurface>
 
 				<FloatingSurface sx={{ maxWidth: "100%" }}>
 					<ActionDock
@@ -302,7 +319,6 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 						goToActive={goToActive}
 						rooms={rooms}
 						zones={zones}
-						cleanCount={cleanCount}
 						onStart={() => engineRef.current?.start()}
 						onPause={() => engineRef.current?.pause()}
 						onStop={() => engineRef.current?.stop()}
@@ -310,10 +326,8 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 						onToggleGoTo={() => engineRef.current?.toggleGoTo()}
 						onAddZone={() => engineRef.current?.addZone()}
 						onRemoveZone={() => engineRef.current?.removeZone()}
-						onCleanCountChange={onCleanCountChange}
 						onCleanRooms={() => engineRef.current?.cleanSelectedRooms()}
 						onClearRooms={() => engineRef.current?.clearRooms()}
-						onResetZoom={() => engineRef.current?.resetZoom()}
 					/>
 				</FloatingSurface>
 			</Stack>

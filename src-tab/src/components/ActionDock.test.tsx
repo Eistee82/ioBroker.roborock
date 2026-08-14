@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { I18n } from "@iobroker/adapter-react-v5";
-import { ActionDock } from "./ActionDock";
+import { ActionDock, startIntent } from "./ActionDock";
 import type { RobotPhase } from "../engine/types";
 
 /**
@@ -25,7 +25,6 @@ function renderDock(phase: RobotPhase, overrides: Partial<ActionDockProps> = {})
 		goToActive: false,
 		rooms: { selected: 0, available: 3 },
 		zones: { count: 0, max: 5, atLimit: false },
-		cleanCount: 1,
 		onStart: vi.fn(),
 		onPause: vi.fn(),
 		onStop: vi.fn(),
@@ -33,10 +32,8 @@ function renderDock(phase: RobotPhase, overrides: Partial<ActionDockProps> = {})
 		onToggleGoTo: vi.fn(),
 		onAddZone: vi.fn(),
 		onRemoveZone: vi.fn(),
-		onCleanCountChange: vi.fn(),
 		onCleanRooms: vi.fn(),
 		onClearRooms: vi.fn(),
-		onResetZoom: vi.fn(),
 		...overrides,
 	};
 	const { unmount } = render(<ActionDock {...props} />);
@@ -127,6 +124,104 @@ describe("ActionDock run controls", () => {
 	});
 });
 
+/**
+ * The run button names its job.
+ *
+ * This is the one place in the tab where a wrong label sends the robot somewhere else than the
+ * user read: "Start" used to mean "everything" while a separate button cleaned the selected rooms,
+ * and the engine quietly turned Start into a zoned run as soon as a rectangle was on the map. Now
+ * the label and the callback are decided together, so a test that pins the label also pins the
+ * command.
+ */
+describe("ActionDock start button", () => {
+	it("says plain Start while nothing is picked and nothing is drawn", () => {
+		const { props } = renderDock("idle", { rooms: { selected: 0, available: 3 }, zones: { count: 0, max: 5, atLimit: false } });
+		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_start") }));
+		expect(props.onStart).toHaveBeenCalledTimes(1);
+		expect(props.onCleanRooms).not.toHaveBeenCalled();
+	});
+
+	it("names the room run and starts the segment clean once rooms are picked", () => {
+		const { props } = renderDock("idle", { rooms: { selected: 2, available: 4 } });
+		expect(screen.queryByRole("button", { name: I18n.t("ui_start") })).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_start_rooms") }));
+		expect(props.onCleanRooms).toHaveBeenCalledTimes(1);
+		expect(props.onStart).not.toHaveBeenCalled();
+	});
+
+	it("names the zone run and starts it through the engine once a zone is drawn", () => {
+		// `MapEngine.start` picks `app_zoned_clean` by itself whenever a zone exists.
+		const { props } = renderDock("idle", { zones: { count: 1, max: 5, atLimit: false } });
+		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_start_zones") }));
+		expect(props.onStart).toHaveBeenCalledTimes(1);
+		expect(props.onCleanRooms).not.toHaveBeenCalled();
+	});
+
+	it("follows the engine and cleans the zones when rooms are picked as well", () => {
+		// Documented in `startIntent`: there is one RPC per run, and the engine already decides for
+		// the zones. A label promising a room run while the engine cleans zones would be a lie.
+		const { props } = renderDock("idle", {
+			rooms: { selected: 3, available: 4 },
+			zones: { count: 2, max: 5, atLimit: false },
+		});
+		expect(screen.queryByRole("button", { name: I18n.t("ui_start_rooms") })).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_start_zones") }));
+		expect(props.onStart).toHaveBeenCalledTimes(1);
+		expect(props.onCleanRooms).not.toHaveBeenCalled();
+	});
+
+	it("keeps calling the resumed run Resume, whatever is picked or drawn", () => {
+		// Resume continues the run the robot is already in; it was started with what was drawn then.
+		const { props } = renderDock("paused", {
+			rooms: { selected: 1, available: 4 },
+			zones: { count: 1, max: 5, atLimit: false },
+		});
+		expect(screen.queryByRole("button", { name: I18n.t("ui_start_zones") })).toBeNull();
+		expect(screen.queryByRole("button", { name: I18n.t("ui_start_rooms") })).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_resume") }));
+		expect(props.onStart).toHaveBeenCalledTimes(1);
+		expect(props.onCleanRooms).not.toHaveBeenCalled();
+	});
+
+	it("offers exactly one run button in every phase and selection", () => {
+		const labels = [I18n.t("ui_start"), I18n.t("ui_start_rooms"), I18n.t("ui_start_zones"), I18n.t("ui_resume")];
+		const selections = [
+			{ rooms: { selected: 0, available: 0 }, zones: { count: 0, max: 5, atLimit: false } },
+			{ rooms: { selected: 2, available: 4 }, zones: { count: 0, max: 5, atLimit: false } },
+			{ rooms: { selected: 0, available: 4 }, zones: { count: 1, max: 5, atLimit: false } },
+			{ rooms: { selected: 2, available: 4 }, zones: { count: 1, max: 5, atLimit: false } },
+		];
+		for (const phase of ALL_PHASES) {
+			for (const selection of selections) {
+				const { unmount } = renderDock(phase, selection);
+				const present = labels.filter(label => screen.queryByRole("button", { name: label }) !== null);
+				// "cleaning" and "returning" offer none of them - that is the phase table, not this rule.
+				expect(present.length, `phase ${phase} / ${JSON.stringify(selection)}`).toBeLessThanOrEqual(1);
+				unmount();
+			}
+		}
+	});
+
+	it("decides label and command from the same rule", () => {
+		expect(startIntent({ selected: 0, available: 0 }, { count: 0, max: 5, atLimit: false })).toEqual({
+			labelKey: "ui_start",
+			target: "all",
+		});
+		expect(startIntent({ selected: 1, available: 3 }, { count: 0, max: 5, atLimit: false })).toEqual({
+			labelKey: "ui_start_rooms",
+			target: "rooms",
+		});
+		expect(startIntent({ selected: 0, available: 3 }, { count: 1, max: 5, atLimit: false })).toEqual({
+			labelKey: "ui_start_zones",
+			target: "zones",
+		});
+		expect(startIntent({ selected: 4, available: 4 }, { count: 5, max: 5, atLimit: true })).toEqual({
+			labelKey: "ui_start_zones",
+			target: "zones",
+		});
+	});
+});
+
 describe("ActionDock labels", () => {
 	it("labels every button with real wording instead of a raw translation key", () => {
 		// `I18n.t` returns the key when `admin/i18n/en.json` has no entry, which reaches the user
@@ -135,7 +230,6 @@ describe("ActionDock labels", () => {
 			const { unmount } = renderDock(phase, {
 				rooms: { selected: 2, available: 4 },
 				zones: { count: 1, max: 5, atLimit: false },
-				cleanCount: 2,
 			});
 			for (const name of buttonNames()) {
 				expect(name.trim().length, `phase ${phase}`).toBeGreaterThan(0);
@@ -145,59 +239,53 @@ describe("ActionDock labels", () => {
 		}
 	});
 
-	it("gives the passes selector a visible label and both of its options", () => {
-		// The label used to be cut off: the field had a fixed width and the surrounding flex row
-		// shrank it further, so "2 Durchgänge" no longer fitted. A test cannot see clipping, but it
-		// can insist the label exists, is translated and is not squeezed out of the markup.
-		renderDock("idle");
-		const label = I18n.t("ui_repeat");
-		expect(label).not.toBe("ui_repeat");
-		// MUI renders an outlined field's label twice: the floating `<label>` and the `<legend>`
-		// that cuts the notch into the border. Both have to carry the text or the notch is wrong.
-		expect(screen.getAllByText(label).length).toBeGreaterThan(0);
-		expect(screen.getByRole("combobox").textContent?.trim().length).toBeGreaterThan(0);
-		expect(I18n.t("ui_repeat_once").trim().length).toBeGreaterThan(0);
-		expect(I18n.t("ui_repeat_twice").trim().length).toBeGreaterThan(0);
-	});
-
-	it("keeps the German passes labels translated, the case the width bug came from", () => {
+	it("translates the two run labels in every language the adapter ships", () => {
+		// A key that exists only in English reaches a German admin as "ui_start_rooms".
+		for (const language of ["en", "de"]) {
+			I18n.setLanguage(language);
+			try {
+				expect(I18n.t("ui_start_rooms"), language).not.toMatch(/^ui_/);
+				expect(I18n.t("ui_start_zones"), language).not.toMatch(/^ui_/);
+			} finally {
+				I18n.setLanguage("en");
+			}
+		}
 		I18n.setLanguage("de");
 		try {
-			expect(I18n.t("ui_repeat_twice")).toBe("2 Durchgänge");
-			expect(I18n.t("ui_repeat")).not.toMatch(/^ui_/);
+			expect(I18n.t("ui_start_rooms")).toBe("Start Raumreinigung");
+			expect(I18n.t("ui_start_zones")).toBe("Start Zonenreinigung");
 		} finally {
 			I18n.setLanguage("en");
 		}
 	});
 
-	it("shows the room hint instead of a blank line when nothing is selected", () => {
-		renderDock("idle", { rooms: { selected: 0, available: 3 } });
-		expect(screen.getByText(I18n.t("ui_rooms_hint"))).toBeTruthy();
-	});
+	it("carries no explanatory line any more", () => {
+		// The hint under the controls is gone; the map itself shows what is selected. What is left
+		// must not fall back to a stale translation key either.
+		const { unmount } = renderDock("idle", { rooms: { selected: 0, available: 3 } });
+		expect(document.body.textContent).not.toMatch(/ui_[a-z_]+/);
+		expect(document.body.textContent).not.toContain("Click a room name");
+		unmount();
 
-	it("says so when the map has no rooms at all", () => {
-		renderDock("idle", { rooms: { selected: 0, available: 0 } });
-		expect(screen.getByText(I18n.t("ui_no_rooms"))).toBeTruthy();
-	});
-
-	it("fills the %s placeholder of the selection hint with the count", () => {
-		renderDock("idle", { rooms: { selected: 2, available: 4 } });
-		const hint = I18n.t("ui_selected_rooms").replace("%s", "2");
-		expect(hint).not.toContain("%s");
-		expect(screen.getByText(hint)).toBeTruthy();
+		renderDock("idle", { rooms: { selected: 2, available: 3 } });
+		expect(document.body.textContent).not.toMatch(/Selected:/);
 	});
 });
 
 describe("ActionDock secondary controls", () => {
-	it("disables the room actions while nothing is selected and enables them afterwards", () => {
-		const cleanRooms = new RegExp(I18n.t("ui_clean_rooms"));
+	it("no longer offers a separate button for the selected rooms", () => {
+		// The run button took that over; two buttons for one intent was one too many.
+		renderDock("idle", { rooms: { selected: 2, available: 3 } });
+		expect(screen.queryByRole("button", { name: /Clean selected rooms/ })).toBeNull();
+	});
+
+	it("disables clearing the selection while nothing is selected", () => {
 		const { unmount } = renderDock("idle", { rooms: { selected: 0, available: 3 } });
-		expect(screen.getByRole("button", { name: cleanRooms }).hasAttribute("disabled")).toBe(true);
 		expect(screen.getByRole("button", { name: I18n.t("ui_clear_selection") }).hasAttribute("disabled")).toBe(true);
 		unmount();
 
 		renderDock("idle", { rooms: { selected: 1, available: 3 } });
-		expect(screen.getByRole("button", { name: cleanRooms }).hasAttribute("disabled")).toBe(false);
+		expect(screen.getByRole("button", { name: I18n.t("ui_clear_selection") }).hasAttribute("disabled")).toBe(false);
 	});
 
 	it("blocks adding a zone once the limit is reached", () => {
@@ -220,10 +308,11 @@ describe("ActionDock secondary controls", () => {
 		expect(screen.getByRole("button", { name: I18n.t("ui_goto") })).toBeTruthy();
 	});
 
-	it("keeps the view reset reachable in every phase", () => {
+	it("has handed the view reset over to the status strip", () => {
+		// It changes what is shown, not what the robot does; see `StatusStrip`.
 		for (const phase of ALL_PHASES) {
 			const { unmount } = renderDock(phase);
-			expect(screen.getByRole("button", { name: I18n.t("ui_reset_view") }), `phase ${phase}`).toBeTruthy();
+			expect(screen.queryByRole("button", { name: I18n.t("ui_reset_view") }), `phase ${phase}`).toBeNull();
 			unmount();
 		}
 	});

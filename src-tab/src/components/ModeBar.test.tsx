@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { I18n } from "@iobroker/adapter-react-v5";
 import { ModeBar } from "./ModeBar";
+import { FLOATING_RADIUS_PX, PANEL_PADDING_PX, floatingContentInset } from "./FloatingSurface";
 import type { CleaningModeTabsModel, ModeModel } from "../engine/types";
 
 /**
@@ -70,20 +72,30 @@ function tabsWith(current: number | null): CleaningModeTabsModel {
 /** Renders with no asset folder, so every option falls back to its text. */
 function renderBar(
 	modes: ModeModel[],
-	cleaningModes: CleaningModeTabsModel = NO_TABS
-): { onChange: ReturnType<typeof vi.fn>; onSelectCleaningMode: ReturnType<typeof vi.fn> } {
+	cleaningModes: CleaningModeTabsModel = NO_TABS,
+	cleanCount = 1
+): {
+	onChange: ReturnType<typeof vi.fn>;
+	onSelectCleaningMode: ReturnType<typeof vi.fn>;
+	onCleanCountChange: ReturnType<typeof vi.fn>;
+	container: HTMLElement;
+	unmount: () => void;
+} {
 	const onChange = vi.fn();
 	const onSelectCleaningMode = vi.fn();
-	render(
+	const onCleanCountChange = vi.fn();
+	const { container, unmount } = render(
 		<ModeBar
 			modes={modes}
 			cleaningModes={cleaningModes}
 			assetBase={null}
+			cleanCount={cleanCount}
 			onChange={onChange}
 			onSelectCleaningMode={onSelectCleaningMode}
+			onCleanCountChange={onCleanCountChange}
 		/>
 	);
-	return { onChange, onSelectCleaningMode };
+	return { onChange, onSelectCleaningMode, onCleanCountChange, container, unmount };
 }
 
 /** The buttons of one labelled group, so the tabs and the steps cannot be mixed up. */
@@ -104,18 +116,18 @@ function labelsIn(name: string): (string | null)[] {
 		.map(button => button.getAttribute("aria-label"));
 }
 
+/** The switch bars in the order they are stacked, read off their group labels. */
+function rowOrder(): (string | null)[] {
+	return screen.getAllByRole("group").map(element => element.getAttribute("aria-label"));
+}
+
 describe("ModeBar", () => {
-	it("draws nothing when the device offers neither modes nor steps", () => {
-		const { container } = render(
-			<ModeBar
-				modes={[]}
-				cleaningModes={NO_TABS}
-				assetBase={null}
-				onChange={vi.fn()}
-				onSelectCleaningMode={vi.fn()}
-			/>
-		);
-		expect(container.firstChild).toBeNull();
+	it("keeps only the passes row on a device that publishes neither modes nor steps", () => {
+		// The passes are not one of the robot's commands - they travel with the zones - so they must
+		// survive a device that publishes nothing, which is exactly where zone cleaning still works.
+		renderBar([]);
+
+		expect(rowOrder()).toEqual([I18n.t("ui_repeat")]);
 	});
 
 	it("shows every step at once instead of hiding them behind a click", () => {
@@ -174,6 +186,101 @@ describe("ModeBar", () => {
 		expect(labelsIn("Suction power")).toContain("Max+");
 		expect(labelsIn("Water flow")).toContain("Off");
 		expect(labelsIn("Mop mode")).toEqual(["Standard", "Deep", "Deep+", "Fast"]);
+	});
+});
+
+describe("ModeBar - layout", () => {
+	it("stacks the rows in the app's order, passes between water and route", () => {
+		// The adapter publishes suction, route, water. The app's order is suction, water, route -
+		// and "the passes go between water and route" is only a position in that order.
+		renderBar([SUCTION, ROUTE, WATER], tabsWith(0));
+
+		expect(rowOrder()).toEqual(["Cleaning mode", "Suction power", "Water flow", I18n.t("ui_repeat"), "Mop mode"]);
+	});
+
+	it("keeps the passes ahead of the route even when the water picker is hidden", () => {
+		// Vacuum-only has no water level; the passes must not slide behind the route because of it.
+		renderBar([SUCTION, ROUTE, WATER], tabsWith(2));
+
+		expect(rowOrder()).toEqual(["Cleaning mode", "Suction power", I18n.t("ui_repeat"), "Mop mode"]);
+	});
+
+	it("puts the passes last when the device publishes no route at all", () => {
+		renderBar([SUCTION, WATER]);
+
+		expect(rowOrder()).toEqual(["Suction power", "Water flow", I18n.t("ui_repeat")]);
+	});
+
+	it("pads the panel far enough that no caption reaches into the rounded corner", () => {
+		// "Saugkraft ragt in die Rundung": the caption sat 12px from the edge while the corner arc
+		// only released the edge much later. The rule is geometric, so the test states it as one
+		// rather than as a screenshot.
+		expect(PANEL_PADDING_PX).toBeGreaterThanOrEqual(floatingContentInset(FLOATING_RADIUS_PX));
+	});
+
+	it("gives every row a caption, whatever the longest translation is", () => {
+		// The captions are the widest thing in the panel in ru/uk/pt; a row that lost its caption
+		// would look like a nameless strip of icons.
+		for (const language of ["en", "de"]) {
+			I18n.setLanguage(language);
+			try {
+				const { container, unmount } = renderBar([SUCTION, ROUTE, WATER], tabsWith(0));
+				for (const label of rowOrder()) {
+					expect(label, language).toBeTruthy();
+					expect(label, language).not.toMatch(/^ui_[a-z_]+$/);
+					expect(within(container).getAllByText(label as string).length, `${language} / ${label}`).toBeGreaterThan(0);
+				}
+				unmount();
+			} finally {
+				I18n.setLanguage("en");
+			}
+		}
+	});
+});
+
+describe("ModeBar - passes", () => {
+	it("offers the two passes as a switch bar rather than as a dropdown", () => {
+		renderBar([]);
+
+		expect(screen.queryByRole("combobox")).toBeNull();
+		expect(labelsIn(I18n.t("ui_repeat"))).toEqual([I18n.t("ui_repeat_once"), I18n.t("ui_repeat_twice")]);
+		expect(within(group(I18n.t("ui_repeat"))).getByText("×1")).toBeTruthy();
+		expect(within(group(I18n.t("ui_repeat"))).getByText("×2")).toBeTruthy();
+	});
+
+	it("marks the count in effect and names it next to the caption", () => {
+		renderBar([], NO_TABS, 2);
+
+		expect(pressedIn(I18n.t("ui_repeat"))).toEqual([I18n.t("ui_repeat_twice")]);
+		expect(screen.getByText(I18n.t("ui_repeat_twice"))).toBeTruthy();
+	});
+
+	it("reports the count that was clicked as a number", () => {
+		const { onCleanCountChange } = renderBar([], NO_TABS, 1);
+
+		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_repeat_twice") }));
+
+		expect(onCleanCountChange).toHaveBeenCalledWith(2);
+	});
+
+	it("stays silent when the active count is clicked again", () => {
+		const { onCleanCountChange } = renderBar([], NO_TABS, 2);
+
+		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_repeat_twice") }));
+
+		expect(onCleanCountChange).not.toHaveBeenCalled();
+	});
+
+	it("keeps the German wording that once got cut off", () => {
+		I18n.setLanguage("de");
+		try {
+			renderBar([], NO_TABS, 2);
+			// The dropdown truncated "2 Durchgänge" to "2 Durch…". As a caption it has the whole row.
+			expect(screen.getByText("2 Durchgänge")).toBeTruthy();
+			expect(screen.getByRole("button", { name: "1 Durchgang" })).toBeTruthy();
+		} finally {
+			I18n.setLanguage("en");
+		}
 	});
 });
 
