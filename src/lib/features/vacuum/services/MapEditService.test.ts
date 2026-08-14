@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { MockAdapter } from "../../../mock/MockAdapter";
 import { MockRobot } from "../../../mock/MockRobot";
@@ -5,18 +6,122 @@ import { Feature } from "../../features.enum";
 import { V1VacuumFeatures } from "../v1VacuumFeatures";
 import {
 	applyRetryEnvelope,
+	buildSaveMapPayload,
+	CARPET_CLEAN_MODES,
+	extractMapBuffer,
 	FURNITURE_TYPES,
 	hasFeatureStrBit,
+	MAP_RECORD_TYPES,
 	MapEditService,
 	MATTER_FEATURE_BIT,
+	MAX_BLOCK_NO,
+	MAX_COUNT_WALL_OR_FBZ,
+	parseCarpetCleanMode,
+	parseCarpetMode,
 	parseCleanSequence,
 	parseFurnitures,
+	parseMergeSegment,
 	parseRoomMapping,
 	parseRoomNaming,
+	parseSplitSegment,
+	parseZoneInput,
+	parseZoneRemoval,
+	readMaxMultiMap,
+	readOverlaysFromMap,
 	readRetryId,
 	ROOM_TAGS,
-	RPC_RETRY_FEATURE_BIT
+	RPC_RETRY_FEATURE_BIT,
+	type MapOverlays
 } from "./MapEditService";
+
+/**
+ * Encodes one list-shaped V1 map block.
+ * @param type Block type id.
+ * @param entries The records, each already the right number of values.
+ * @param valuesPerEntry How many uint16 one record holds.
+ * @returns The encoded block.
+ */
+function encodeZoneBlock(type: number, entries: number[][], valuesPerEntry: number): Buffer {
+	const headerLength = 12;
+	const buffer = Buffer.alloc(headerLength + entries.length * valuesPerEntry * 2);
+	buffer.writeUInt16LE(type, 0);
+	buffer.writeUInt16LE(headerLength, 2);
+	buffer.writeUInt32LE(entries.length * valuesPerEntry * 2, 4);
+	buffer.writeUInt32LE(entries.length, 8);
+
+	let position = headerLength;
+	for (const entry of entries) {
+		for (const value of entry) {
+			buffer.writeUInt16LE(value, position);
+			position += 2;
+		}
+	}
+	return buffer;
+}
+
+/**
+ * Encodes the smallest image block the parser accepts, so the map counts as a map.
+ * @returns The encoded block.
+ */
+function encodeImageBlock(): Buffer {
+	const headerLength = 24;
+	const width = 2;
+	const height = 2;
+	const buffer = Buffer.alloc(headerLength + width * height);
+	buffer.writeUInt16LE(2, 0);
+	buffer.writeUInt16LE(headerLength, 2);
+	buffer.writeUInt32LE(width * height, 4);
+	buffer.writeInt32LE(0, 8);       // top
+	buffer.writeInt32LE(0, 12);      // left
+	buffer.writeInt32LE(height, 16);
+	buffer.writeInt32LE(width, 20);
+	return buffer;
+}
+
+/**
+ * Builds a V1 map the real `MapParser` accepts, carrying the given walls and zones.
+ *
+ * The zone commands read the robot's own map before every write, so the test has to hand them a
+ * real one - a stubbed reader would prove nothing about the read-change-write cycle.
+ * @param overlays Walls and zones the map is to carry.
+ * @returns The raw map as `get_map_v1` returns it.
+ */
+function buildMapFixture(overlays: MapOverlays): Buffer {
+	const blocks = [encodeImageBlock()];
+	if (overlays.wall.length > 0) blocks.push(encodeZoneBlock(10, overlays.wall, 4));
+	if (overlays.no_go.length > 0) blocks.push(encodeZoneBlock(9, overlays.no_go, 8));
+	if (overlays.no_mop.length > 0) blocks.push(encodeZoneBlock(12, overlays.no_mop, 8));
+	const body = Buffer.concat(blocks);
+
+	const header = Buffer.alloc(0x14);
+	header.writeUInt8(0x72, 0);
+	header.writeUInt8(0x72, 1);
+	header.writeUInt16LE(0x14, 2);
+	header.writeUInt32LE(0x14 + body.length, 4);
+	header.writeUInt16LE(1, 8);
+	header.writeUInt16LE(0, 10);
+	header.writeUInt32LE(0, 12);
+	header.writeUInt32LE(0, 16);
+
+	const withoutHash = Buffer.concat([header, body]);
+	return Buffer.concat([withoutHash, crypto.createHash("sha1").update(withoutHash).digest()]);
+}
+
+/**
+ * Turns a `save_map` payload back into a set of walls and zones the way the firmware does:
+ * whatever is not in the payload is gone.
+ * @param payload The records that were sent.
+ * @returns The set the robot holds afterwards.
+ */
+function applySaveMap(payload: number[][]): MapOverlays {
+	const result: MapOverlays = { wall: [], no_go: [], no_mop: [] };
+	for (const record of payload) {
+		if (record[0] === MAP_RECORD_TYPES.wall) result.wall.push(record.slice(1));
+		else if (record[0] === MAP_RECORD_TYPES.no_go) result.no_go.push(record.slice(1));
+		else if (record[0] === MAP_RECORD_TYPES.no_mop) result.no_mop.push(record.slice(1));
+	}
+	return result;
+}
 
 class TestVacuum extends V1VacuumFeatures {
 	protected getDynamicFeatures(): Set<Feature> {
@@ -60,7 +165,10 @@ describe("MapEditService", () => {
 			http_api: {
 				getFwFeaturesResult: () => mockRobot.features,
 				storeFwFeaturesResult: () => {},
-				getRobotModel: () => mockRobot.model
+				getRobotModel: () => mockRobot.model,
+				// The zone commands run the real V1 map parser, which asks for the cloud room list.
+				isSharedDevice: () => false,
+				getMatchedRoomIDs: () => []
 			},
 			requestsHandler: {
 				sendRequest: async (duid: string, method: string, params: any) => {
@@ -446,18 +554,472 @@ describe("MapEditService", () => {
 		});
 	});
 
+	describe("zones and walls via save_map (report sections 1.6 and 2.1)", () => {
+		/** What the robot currently holds; `get_map_v1` is built from this and `save_map` replaces it. */
+		let onRobot: MapOverlays;
+		/** Set when the robot was asked to save, so a test can prove nothing was written. */
+		let saved: number[][] | null;
+
+		/** A no-go zone and a no-mop zone the user already had, plus a wall. */
+		const existingNoGo = [1000, 2000, 3000, 2000, 3000, 1000, 1000, 1000];
+		const existingNoMop = [5000, 6000, 7000, 6000, 7000, 5000, 5000, 5000];
+		const existingWall = [100, 200, 300, 400];
+
+		/**
+		 * Puts the robot behind a transport that answers `get_map_v1` with a real V1 map and applies
+		 * `save_map` the way the firmware does - by keeping only what the payload carried.
+		 * @param maxMultiMap How many map slots the robot reports.
+		 */
+		function withMap(maxMultiMap = 1): void {
+			mockRobot.multiMaps.max_multi_map = maxMultiMap;
+			deps.requestsHandler.sendRequest = async (duid: string, method: string, params: any) => {
+				if (duid !== mockRobot.duid) return [];
+				if (method === "get_map_v1") return buildMapFixture(onRobot);
+				if (method === "save_map") {
+					saved = MockRobot.unwrapRetryEnvelope(params);
+					onRobot = applySaveMap(saved as number[][]);
+					return ["ok"];
+				}
+				return mockRobot.handleRequest(method, params);
+			};
+		}
+
+		beforeEach(() => {
+			onRobot = { wall: [existingWall], no_go: [existingNoGo], no_mop: [existingNoMop] };
+			saved = null;
+		});
+
+		it("registers add and remove states, and no raw save_map state", async () => {
+			const commands = (vacuum as any).commands;
+			for (const name of ["add_no_go_zone", "add_no_mop_zone", "add_virtual_wall", "remove_map_zone"]) {
+				expect(commands[name]?.type).toBe("json");
+			}
+			expect(commands).not.toHaveProperty("save_map");
+
+			await vacuum.createCommandObjects();
+			const obj = mockAdapter.objects[`Devices.${mockRobot.duid}.commands.add_no_go_zone`];
+			expect(obj.common.write).toBe(true);
+			// The state says out loud that a change rewrites everything.
+			expect(String(obj.common.desc)).toMatch(/every change rewrites all of them|jede Änderung/i);
+		});
+
+		// --- The assurance this whole package exists for ---------------------------------------
+
+		it("keeps every existing wall and zone when one is added", async () => {
+			withMap();
+
+			await runCommand("add_no_go_zone", [8000, 9000, 9000, 8000]);
+
+			// save_map has no operation code and no zone id: whatever is missing from the payload is
+			// deleted. The adapter therefore reads the robot's own map first and sends it back whole.
+			expect(saved).not.toBeNull();
+			expect(onRobot.no_go).toHaveLength(2);
+			expect(onRobot.no_go).toContainEqual(existingNoGo);
+			expect(onRobot.no_go).toContainEqual([8000, 9000, 9000, 9000, 9000, 8000, 8000, 8000]);
+			// The other kinds were never mentioned by the user and are still there.
+			expect(onRobot.wall).toEqual([existingWall]);
+			expect(onRobot.no_mop).toEqual([existingNoMop]);
+		});
+
+		it("keeps the other zones when one is removed", async () => {
+			withMap();
+			onRobot.no_go = [existingNoGo, [4000, 4000, 5000, 4000, 5000, 3000, 4000, 3000]];
+
+			await runCommand("remove_map_zone", { kind: "no_go", index: 0 });
+
+			expect(onRobot.no_go).toEqual([[4000, 4000, 5000, 4000, 5000, 3000, 4000, 3000]]);
+			expect(onRobot.wall).toEqual([existingWall]);
+			expect(onRobot.no_mop).toEqual([existingNoMop]);
+		});
+
+		it("sends the records in the walls-then-zones order the app uses", async () => {
+			withMap();
+
+			await runCommand("add_no_mop_zone", [0, 0, 100, 100]);
+
+			expect(saved!.map((record) => record[0])).toEqual([
+				MAP_RECORD_TYPES.wall,
+				MAP_RECORD_TYPES.no_go,
+				MAP_RECORD_TYPES.no_mop,
+				MAP_RECORD_TYPES.no_mop
+			]);
+		});
+
+		// --- Refusing rather than losing data ---------------------------------------------------
+
+		/**
+		 * Lets `get_map_v1` fail or answer with something unusable, keeping the `save_map` recorder
+		 * in place so a test can show that nothing was written.
+		 * @param answer What the robot answers, or what it throws.
+		 */
+		function withBrokenMap(answer: () => unknown): void {
+			withMap();
+			const transport = deps.requestsHandler.sendRequest;
+			deps.requestsHandler.sendRequest = async (duid: string, method: string, params: any) =>
+				method === "get_map_v1" ? answer() : transport(duid, method, params);
+		}
+
+		it("writes nothing when the map cannot be fetched", async () => {
+			withBrokenMap(() => {
+				throw new Error("robot offline");
+			});
+
+			await expect(runCommand("add_no_go_zone", [0, 0, 100, 100])).rejects.toThrow(/Could not fetch the robot's map/);
+			expect(saved).toBeNull();
+		});
+
+		it("writes nothing when the answer is not a map", async () => {
+			withBrokenMap(() => ["ok"]);
+
+			await expect(runCommand("add_no_go_zone", [0, 0, 100, 100])).rejects.toThrow(/did not answer get_map_v1 with a map/);
+			expect(saved).toBeNull();
+		});
+
+		it("writes nothing when the map is unreadable, instead of reading it as an empty map", async () => {
+			withBrokenMap(() => Buffer.from("rr not really a map at all, but long enough"));
+
+			await expect(runCommand("add_no_go_zone", [0, 0, 100, 100])).rejects.toThrow(/could not be parsed/);
+			expect(saved).toBeNull();
+		});
+
+		it("recognises both shapes get_map_v1 answers in", () => {
+			const fixture = buildMapFixture(onRobot);
+			expect(extractMapBuffer(fixture)).toBe(fixture);
+			expect(extractMapBuffer({ data: fixture, version: "1.0" })).toBe(fixture);
+			expect(extractMapBuffer(["ok"])).toBeNull();
+		});
+
+		it("writes nothing when the map carries an overlay it cannot rebuild", () => {
+			// Record type 3 (the Garnet generation's cleaning-free zone) has no documented map block,
+			// so a map holding one is left alone rather than stripped of it.
+			expect(() => readOverlaysFromMap({ IMAGE: {}, CLF_FORBIDDEN_ZONES: [[1, 2, 3, 4, 5, 6, 7, 8]] }))
+				.toThrow(/CLF_FORBIDDEN_ZONES/);
+			expect(() => readOverlaysFromMap({ IMAGE: {}, CL_FORBIDDEN_ZONES: [1, 2, 3, 4, 5, 6, 7, 8] }))
+				.toThrow(/CL_FORBIDDEN_ZONES/);
+		});
+
+		it("writes nothing when a zone in the map has an unexpected shape", () => {
+			expect(() => readOverlaysFromMap({ IMAGE: {}, FORBIDDEN_ZONES: [[1, 2, 3, 4]] })).toThrow(/instead of 8/);
+			expect(() => readOverlaysFromMap({ IMAGE: {}, VIRTUAL_WALLS: "none" })).toThrow(/not a list/);
+		});
+
+		it("writes nothing when the robot cannot say how many maps it has", async () => {
+			withMap();
+			const transport = deps.requestsHandler.sendRequest;
+			deps.requestsHandler.sendRequest = async (duid: string, method: string, params: any) => {
+				if (method === "get_multi_maps_list") return ["ok"];
+				return transport(duid, method, params);
+			};
+
+			await expect(runCommand("add_no_go_zone", [0, 0, 100, 100])).rejects.toThrow(/how many maps/);
+			expect(saved).toBeNull();
+		});
+
+		it("writes nothing on a multi-map robot before the active map is known", async () => {
+			withMap(3);
+			expect(vacuum.getCurrentMapIndex()).toBe(-1);
+
+			await expect(runCommand("add_no_go_zone", [0, 0, 100, 100])).rejects.toThrow(/active map is not known/);
+			expect(saved).toBeNull();
+		});
+
+		it("names the map slot on a multi-map robot and leaves it out on a single-map one", async () => {
+			withMap(3);
+			(vacuum as any).mapService.updateCurrentMapIndex(12); // map_status 12 -> slot 3
+
+			await runCommand("add_no_go_zone", [0, 0, 100, 100]);
+			expect(saved![saved!.length - 1]).toEqual([100, 3]);
+
+			withMap(1);
+			saved = null;
+			await runCommand("add_no_go_zone", [0, 0, 200, 200]);
+			expect(saved!.some((record) => record[0] === 100)).toBe(false);
+		});
+
+		it("refuses the eleventh zone of a kind, the app's own limit", async () => {
+			withMap();
+			onRobot.no_go = Array.from({ length: MAX_COUNT_WALL_OR_FBZ }, (_, i) => [i, 0, i + 1, 0, i + 1, 1, i, 1]);
+
+			await expect(runCommand("add_no_go_zone", [0, 0, 100, 100])).rejects.toThrow(/limit is 10 per kind/);
+			expect(saved).toBeNull();
+			// Ten per kind, not ten in total: a wall still goes through.
+			await runCommand("add_virtual_wall", [0, 0, 500, 0]);
+			expect(onRobot.no_go).toHaveLength(MAX_COUNT_WALL_OR_FBZ);
+			expect(onRobot.wall).toHaveLength(2);
+		});
+
+		it("refuses to remove an index that is not there and says how many there are", async () => {
+			withMap();
+			await expect(runCommand("remove_map_zone", { kind: "no_mop", index: 4 })).rejects.toThrow(/numbered 0 to 0/);
+			expect(saved).toBeNull();
+		});
+
+		it("clears every wall and zone on request", async () => {
+			withMap();
+			await runCommand("remove_map_zone", "all");
+			expect(onRobot).toEqual({ wall: [], no_go: [], no_mop: [] });
+			expect(saved).toEqual([]);
+		});
+
+		it("publishes what is on the map, so an index means something", async () => {
+			withMap();
+			await runCommand("add_virtual_wall", [10, 20, 30, 40]);
+
+			const state = await mockAdapter.getStateAsync(`Devices.${mockRobot.duid}.mapEdit.zones`);
+			expect(JSON.parse(String(state.val))).toEqual({
+				wall: [existingWall, [10, 20, 30, 40]],
+				no_go: [existingNoGo],
+				no_mop: [existingNoMop]
+			});
+		});
+
+		it("publishes the current set even when the edit itself is refused", async () => {
+			withMap();
+			onRobot.no_go = Array.from({ length: MAX_COUNT_WALL_OR_FBZ }, (_, i) => [i, 0, i + 1, 0, i + 1, 1, i, 1]);
+
+			await expect(runCommand("add_no_go_zone", [0, 0, 100, 100])).rejects.toThrow(/limit is 10 per kind/);
+
+			// The list is how a user works out which index to remove, so a refusal has to show it.
+			const state = await mockAdapter.getStateAsync(`Devices.${mockRobot.duid}.mapEdit.zones`);
+			expect(JSON.parse(String(state.val)).no_go).toHaveLength(MAX_COUNT_WALL_OR_FBZ);
+		});
+
+		it("wraps the payload once the robot reports feature bit 26", async () => {
+			withMap();
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, { val: RPC_RETRY_FEATURE_BIT, ack: true });
+
+			const sent = await runCommand("add_no_go_zone", [0, 0, 100, 100]);
+			expect(sent.method).toBe("save_map");
+			expect(sent.params.need_retry).toBe(1);
+			expect(Array.isArray(sent.params.data)).toBe(true);
+		});
+
+		// --- Reading the user's input -----------------------------------------------------------
+
+		it("expands two opposite corners into the four the app sends", () => {
+			// Report section 1.6: x0,y0 = (x, y1+h); x1,y1 = (x+w, y1+h); x2,y2 = (x+w, y1); x3,y3 = (x, y1).
+			expect(parseZoneInput("no_go", [1000, 500, 2000, 1500])).toEqual([1000, 1500, 2000, 1500, 2000, 500, 1000, 500]);
+			// The order the two corners are given in makes no difference.
+			expect(parseZoneInput("no_go", [2000, 1500, 1000, 500])).toEqual([1000, 1500, 2000, 1500, 2000, 500, 1000, 500]);
+		});
+
+		it("takes four explicit corners unchanged, which a rotated zone needs", () => {
+			const rotated = [0, 100, 100, 200, 200, 100, 100, 0];
+			expect(parseZoneInput("no_mop", rotated)).toEqual(rotated);
+		});
+
+		it("rejects a zone that is not a zone", () => {
+			expect(() => parseZoneInput("no_go", "kitchen")).toThrow(/four corners/);
+			expect(() => parseZoneInput("no_go", [1, 2, 3])).toThrow(/eight numbers/);
+			expect(() => parseZoneInput("no_go", [0, 0, 0, 500])).toThrow(/describes a line/);
+			expect(() => parseZoneInput("no_go", [0, 0, "x", 500])).toThrow(/not a number/);
+			expect(() => parseZoneInput("wall", [1, 2, 3, 4, 5, 6, 7, 8])).toThrow(/four numbers/);
+			expect(() => parseZoneInput("wall", [5, 5, 5, 5])).toThrow(/two different end points/);
+		});
+
+		it("reads a removal request", () => {
+			expect(parseZoneRemoval({ kind: "no_mop", index: 2 })).toEqual({ kind: "no_mop", index: 2 });
+			expect(parseZoneRemoval("all")).toEqual({ kind: "all", index: null });
+			expect(parseZoneRemoval({ kind: "all" })).toEqual({ kind: "all", index: null });
+			expect(() => parseZoneRemoval({ kind: "carpet", index: 0 })).toThrow(/remove_map_zone expects/);
+			expect(() => parseZoneRemoval({ kind: "no_go" })).toThrow(/counted from 0/);
+			expect(() => parseZoneRemoval({ kind: "no_go", index: -1 })).toThrow(/counted from 0/);
+		});
+
+		it("builds the payload the app builds", () => {
+			const overlays: MapOverlays = { wall: [[1, 2, 3, 4]], no_go: [[1, 2, 3, 4, 5, 6, 7, 8]], no_mop: [] };
+			expect(buildSaveMapPayload(overlays, null)).toEqual([[1, 1, 2, 3, 4], [0, 1, 2, 3, 4, 5, 6, 7, 8]]);
+			expect(buildSaveMapPayload(overlays, 2)).toContainEqual([100, 2]);
+			// [200, 0] is never sent: no caller in the app's own bundle sets it.
+			expect(buildSaveMapPayload(overlays, 2).some((record) => record[0] === 200)).toBe(false);
+		});
+
+		it("reads the map slot count out of both answer shapes", () => {
+			expect(readMaxMultiMap([{ max_multi_map: 4 }])).toBe(4);
+			expect(readMaxMultiMap({ data: [{ max_multi_map: 2 }] })).toBe(2);
+			expect(readMaxMultiMap(["ok"])).toBeNull();
+			expect(readMaxMultiMap(null)).toBeNull();
+		});
+	});
+
+	describe("carpets (report section 1.7)", () => {
+		it("registers the two carpet settings whose payload the report pins down", async () => {
+			const commands = (vacuum as any).commands;
+			expect(commands.set_carpet_clean_mode.type).toBe("number");
+			expect(commands.set_carpet_clean_mode.states).toEqual(CARPET_CLEAN_MODES);
+			expect(commands.set_carpet_mode.type).toBe("json");
+
+			await vacuum.createCommandObjects();
+			expect(mockAdapter.objects[`Devices.${mockRobot.duid}.commands.set_carpet_clean_mode`].common.write).toBe(true);
+			expect(mockAdapter.objects[`Devices.${mockRobot.duid}.commands.set_carpet_mode`].common.write).toBe(true);
+		});
+
+		it("knows the fourth mode the adapter's own table was missing", () => {
+			expect(CARPET_CLEAN_MODES[3]).toBe("Dynamic Lift");
+		});
+
+		it("sends {carpet_clean_mode} and nothing else", async () => {
+			const sent = await runCommand("set_carpet_clean_mode", 2);
+			expect(sent.method).toBe("set_carpet_clean_mode");
+			expect(sent.params).toEqual({ carpet_clean_mode: 2 });
+		});
+
+		it("is not wrapped in the retry envelope, because it is not one of the 13 methods", async () => {
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, { val: RPC_RETRY_FEATURE_BIT, ack: true });
+			const sent = await runCommand("set_carpet_clean_mode", 1);
+			expect(sent.params).toEqual({ carpet_clean_mode: 1 });
+		});
+
+		it("rejects a mode the plugin does not list", () => {
+			expect(() => parseCarpetCleanMode(4)).toThrow(/expects one of/);
+			expect(() => parseCarpetCleanMode("Avoid")).toThrow(/expects one of/);
+		});
+
+		it("accepts the object form as well as the bare number", () => {
+			expect(parseCarpetCleanMode({ carpet_clean_mode: 3 })).toEqual({ carpet_clean_mode: 3 });
+			expect(parseCarpetCleanMode("2")).toEqual({ carpet_clean_mode: 2 });
+		});
+
+		it("wraps the carpet boost settings in the one-element array the robot expects", async () => {
+			const settings = { enable: 1, stall_time: 10, current_low: 400, current_high: 500, current_integral: 450 };
+			const sent = await runCommand("set_carpet_mode", settings);
+			expect(sent.params).toEqual([settings]);
+		});
+
+		it("takes an already wrapped array unchanged", () => {
+			expect(parseCarpetMode([{ enable: 0 }])).toEqual([{ enable: 0 }]);
+		});
+
+		it("rejects anything that is not a settings object", () => {
+			expect(() => parseCarpetMode("on")).toThrow(/settings object/);
+			expect(() => parseCarpetMode([{ enable: 1 }, { enable: 0 }])).toThrow(/exactly one/);
+		});
+	});
+
+	describe("splitting and merging rooms (report sections 1.3, 1.4 and 2.2)", () => {
+		it("registers both states and puts Roborock's own warning on them", async () => {
+			const commands = (vacuum as any).commands;
+			expect(commands.split_segment.type).toBe("json");
+			expect(commands.merge_segment.type).toBe("json");
+
+			await vacuum.createCommandObjects();
+			for (const name of MapEditService.SEGMENT_EDIT_COMMANDS) {
+				const obj = mockAdapter.objects[`Devices.${mockRobot.duid}.commands.${name}`];
+				expect(obj.common.write).toBe(true);
+				// map_edit_segment_prompt, the text the app shows before the same operation.
+				expect(String(obj.common.desc)).toMatch(/settings and schedules become invalid|Einstellungen und Zeitpläne/i);
+			}
+		});
+
+		it("sends the five numbers of a split straight through", async () => {
+			const sent = await runCommand("split_segment", [3, 1000, 2000, 1000, 5000]);
+			expect(sent.method).toBe("split_segment");
+			expect(sent.params).toEqual([3, 1000, 2000, 1000, 5000]);
+		});
+
+		it("sends the flat list of ids of a merge", async () => {
+			const sent = await runCommand("merge_segment", [2, 3]);
+			expect(sent.method).toBe("merge_segment");
+			expect(sent.params).toEqual([2, 3]);
+		});
+
+		it("warns in the log, because the adapter has no screen to warn on", async () => {
+			const warnings: string[] = [];
+			const original = mockAdapter.rLog.bind(mockAdapter);
+			mockAdapter.rLog = (...args: any[]) => {
+				if (args[6] === "warn") warnings.push(String(args[5]));
+				return original(...(args as Parameters<typeof original>));
+			};
+
+			await runCommand("merge_segment", [2, 3]);
+
+			expect(warnings.some((line) => /settings and schedules become invalid/.test(line))).toBe(true);
+			expect(warnings.some((line) => /room IDs change/.test(line))).toBe(true);
+		});
+
+		it("re-reads the rooms and the map once the robot confirms", async () => {
+			await runCommand("split_segment", [3, 0, 0, 0, 1000]);
+
+			// The old segment ids point nowhere after a split (RoomIdDidChanged), so the room states
+			// have to be built again from what the robot reports now.
+			const after = mockRobot.seen.slice(mockRobot.seen.findIndex((entry) => entry.method === "split_segment"));
+			expect(after.map((entry) => entry.method)).toContain("get_room_mapping");
+			expect(after.map((entry) => entry.method)).toContain("get_map_v1");
+		});
+
+		it("re-reads them only after a deferred call was actually confirmed", async () => {
+			mockRobot.deferOnce.add("merge_segment");
+			mockRobot.retryPollsNeeded = 1;
+
+			await runCommand("merge_segment", [2, 3]);
+
+			const afterPoll = mockRobot.seen.slice(mockRobot.seen.map((entry) => entry.method).lastIndexOf("retry_request"));
+			expect(afterPoll.map((entry) => entry.method)).toContain("get_room_mapping");
+		});
+
+		it("refuses a room that is not on the map", async () => {
+			await expect(runCommand("split_segment", [99, 0, 0, 0, 1000])).rejects.toThrow(/not on the current map/);
+			await expect(runCommand("merge_segment", [2, 99])).rejects.toThrow(/not on the current map/);
+		});
+
+		it("refuses when the room list cannot be read, rather than renumber blind", async () => {
+			mockRobot.roomMapping = [];
+			await expect(runCommand("split_segment", [3, 0, 0, 0, 1000])).rejects.toThrow(/returned none/);
+			await expect(runCommand("merge_segment", [2, 3])).rejects.toThrow(/returned none/);
+		});
+
+		it("refuses a split once the map holds as many rooms as the app allows", async () => {
+			// The app stops offering a split from 31 rooms on; MAX_BLOCK_NO itself is 32.
+			mockRobot.roomMapping = Array.from({ length: MAX_BLOCK_NO - 1 }, (_, i) => [i + 1, String(i + 1), 12]);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).rejects.toThrow(/already holds 31 rooms/);
+
+			mockRobot.roomMapping = Array.from({ length: MAX_BLOCK_NO - 2 }, (_, i) => [i + 1, String(i + 1), 12]);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).resolves.toBeDefined();
+		});
+
+		it("wraps both payloads when the retry bit is set", async () => {
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, { val: RPC_RETRY_FEATURE_BIT, ack: true });
+
+			expect((await runCommand("split_segment", [3, 0, 0, 0, 1000])).params).toEqual({ data: [3, 0, 0, 0, 1000], need_retry: 1 });
+			expect((await runCommand("merge_segment", [2, 3])).params).toEqual({ data: [2, 3], need_retry: 1 });
+		});
+
+		it("rejects a malformed request instead of sending it", () => {
+			expect(() => parseSplitSegment([3, 0, 0])).toThrow(/expects \[segmentId/);
+			expect(() => parseSplitSegment([3, 0, 0, 0, "x"])).toThrow(/not a number/);
+			expect(() => parseSplitSegment([-1, 0, 0, 0, 1000])).toThrow(/segment id as its first value/);
+			expect(() => parseSplitSegment([3, 5, 5, 5, 5])).toThrow(/two different end points/);
+
+			expect(() => parseMergeSegment([16])).toThrow(/at least 2 rooms/);
+			expect(() => parseMergeSegment([16, 16])).toThrow(/same room twice/);
+			expect(() => parseMergeSegment("16,17")).toThrow(/JSON array/);
+			expect(() => parseMergeSegment([16, -1])).toThrow(/not a segment id/);
+		});
+	});
+
 	describe("scope", () => {
 		it("claims only the commands it registers", () => {
 			const service = new MapEditService(deps, mockRobot.duid);
-			expect(service.handles("set_clean_sequence")).toBe(true);
-			expect(service.handles("save_furnitures")).toBe(true);
-			expect(service.handles("name_segment")).toBe(true);
+			for (const method of MapEditService.COMMANDS) {
+				expect(service.handles(method)).toBe(true);
+			}
 			expect(service.handles("app_start")).toBe(false);
 		});
 
-		it("does not touch the destructive editor methods", () => {
+		it("offers no raw save_map, because a raw save_map would delete the user's zones", () => {
 			const service = new MapEditService(deps, mockRobot.duid);
-			for (const method of ["save_map", "split_segment", "merge_segment", "set_carpet_area", "set_carpet_clean_mode"]) {
+			// The zone editing goes through add_/remove_ operations that read, change and write back
+			// the complete set (report section 2.1); a pass-through state would let a caller send a
+			// single zone and wipe all the others.
+			expect(service.handles("save_map")).toBe(false);
+			expect(MapEditService.COMMANDS).not.toContain("save_map");
+		});
+
+		it("leaves the carpet zone calls alone, whose payload the report could not pin down", () => {
+			const service = new MapEditService(deps, mockRobot.duid);
+			// `set_carpet_area` and `set_ignore_carpet_zone` are "teilweise belegt": zone_data was
+			// never traced to the single value, so whether they replace or extend is unknown.
+			for (const method of ["set_carpet_area", "set_ignore_carpet_zone"]) {
 				expect(service.handles(method)).toBe(false);
 			}
 		});
