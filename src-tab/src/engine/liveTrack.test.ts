@@ -36,19 +36,28 @@ function snapshot(path: RobotPoint[], mopFlags: number[], position: LiveSnapshot
 }
 
 describe("isMopped", () => {
-	it("treats zero as not mopped and everything else as mopped", () => {
+	it("does not call a merely driven point mopped", () => {
 		expect(isMopped(0)).toBe(false);
-		// 12 is the value every single point carried in the one run that was measured.
-		expect(isMopped(12)).toBe(true);
-		expect(isMopped(1)).toBe(true);
+		// Measured: a pure `app_goto_target` run with no cleaning sent 12 for all 71 of its points.
+		// Reading anything non-zero as mopped painted that whole approach as mopped.
+		expect(isMopped(12)).toBe(false);
+		expect(isMopped(8)).toBe(false);
+	});
+
+	it("recognises the values that dominated the measured mopping run", () => {
+		// `app_segment_clean` of the kitchen: 10 came 1166 times, 2 came 96, 14 came 33.
+		expect(isMopped(10)).toBe(true);
+		expect(isMopped(2)).toBe(true);
 		expect(isMopped(14)).toBe(true);
 	});
 
-	it("does not invent a meaning for individual values", () => {
-		// The byte's meaning is unproven. Any value that is not zero has to answer the same, or the
-		// code would be claiming a value table that nothing supports.
-		const observed = [1, 2, 4, 8, 9, 10, 12, 14];
-		expect(observed.every(value => isMopped(value))).toBe(true);
+	it("splits the observed values on the mop bit and nothing finer", () => {
+		// Every value seen across both runs, sorted by whether it carries 0x02. No meaning is
+		// claimed for the other bits - that would be a value table nothing supports.
+		const withMopBit = [2, 10, 14];
+		const withoutMopBit = [0, 1, 4, 8, 12];
+		expect(withMopBit.every(value => isMopped(value))).toBe(true);
+		expect(withoutMopBit.some(value => isMopped(value))).toBe(false);
 	});
 
 	it("reads a missing or unusable value as not mopped", () => {
@@ -140,7 +149,7 @@ describe("buildLiveTrackSegments", () => {
 		expect(driven[0].mopped).toBe(false);
 		expect(driven[0].points).toHaveLength(3);
 
-		const mopped = buildLiveTrackSegments(snapshot(points, [12, 12, 12]), identity);
+		const mopped = buildLiveTrackSegments(snapshot(points, [10, 10, 10]), identity);
 		expect(mopped).toHaveLength(1);
 		expect(mopped[0].mopped).toBe(true);
 	});
@@ -155,7 +164,7 @@ describe("buildLiveTrackSegments", () => {
 		// Without the repeat the stretch between point 1 and point 2 would belong to neither run
 		// and the track would show a gap at every transition.
 		const built = buildLiveTrackSegments(
-			snapshot([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }, { x: 30, y: 0 }], [0, 0, 12, 12]),
+			snapshot([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }, { x: 30, y: 0 }], [0, 0, 10, 10]),
 			identity,
 		);
 
@@ -170,7 +179,7 @@ describe("buildLiveTrackSegments", () => {
 
 	it("alternates as often as the mop values do", () => {
 		const built = buildLiveTrackSegments(
-			snapshot([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }], [12, 0, 12, 0]),
+			snapshot([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }], [10, 0, 10, 0]),
 			identity,
 		);
 		expect(built.map(segment => segment.mopped)).toEqual([true, false, true, false]);

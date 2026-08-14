@@ -150,24 +150,42 @@ export interface LiveRobotPose {
 }
 
 /**
+ * The bit that separates a mopping point from a merely driven one.
+ *
+ * See {@link isMopped} for the two measurements this rests on.
+ */
+export const MOP_ACTIVE_BIT = 0x02;
+
+/**
  * Whether a path point counts as mopped.
  *
- * **This is the only place in the tab that interprets a mop value, and the interpretation is
- * deliberately the weakest one that is defensible.** In the single measurement available - 71
- * points of one run of the test device - every point carried the value `12`; a raw map dump of the
- * same robot holds 0, 1, 2, 4, 8, 9, 10, 12 and 14. What the number encodes is **unproven**: it
- * could be a mop level, a mop-pad state, or simply "wet here". No table of individual meanings is
- * invented from that, because a guessed table would be read as fact by whoever comes next.
+ * **This is the only place in the tab that interprets a mop value.** The reading rests on two
+ * measured runs of the test device (S7 Max Ultra), not on the app's source:
  *
- * What is safe is the zero: a point with no mop value is not a mopped point. So anything non-zero
- * is treated as mopped, and any finer reading has to wait for a run measured with the mop on and a
- * run measured with it off.
+ * | Run | Values seen |
+ * |---|---|
+ * | `app_goto_target`, driving only, no cleaning | `12` for all 71 points |
+ * | `app_segment_clean` of the kitchen, mopping | `10` (1166x), `12` (120x), `2` (96x), `14` (33x), `8` (24x), `1`, `0` |
+ *
+ * So `12` is what the robot sends while it merely drives, and it is emphatically **not** a mop
+ * marker - the earlier "anything non-zero is mopped" would have painted the whole approach to the
+ * kitchen as mopped. Read as bits, the two runs separate cleanly on `0x02`: the values carrying it
+ * (`2`, `10`, `14`) dominate the mopping run, those without it (`8`, `12`) are what the transit run
+ * consisted of.
+ *
+ * **`0x02` as "mopping here" is therefore inferred from two runs, not proven from the app.** The
+ * app does classify the points - `_parsePath` receives `mopPath.data` and splits the track into
+ * `path`, `pureCleanPath` and `backWashPath`, drawn in `pureMopColor`, `mopPathColor` and
+ * `backWashPathColor` - but the predicate itself sits one indirection deeper in the bytecode and is
+ * not read yet. Beware of one false lead: the literal `12` in `_parsePath` is a distance threshold
+ * for breaking the line, unrelated to these values. Meanings of individual bits beyond `0x02` stay
+ * uninvented; a guessed table would be read as fact by whoever comes next.
  *
  * @param flag The value the robot sent for this path point, if any.
  * @returns True when the point should be drawn as mopped.
  */
 export function isMopped(flag: number | null | undefined): boolean {
-	return typeof flag === "number" && Number.isFinite(flag) && flag !== 0;
+	return typeof flag === "number" && Number.isFinite(flag) && (flag & MOP_ACTIVE_BIT) !== 0;
 }
 
 /**
