@@ -7,7 +7,7 @@ import { FallbackBaseFeatures, FallbackVacuumFeatures } from "./features/fallbac
 import { DEFAULT_PROFILE, VacuumProfile } from "./features/vacuum/v1VacuumFeatures";
 
 import { ProductHelper } from "./productHelper";
-import { getPollIntervalSeconds, isChannelUnavailableError } from "./requestPolicy";
+import { getPollIntervalSeconds, isChannelUnavailableError, resolveActiveIntervalSeconds, resolveBackoffMaxSeconds } from "./requestPolicy";
 import { Feature } from "./features/features.enum";
 import { getB01VariantFromModel } from "./b01Variant";
 import { isB01ParkedState } from "./map/b01/B01StateSemantics";
@@ -285,13 +285,17 @@ export class DeviceManager {
 	 *
 	 * Values come from the declarative policy in requestPolicy.ts: slow while idle or still
 	 * loading, fast while the robot is actually working, exponential backoff after failures.
+	 * The cadence while working and the backoff cap are configurable in the admin UI; the
+	 * policy clamps both, so an out-of-range instance config cannot produce a nonsense cadence.
 	 */
 	private resolvePollIntervalSeconds(duid: string, isActive: boolean): number {
 		return getPollIntervalSeconds({
 			baseIntervalSeconds: this.adapter.config.updateInterval,
 			isActive,
 			isStartingUp: this.adapter.requestsHandler?.startupFinished === false,
-			consecutiveErrors: this.pollErrorCount.get(duid) ?? 0
+			consecutiveErrors: this.pollErrorCount.get(duid) ?? 0,
+			activeIntervalSeconds: this.adapter.config.activePollInterval,
+			errorMaxSeconds: this.adapter.config.pollBackoffMaxInterval
 		});
 	}
 
@@ -312,8 +316,10 @@ export class DeviceManager {
 	/** Starts polling. updateInterval (UI) drives everything except TCP; TCP keepalive is fixed 30s. */
 	public startPolling(): void {
 		const mainPollInterval = this.adapter.config.updateInterval; // e.g. 60s
+		const activeInterval = resolveActiveIntervalSeconds(this.adapter.config.activePollInterval);
+		const backoffMax = resolveBackoffMaxSeconds(this.adapter.config.pollBackoffMaxInterval);
 
-		this.adapter.rLog("System", null, "Info", undefined, undefined, `Starting main poll (base ${mainPollInterval}s, adaptive: faster while cleaning, backoff after errors). Heavy data updates only after activity finishes.`, "info");
+		this.adapter.rLog("System", null, "Info", undefined, undefined, `Starting main poll (idle ${mainPollInterval}s, while cleaning ${activeInterval}s, error backoff up to ${backoffMax}s). Heavy data updates only after activity finishes.`, "info");
 
 		let mainUpdateCount = mainPollInterval; // Slow loop counter
 

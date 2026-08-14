@@ -5,12 +5,18 @@ import {
 	MAX_REQUEST_TIMEOUT_MS,
 	METHOD_TIMEOUTS_MS,
 	MIN_REQUEST_TIMEOUT_MS,
+	MAX_ACTIVE_POLL_INTERVAL_SECONDS,
+	MAX_POLL_BACKOFF_MAX_SECONDS,
+	MIN_ACTIVE_POLL_INTERVAL_SECONDS,
+	MIN_POLL_BACKOFF_MAX_SECONDS,
 	POLL_POLICY,
 	RETRY_POLICY,
 	getPollIntervalSeconds,
 	getRequestTimeoutMs,
 	getRetryDelayMs,
-	isChannelUnavailableError
+	isChannelUnavailableError,
+	resolveActiveIntervalSeconds,
+	resolveBackoffMaxSeconds
 } from "../../src/lib/requestPolicy";
 
 describe("requestPolicy: method dependent timeouts", () => {
@@ -140,6 +146,57 @@ describe("requestPolicy: adaptive polling", () => {
 	it("falls back to 60s for a missing or invalid configured interval", () => {
 		expect(getPollIntervalSeconds({ baseIntervalSeconds: 0, isActive: false })).toBe(60);
 		expect(getPollIntervalSeconds({ baseIntervalSeconds: Number.NaN, isActive: false })).toBe(60);
+	});
+});
+
+describe("requestPolicy: configurable poll cadence", () => {
+	it("keeps the previous defaults when nothing is configured", () => {
+		expect(resolveActiveIntervalSeconds(undefined)).toBe(POLL_POLICY.activeIntervalSeconds);
+		expect(resolveBackoffMaxSeconds(undefined)).toBe(POLL_POLICY.errorMaxSeconds);
+		expect(getPollIntervalSeconds({ baseIntervalSeconds: 60, isActive: true })).toBe(5);
+	});
+
+	it("uses the configured active cadence while the robot is working", () => {
+		expect(getPollIntervalSeconds({ baseIntervalSeconds: 60, isActive: true, activeIntervalSeconds: 2 })).toBe(2);
+		expect(getPollIntervalSeconds({ baseIntervalSeconds: 60, isActive: true, activeIntervalSeconds: 15 })).toBe(15);
+		// Idle is untouched by the active cadence.
+		expect(getPollIntervalSeconds({ baseIntervalSeconds: 60, isActive: false, activeIntervalSeconds: 2 })).toBe(60);
+	});
+
+	it("does not let the generic floor override a deliberately faster configuration", () => {
+		// The 5s floor applies to cadences the adapter derives itself, not to an explicit 2s.
+		expect(MIN_ACTIVE_POLL_INTERVAL_SECONDS).toBeLessThan(POLL_POLICY.minIntervalSeconds);
+		expect(getPollIntervalSeconds({ baseIntervalSeconds: 60, isActive: true, activeIntervalSeconds: 3 })).toBe(3);
+	});
+
+	it("clamps an out of range active cadence instead of trusting the instance config", () => {
+		expect(resolveActiveIntervalSeconds(0)).toBe(POLL_POLICY.activeIntervalSeconds);
+		expect(resolveActiveIntervalSeconds(-5)).toBe(POLL_POLICY.activeIntervalSeconds);
+		expect(resolveActiveIntervalSeconds(Number.NaN)).toBe(POLL_POLICY.activeIntervalSeconds);
+		expect(resolveActiveIntervalSeconds(1)).toBe(MIN_ACTIVE_POLL_INTERVAL_SECONDS);
+		expect(resolveActiveIntervalSeconds(9999)).toBe(MAX_ACTIVE_POLL_INTERVAL_SECONDS);
+		expect(resolveActiveIntervalSeconds(4.6)).toBe(5);
+	});
+
+	it("uses the configured backoff cap for the error path", () => {
+		// 9 consecutive failures would reach 30 * 2^8 without a cap.
+		const context = { baseIntervalSeconds: 60, isActive: false, consecutiveErrors: 9 };
+		expect(getPollIntervalSeconds({ ...context, errorMaxSeconds: 60 })).toBe(60);
+		expect(getPollIntervalSeconds({ ...context, errorMaxSeconds: 900 })).toBe(900);
+		expect(getPollIntervalSeconds(context)).toBe(POLL_POLICY.errorMaxSeconds);
+	});
+
+	it("clamps an out of range backoff cap", () => {
+		expect(resolveBackoffMaxSeconds(0)).toBe(POLL_POLICY.errorMaxSeconds);
+		expect(resolveBackoffMaxSeconds(Number.NaN)).toBe(POLL_POLICY.errorMaxSeconds);
+		expect(resolveBackoffMaxSeconds(1)).toBe(MIN_POLL_BACKOFF_MAX_SECONDS);
+		expect(resolveBackoffMaxSeconds(100000)).toBe(MAX_POLL_BACKOFF_MAX_SECONDS);
+	});
+
+	it("still lets an already faster base interval win over the active cadence", () => {
+		expect(getPollIntervalSeconds({ baseIntervalSeconds: 7, isActive: true, activeIntervalSeconds: 10 })).toBe(7);
+		// Below the generic floor the floor still applies, because 5s was not asked for explicitly.
+		expect(getPollIntervalSeconds({ baseIntervalSeconds: 1, isActive: true, activeIntervalSeconds: 10 })).toBe(POLL_POLICY.minIntervalSeconds);
 	});
 });
 

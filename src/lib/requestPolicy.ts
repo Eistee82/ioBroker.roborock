@@ -169,7 +169,7 @@ export function getRetryDelayMs(retryCount: number, random: () => number = Math.
 export const POLL_POLICY = Object.freeze({
 	/** Never poll a device faster than this, whatever the other rules compute. */
 	minIntervalSeconds: 5,
-	/** Cadence while the robot is actively cleaning / moving. */
+	/** Default cadence while the robot is actively cleaning / moving; overridable per call. */
 	activeIntervalSeconds: 5,
 	/** Lower bound while the adapter is still starting up or a map/large payload is loading. */
 	startupIntervalSeconds: 30,
@@ -177,9 +177,51 @@ export const POLL_POLICY = Object.freeze({
 	errorBaseSeconds: 30,
 	/** Multiplier per further consecutive failure. */
 	errorFactor: 2,
-	/** Cap for the error backoff. */
+	/** Default cap for the error backoff; overridable per call. */
 	errorMaxSeconds: 300
 });
+
+/**
+ * Bounds for the user configurable active cadence (`activePollInterval` in the admin UI).
+ *
+ * The lower bound is deliberately below {@link POLL_POLICY.minIntervalSeconds}: that constant is
+ * the floor for cadences the adapter derives on its own, while an explicitly configured active
+ * cadence is a conscious user decision and must not be silently slowed down.
+ */
+export const MIN_ACTIVE_POLL_INTERVAL_SECONDS = 2;
+/** Upper bound for the configurable active cadence. */
+export const MAX_ACTIVE_POLL_INTERVAL_SECONDS = 60;
+
+/** Bounds for the user configurable error backoff cap (`pollBackoffMaxInterval`). */
+export const MIN_POLL_BACKOFF_MAX_SECONDS = 30;
+/** Upper bound for the configurable error backoff cap. */
+export const MAX_POLL_BACKOFF_MAX_SECONDS = 900;
+
+function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
+	const numeric = typeof value === "number" ? value : Number(value);
+	if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+	return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+
+/** Normalises the configured active cadence; falls back to the policy default. */
+export function resolveActiveIntervalSeconds(configured?: number): number {
+	return clampInteger(
+		configured,
+		MIN_ACTIVE_POLL_INTERVAL_SECONDS,
+		MAX_ACTIVE_POLL_INTERVAL_SECONDS,
+		POLL_POLICY.activeIntervalSeconds
+	);
+}
+
+/** Normalises the configured error backoff cap; falls back to the policy default. */
+export function resolveBackoffMaxSeconds(configured?: number): number {
+	return clampInteger(
+		configured,
+		MIN_POLL_BACKOFF_MAX_SECONDS,
+		MAX_POLL_BACKOFF_MAX_SECONDS,
+		POLL_POLICY.errorMaxSeconds
+	);
+}
 
 /** Inputs that drive the adaptive polling cadence for one device. */
 export type PollContext = {
@@ -191,6 +233,16 @@ export type PollContext = {
 	isStartingUp?: boolean;
 	/** Number of consecutive failed poll cycles for this device. */
 	consecutiveErrors?: number;
+	/**
+	 * Configured cadence while the robot is working (`activePollInterval`, seconds).
+	 * Omitted or out of range -> {@link POLL_POLICY.activeIntervalSeconds}.
+	 */
+	activeIntervalSeconds?: number;
+	/**
+	 * Configured cap for the error backoff (`pollBackoffMaxInterval`, seconds).
+	 * Omitted or out of range -> {@link POLL_POLICY.errorMaxSeconds}.
+	 */
+	errorMaxSeconds?: number;
 };
 
 /**
@@ -199,7 +251,7 @@ export type PollContext = {
  * Order of precedence:
  *  1. consecutive errors  -> exponential backoff, never faster than the configured base
  *  2. startup / loading   -> never faster than `startupIntervalSeconds`
- *  3. active              -> fast cadence, but never below `minIntervalSeconds`
+ *  3. active              -> configured fast cadence, but never below the effective floor
  *  4. idle                -> the configured base interval
  */
 export function getPollIntervalSeconds(context: PollContext): number {
@@ -210,7 +262,7 @@ export function getPollIntervalSeconds(context: PollContext): number {
 	const errors = Math.max(0, Math.floor(context.consecutiveErrors ?? 0));
 	if (errors > 0) {
 		const backoff = Math.min(
-			POLL_POLICY.errorMaxSeconds,
+			resolveBackoffMaxSeconds(context.errorMaxSeconds),
 			POLL_POLICY.errorBaseSeconds * Math.pow(POLL_POLICY.errorFactor, errors - 1)
 		);
 		return Math.max(base, backoff);
@@ -221,7 +273,11 @@ export function getPollIntervalSeconds(context: PollContext): number {
 	}
 
 	if (context.isActive) {
-		return Math.max(POLL_POLICY.minIntervalSeconds, Math.min(base, POLL_POLICY.activeIntervalSeconds));
+		const active = resolveActiveIntervalSeconds(context.activeIntervalSeconds);
+		// The generic floor must never override a deliberately configured faster cadence,
+		// otherwise a user setting of 2 s would silently stay at the 5 s default.
+		const floor = Math.min(POLL_POLICY.minIntervalSeconds, active);
+		return Math.max(floor, Math.min(base, active));
 	}
 
 	return Math.max(POLL_POLICY.minIntervalSeconds, base);

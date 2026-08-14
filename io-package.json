@@ -200,6 +200,8 @@
     "password": "",
     "enable_map_creation": false,
     "updateInterval": 60,
+    "activePollInterval": 5,
+    "pollBackoffMaxInterval": 300,
     "hostname_ip": "iobroker",
     "cameraPin": 1234,
     "region": "eu",
