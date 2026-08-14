@@ -10,7 +10,9 @@ const projectIgnores = [
 	"**/admin/**",
 	"**/test/**",
 	// The React tab is its own project with its own tsconfig; the adapter rules (node globals,
-	// JSDoc on every function) do not fit JSX. It is covered by `npm run typecheck:tab`.
+	// JSDoc on every function) do not fit JSX - pointed at a component they demand a `@param`
+	// per destructured prop and say nothing useful. It brings its own React/Hooks rules in
+	// `src-tab/eslint.config.mjs`, run by `npm run lint:tab`, which `npm run lint` calls.
 	"**/src-tab/**",
 	"**/scripts/**",
 	"**/.antigravityignore/**",

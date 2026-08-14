@@ -36,15 +36,21 @@ jobs:
           node-version: '24.x'
           # Uncomment the following line if your adapter cannot be installed using 'npm ci'
           # install-command: 'npm install'
-          lint: true
+          # Linting happens further down instead of inside this action: `npm run lint` now also
+          # lints the admin tab, which needs `src-tab/node_modules` to exist first.
+          lint: false
       - name: TypeScript check
         run: npm run typecheck
-      # The admin tab is its own Vite project, so it is installed, type checked and built once
-      # here instead of in every cell of the adapter test matrix.
+      # The admin tab is its own Vite project, so it is installed, linted, type checked, tested
+      # and built once here instead of in every cell of the adapter test matrix.
       - name: Install admin tab dependencies
         run: npm run install:tab
+      - name: Lint (adapter and admin tab)
+        run: npm run lint
       - name: TypeScript check (admin tab)
         run: npm run typecheck:tab
+      - name: Test admin tab
+        run: npm run test:tab
       - name: Build admin tab
         run: npm run build:tab
 
