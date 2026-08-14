@@ -284,5 +284,7 @@
   "ui_live_track": "Rastro ao vivo",
   "ui_live_track_driven": "Percorrido",
   "ui_live_track_mopped": "Esfregado",
-  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Endereço IP ou nome da interface (por exemplo, eth0) à qual o socket UDP de descoberta se liga. Vazio significa todas as interfaces, o que pode falhar em hosts com várias redes."
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Endereço IP ou nome da interface (por exemplo, eth0) à qual o socket UDP de descoberta se liga. Vazio significa todas as interfaces, o que pode falhar em hosts com várias redes.",
+  "clean_mode_tab": "Modo de limpeza",
+  "set_clean_motor_mode": "Definir modo de limpeza"
 }

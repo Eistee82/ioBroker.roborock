@@ -284,5 +284,7 @@
   "ui_live_track": "实时轨迹",
   "ui_live_track_driven": "已行驶",
   "ui_live_track_mopped": "已拖地",
-  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "UDP 发现套接字绑定的 IP 地址或接口名称（例如 eth0）。留空表示所有接口，这在具有多个网络的主机上可能会失败。"
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "UDP 发现套接字绑定的 IP 地址或接口名称（例如 eth0）。留空表示所有接口，这在具有多个网络的主机上可能会失败。",
+  "clean_mode_tab": "清洁模式",
+  "set_clean_motor_mode": "设置清洁模式"
 }

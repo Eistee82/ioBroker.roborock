@@ -13,6 +13,19 @@ import {
 	WATER_BOX_MODE_LABELS_STANDARD,
 	usesShakeMopWaterLabels
 } from "./vacuumConstants";
+import {
+	CLEANING_MODE_STATES,
+	CLEANING_MODE_STATE_VALUES,
+	FAN_POWER_MAX_PLUS,
+	FAN_POWER_SMART,
+	MOP_MODE_SMART,
+	WATER_BOX_MODE_SMART,
+	buildCleanMotorModePresets,
+	deriveCleaningMode,
+	supportsCleanModeMaxPlus,
+	supportsPureCleanMop
+} from "./cleaningModes";
+import type { CleaningModeCapabilities } from "./cleaningModes";
 import { floorFolderId, normalizeMapFlag, normalizeRoomId } from "../../map/roomKey";
 
 // --- Shared Constants ---
@@ -75,6 +88,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		// Deep clone profile to avoid mutating shared static objects
 		this.profile = structuredClone(profile);
 		this.applyShakeMopWaterLabels();
+		this.applyMaxPlusFanLevel();
 		this.consumableService = new V1ConsumableService(this.deps, this.duid, this.profile);
 		this.stationService = new StationService(this.deps, this.duid);
 		this.mapService = new V1MapService(this.deps, this.duid);
@@ -122,6 +136,62 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		if (water[203] !== undefined && water[208] === undefined) {
 			water[208] = WATER_BOX_MODE_EXTREME_LABEL;
 		}
+	}
+
+	/**
+	 * Gives robots whose model table proves MAX+ the fifth suction level.
+	 *
+	 * `fan_power = 108` is the level the app labels MAX+. Whether a robot has it is decided by
+	 * `DM.support(MF.CleanMode_MaxPlus)` against a table compiled into the control plugin, not by
+	 * anything the robot reports - see {@link supportsCleanModeMaxPlus} for how that table has to be
+	 * read. Most model classes in this folder already declare the level themselves; what this adds
+	 * it to are the ~24 proven models that have no class of their own and therefore run on the
+	 * generic profile.
+	 *
+	 * Three guards keep it from doing harm:
+	 *
+	 * - It only fires next to the regular levels (`104` present), never on a model that declares its
+	 *   own value range.
+	 * - It never overwrites and never removes. A profile that already declares 108, or that maps
+	 *   MAX+ onto another value the way the Saros models map it onto 110, is left exactly as it is -
+	 *   including the profiles whose 108 the plugin table does not confirm. Withholding a level a
+	 *   robot has is the worse error of the two: the robot rejects a level it does not have, but a
+	 *   level the adapter hides is gone.
+	 */
+	private applyMaxPlusFanLevel(): void {
+		const fan = this.profile.mappings.fan_power;
+		if (!fan || !supportsCleanModeMaxPlus(this.robotModel)) {
+			return;
+		}
+		if (fan[104] === undefined || fan[FAN_POWER_MAX_PLUS] !== undefined) {
+			return;
+		}
+		if (Object.values(fan).includes("Max+")) {
+			return;
+		}
+		fan[FAN_POWER_MAX_PLUS] = "Max+";
+	}
+
+	/**
+	 * What the mode logic may assume about this robot.
+	 *
+	 * `smartPlan` is the interesting one. 110 / 209 / 306 are SmartPlan in the control plugin, but
+	 * several newer model profiles in this folder give those very values a different meaning - the
+	 * Saros 10 profile calls `fan_power = 110` "Max+". Where a profile claims the value, the profile
+	 * wins: it was written for that device, while the plugin table is a snapshot of one bundle.
+	 */
+	protected getCleaningModeCapabilities(): CleaningModeCapabilities {
+		const mappings = this.profile.mappings;
+		const claimsSmartValues =
+			mappings.fan_power?.[FAN_POWER_SMART] !== undefined ||
+			mappings.water_box_mode?.[WATER_BOX_MODE_SMART] !== undefined ||
+			mappings.mop_mode?.[MOP_MODE_SMART] !== undefined;
+
+		return {
+			pureCleanMop: supportsPureCleanMop(this.robotModel),
+			smartPlan: !claimsSmartValues,
+			mopRoutes: mappings.mop_mode !== undefined
+		};
 	}
 
 	public override async initializeDeviceData(): Promise<void> {
@@ -176,21 +246,19 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			def: Number(Object.keys(this.profile.mappings.fan_power)[0])
 		});
 
-		// Consolidated cleaning mode with all parameters (Custom Mode)
-		// We define states (Presets) to make it selectable in UI
+		// One call sets all three values at once, which is also the only way to switch cleaning mode:
+		// the mode is a derivation from the triple, not a command of its own (see cleaningModes.ts).
+		// A model profile may bring its own presets; otherwise they are generated from the mode logic.
+		const cleanMotorModePresets =
+			this.profile.cleanMotorModePresets ||
+			buildCleanMotorModePresets(this.robotModel, {}, this.getCleaningModeCapabilities());
+
 		this.addCommand("set_clean_motor_mode", {
 			type: "string",
 			role: "value", // changed from json to value to support dropdown
-			name: "Set Custom Cleaning Mode",
-			def: this.profile.cleanMotorModePresets ? Object.keys(this.profile.cleanMotorModePresets)[0] : '{"fan_power":102,"mop_mode":300,"water_box_mode":201}',
-			states: this.profile.cleanMotorModePresets || {
-				'{"fan_power":102,"mop_mode":300,"water_box_mode":201}': "Indv.",
-				'{"fan_power":102,"mop_mode":300,"water_box_mode":200}': "Saugen",
-				'{"fan_power":105,"mop_mode":303,"water_box_mode":202}': "Wischen",
-				'{"fan_power":102,"mop_mode":301,"water_box_mode":201}': "Vac & Mop",
-				'{"fan_power":102,"mop_mode":306,"water_box_mode":201}': "Saugen, dann Wischen",
-				'{"fan_power":106,"mop_mode":302,"water_box_mode":204}': "Smart Plan"
-			}
+			name: translations["set_clean_motor_mode"] || "Set Cleaning Mode",
+			def: Object.keys(cleanMotorModePresets)[0],
+			states: cleanMotorModePresets
 		});
 
 		if (this.profile.mappings.water_box_mode) {
@@ -1003,6 +1071,44 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
     	}
 
 		await Promise.all(promises);
+		await this.publishCleaningMode(validStatus);
+	}
+
+	/**
+	 * Publishes the cleaning mode the app would show for the reported values.
+	 *
+	 * The robot has no field for it - the mode is what `fan_power`, `water_box_mode` and `mop_mode`
+	 * mean together (`_appanalysis/16-reinigungsmodi.md` §1.4). Deriving it here rather than in the
+	 * user interface keeps the rules in one place, and a rule that reads `water_box_mode = 200` as
+	 * "vacuum only" instead of "water off" is not something every consumer should have to know.
+	 *
+	 * Read-only on purpose. The write path is `commands.set_clean_motor_mode`, which carries the
+	 * whole triple in one call; a second, writable copy of the same thing would let the two disagree.
+	 */
+	private async publishCleaningMode(status: Record<string, any>): Promise<void> {
+		const mode = deriveCleaningMode(
+			{
+				fan_power: status.fan_power,
+				water_box_mode: status.water_box_mode,
+				mop_mode: status.mop_mode
+			},
+			this.getCleaningModeCapabilities()
+		);
+
+		if (mode === null) {
+			return;
+		}
+
+		const path = `Devices.${this.duid}.deviceStatus.clean_mode_tab`;
+		await this.deps.ensureState(path, {
+			name: this.deps.adapter.translations["clean_mode_tab"] || "Cleaning mode",
+			type: "number",
+			role: "value",
+			read: true,
+			write: false,
+			states: CLEANING_MODE_STATES
+		} as ioBroker.StateCommon);
+		await this.deps.adapter.setStateChanged(path, { val: CLEANING_MODE_STATE_VALUES[mode], ack: true });
 	}
 
 	/** Allows device-specific profiles to derive states from dock_error_status. */

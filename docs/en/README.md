@@ -271,7 +271,7 @@ Writable objects in `Devices.<duid>.commands`.
 | `save_furnitures` | Furniture ([1,id,x0,y0,x1,y1,x2,y2,x3,y3,type,subType,direction] adds, [0,id] deletes) | `string` | `json` | `""` |  | 33/34 |
 | `set_carpet_clean_mode` | Carpet Avoidance Mode | `number` | `value.list` | `0` | `0` = Avoid<br>`1` = Rise<br>`2` = Ignore<br>`3` = Dynamic Lift | 33/34 |
 | `set_carpet_mode` | Carpet Boost | `string` | `json` | `""` |  | 33/34 |
-| `set_clean_motor_mode` | Set Custom Cleaning Mode | `string` | `value` |  | model dependent | 33/34 |
+| `set_clean_motor_mode` | Set Cleaning Mode | `string` | `value` |  | model dependent | 33/34 |
 | `set_clean_repeat_times` | Clean Repeat Times | `number` | `value` | `1` | `1` = 1x<br>`2` = 2x | 33/34 |
 | `set_clean_sequence` | Cleaning order (segment IDs, [] resets) | `string` | `json` | `"[]"` |  | 33/34 |
 | `set_custom_mode` | Fan Power | `number` | `level` |  | model dependent | 33/34 |
@@ -413,6 +413,7 @@ Values reported by the robot in `Devices.<duid>.deviceStatus`.
 | `clean_area` |  | `number` | `m²` | [m²] |
 | `clean_finish` |  | `string` |  |  |
 | `clean_fluid` |  | `number` |  |  |
+| `clean_mode_tab` |  | `number` |  | `0` = Vac & Mop<br>`1` = Mop<br>`2` = Vacuum<br>`3` = Custom<br>`4` = SmartPlan<br>`5` = General |
 | `clean_percent` |  | `number` | `%` | [%] |
 | `clean_tidyup_status` | Tidy-Up Status | `number` |  |  |
 | `clean_time` |  | `number` | `min` | [min] |

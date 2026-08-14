@@ -284,5 +284,7 @@
   "ui_live_track": "Ślad na żywo",
   "ui_live_track_driven": "Przejechane",
   "ui_live_track_mopped": "Umyte",
-  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Adres IP lub nazwa interfejsu (na przykład eth0), do którego przypisywane jest gniazdo UDP wykrywania. Puste oznacza wszystkie interfejsy, co może zawieść na hostach z kilkoma sieciami."
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "Adres IP lub nazwa interfejsu (na przykład eth0), do którego przypisywane jest gniazdo UDP wykrywania. Puste oznacza wszystkie interfejsy, co może zawieść na hostach z kilkoma sieciami.",
+  "clean_mode_tab": "Tryb sprzątania",
+  "set_clean_motor_mode": "Ustaw tryb sprzątania"
 }

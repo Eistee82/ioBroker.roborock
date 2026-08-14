@@ -1,4 +1,5 @@
 import { ADAPTER_ERRORS_EN } from "./adapterErrorMapping";
+import { CLEANING_MODE_STATES } from "./cleaningModes";
 
 /**
  * # The cleaning-mode enums, as the Roborock app itself labels them
@@ -399,6 +400,8 @@ export const VACUUM_CONSTANTS = {
 		clean_percent: { type: "number", unit: "%" },
 		water_box_mode: { type: "number", states: WATER_BOX_MODE_LABELS },
 		mop_mode: { type: "number", states: MOP_MODE_LABELS },
+		// Derived, not reported: what the three values above mean together. See cleaningModes.ts.
+		clean_mode_tab: { type: "number", states: CLEANING_MODE_STATES },
 		carpet_mode: {
 			type: "string",
 			states: {

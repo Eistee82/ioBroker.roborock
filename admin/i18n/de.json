@@ -284,5 +284,7 @@
   "ui_live_track": "Live-Spur",
   "ui_live_track_driven": "Gefahren",
   "ui_live_track_mopped": "Gewischt",
-  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-Adresse oder Schnittstellenname (zum Beispiel eth0), an die der UDP-Discovery-Socket gebunden wird. Leer bedeutet alle Schnittstellen, was auf Hosts mit mehreren Netzen fehlschlagen kann."
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-Adresse oder Schnittstellenname (zum Beispiel eth0), an die der UDP-Discovery-Socket gebunden wird. Leer bedeutet alle Schnittstellen, was auf Hosts mit mehreren Netzen fehlschlagen kann.",
+  "clean_mode_tab": "Reinigungsmodus",
+  "set_clean_motor_mode": "Reinigungsmodus setzen"
 }

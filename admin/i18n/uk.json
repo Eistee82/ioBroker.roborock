@@ -284,5 +284,7 @@
   "ui_live_track": "Живий слід",
   "ui_live_track_driven": "Пройдено",
   "ui_live_track_mopped": "Вимито",
-  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-адреса або назва інтерфейсу (наприклад, eth0), до якого прив’язується UDP-сокет виявлення. Порожнє означає всі інтерфейси, що може не спрацювати на хостах із кількома мережами."
+  "IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.": "IP-адреса або назва інтерфейсу (наприклад, eth0), до якого прив’язується UDP-сокет виявлення. Порожнє означає всі інтерфейси, що може не спрацювати на хостах із кількома мережами.",
+  "clean_mode_tab": "Режим прибирання",
+  "set_clean_motor_mode": "Встановити режим прибирання"
 }
