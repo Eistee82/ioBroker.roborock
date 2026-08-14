@@ -103,6 +103,13 @@ Enable **Enable Map Creation** on the *Map* tab to let the adapter render the ma
 map, the room selection and the dock and consumables panels are shown in the adapter's
 own web UI tab inside the ioBroker admin interface - no manual URL is needed.
 
+Above the map sits the cleaning mode - Vac & Mop, Mop, Vacuum - and below it the suction
+level, mop route and water level as switch bars. The mode decides which steps are offered:
+mopping shows no suction level, vacuuming no water level, and the MAX+ suction level
+appears on the vacuum-only mode alone, because that is the only mode the robot keeps it
+in. Switching the mode sends all three values in a single call. A robot that does not have
+these modes keeps the plain level bars.
+
 ## Reference
 
 <!-- BEGIN:config -->

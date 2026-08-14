@@ -3,6 +3,7 @@ import { Alert, Box, MenuItem, Snackbar, Stack, TextField, Typography } from "@m
 import { I18n, type AdminConnection } from "@iobroker/adapter-react-v5";
 import { MapEngine } from "../engine/MapEngine";
 import type {
+	CleaningModeTabsModel,
 	ConsumablePartModel,
 	DockModel,
 	EngineConnection,
@@ -84,6 +85,8 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [selectedFloor, setSelectedFloor] = useState<string>("");
 	const [status, setStatus] = useState<StatusModel>(EMPTY_STATUS);
 	const [modes, setModes] = useState<ModeModel[]>([]);
+	// The cleaning-mode tabs above the steps; an empty list keeps the plain selectors.
+	const [cleaningModes, setCleaningModes] = useState<CleaningModeTabsModel>({ tabs: [], current: null });
 	// Folder of the Roborock graphics of the selected robot; null means "no icons, text only".
 	const [assetBase, setAssetBase] = useState<string | null>(null);
 	const [rooms, setRooms] = useState<RoomSelectionModel>({ selected: 0, available: 0 });
@@ -123,6 +126,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			},
 			onStatus: setStatus,
 			onModes: setModes,
+			onCleaningModes: setCleaningModes,
 			onAssetBase: setAssetBase,
 			onFloors: (list, selected) => {
 				setFloors(list);
@@ -280,12 +284,14 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				alignItems="center"
 				sx={{ position: "absolute", left: 12, right: 12, bottom: 12, pointerEvents: "none" }}
 			>
-				{modes.length ? (
+				{modes.length || cleaningModes.tabs.length ? (
 					<FloatingSurface>
 						<ModeBar
 							modes={modes}
+							cleaningModes={cleaningModes}
 							assetBase={assetBase}
 							onChange={(command, value) => engineRef.current?.setMode(command, value)}
+							onSelectCleaningMode={payload => engineRef.current?.setCleaningMode(payload)}
 						/>
 					</FloatingSurface>
 				) : null}

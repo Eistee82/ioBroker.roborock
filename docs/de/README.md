@@ -107,6 +107,13 @@ Karte rendert. Die Karte, die Raumauswahl sowie die Panels für Station und Verb
 zeigt der eigene Web-Reiter des Adapters in der ioBroker-Admin-Oberfläche - eine URL muss
 man nicht von Hand eingeben.
 
+Über der Karte steht der Reinigungsmodus - Vac & Mop, Wischen, Saugen - und darunter
+Saugkraft, Wischstrecke und Wassermenge als Schaltleisten. Der Modus entscheidet, welche
+Stufen angeboten werden: beim Wischen gibt es keine Saugstufe, beim Saugen keine
+Wassermenge, und die Saugstufe MAX+ erscheint nur im Modus *Saugen*, weil der Roboter sie
+nur dort behält. Ein Moduswechsel schickt alle drei Werte in einem einzigen Aufruf. Ein
+Roboter ohne diese Modi behält die einfachen Stufenleisten.
+
 ## Referenz
 
 <!-- BEGIN:config -->

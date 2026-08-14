@@ -32,7 +32,9 @@ import type { Furniture } from "@adapter/lib/map/v1/types";
  * with an absolute prefix and silently rendered as broken images in every installation.
  */
 export const ASSET_BASE = "../../files/roborock/assets";
+import { buildCleaningModeTabs } from "./cleaningModes";
 import type {
+	CleaningModeTab,
 	ConsumablePartModel,
 	DockControlModel,
 	DockStatusModel,
@@ -144,6 +146,15 @@ const ROOM_LABEL_MIN_PX = 14;
 const ROOM_LABEL_MAX_PX = 26;
 /** How much of a high `devicePixelRatio` is passed on; 1 would be the full ratio. */
 const ROOM_LABEL_DENSITY_WEIGHT = 0.15;
+
+/**
+ * The one command that switches the cleaning mode.
+ *
+ * There is no "switch mode" call: the mode is what `fan_power`, `water_box_mode` and `mop_mode`
+ * mean together, and each of the adapter's presets is one ready-made triple. See
+ * `engine/cleaningModes.ts`.
+ */
+const CLEAN_MOTOR_MODE_COMMAND = "set_clean_motor_mode";
 
 /** Command objects the mode selectors are built from; all values come from `common.states`. */
 const MODE_COMMANDS = [
@@ -440,6 +451,8 @@ export class MapEngine {
 		fanPower: number | null;
 		mopMode: number | null;
 		waterBoxMode: number | null;
+		/** The mode the three values above add up to, derived by the adapter. */
+		cleanModeTab: number | null;
 	} = {
 		state: null,
 		status: null,
@@ -450,11 +463,14 @@ export class MapEngine {
 		fanPower: null,
 		mopMode: null,
 		waterBoxMode: null,
+		cleanModeTab: null,
 	};
 	/** Value texts from the object definitions, so the UI needs no model knowledge. */
 	private stateTexts: Record<string, string> = {};
 	private errorTexts: Record<string, string> = {};
 	private modeControls: ModeControl[] = [];
+	/** Cleaning modes this device can be switched into; empty means the bar stays away. */
+	private cleaningModeTabs: CleaningModeTab[] = [];
 
 	// Consumable and dock panels. Both are built from the device objects, so a device that
 	// publishes nothing keeps its panel hidden instead of showing an empty box.
@@ -918,6 +934,9 @@ export class MapEngine {
 		this.roomLabelCount = 0;
 		this.userAdjustedView = false;
 		this.connectionChannel = "";
+		// The previous robot's modes are not this one's; they are filled in again by
+		// `populateModeControls` once its command objects have been read.
+		this.cleaningModeTabs = [];
 		this.resetStatusValues();
 		this.updateMapPlaceholder();
 		this.renderRoomSelection();
@@ -944,6 +963,9 @@ export class MapEngine {
 			[`${deviceRoot}.deviceStatus.fan_power`, "fanPower"],
 			[`${deviceRoot}.deviceStatus.mop_mode`, "mopMode"],
 			[`${deviceRoot}.deviceStatus.water_box_mode`, "waterBoxMode"],
+			// Derived by the adapter out of the three values above, because "water_box_mode = 200"
+			// means "vacuum only" rather than "water off" - a rule the UI should not have to know.
+			[`${deviceRoot}.deviceStatus.clean_mode_tab`, "cleanModeTab"],
 		]);
 
 		// Transport channel of the local/cloud work package; simply hidden while it is absent.
@@ -1446,6 +1468,13 @@ export class MapEngine {
 			control.options = states ? Object.entries(states).map(([value, label]) => ({ value, label })) : [];
 		}
 
+		// The tab bar is built from the presets of the one command that switches all three values at
+		// once. A device whose command object is absent or carries unknown labels gets no bar and
+		// keeps the plain selectors - see `buildCleaningModeTabs`.
+		const cleanMotorMode = await this.getObjectSafe(`${deviceRoot}.commands.${CLEAN_MOTOR_MODE_COMMAND}`);
+		if (this.currentRobotDuid !== duid) return;
+		this.cleaningModeTabs = buildCleaningModeTabs(this.normalizeStates(cleanMotorMode?.common?.states));
+
 		this.publishModes();
 	}
 
@@ -1483,6 +1512,7 @@ export class MapEngine {
 				};
 			});
 		this.host.onModes?.(models);
+		this.host.onCleaningModes?.({ tabs: this.cleaningModeTabs, current: this.statusValues.cleanModeTab });
 	}
 
 	/** Fills the floor selector from the `load_multi_map` command object the adapter maintains. */
@@ -2813,6 +2843,26 @@ export class MapEngine {
 	public setMode(command: string, value: string): void {
 		if (!this.currentRobotDuid) return;
 		void this.sendCommand("set_state", { duid: this.currentRobotDuid, folder: "commands", command, value });
+	}
+
+	/**
+	 * Switches the cleaning mode by writing one of the presets the adapter published.
+	 *
+	 * The payload carries all three values at once, which is the only way the mode can be switched
+	 * without the robot passing through a combination nobody asked for. Only a payload that came out
+	 * of `commands.set_clean_motor_mode.common.states` is sent, and the adapter's generic writer
+	 * checks it against those very states again before it acts.
+	 *
+	 * @param payload One of the payloads of {@link MapEngine.cleaningModeTabs}.
+	 */
+	public setCleaningMode(payload: string): void {
+		if (!this.currentRobotDuid || !this.cleaningModeTabs.some(tab => tab.payload === payload)) return;
+		void this.sendCommand("set_state", {
+			duid: this.currentRobotDuid,
+			folder: "commands",
+			command: CLEAN_MOTOR_MODE_COMMAND,
+			value: payload,
+		});
 	}
 
 	/** Starts a segment run for the rooms the user picked in the map. */

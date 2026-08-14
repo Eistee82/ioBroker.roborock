@@ -60,6 +60,30 @@ export interface ModeModel {
 	value: string | null;
 }
 
+/**
+ * One tab of the cleaning-mode bar.
+ *
+ * The mode is not a command of its own: it is what `fan_power`, `water_box_mode` and `mop_mode`
+ * mean together, so switching a tab writes one ready-made triple through
+ * `commands.set_clean_motor_mode`. See `engine/cleaningModes.ts`.
+ */
+export interface CleaningModeTab {
+	/** Value `deviceStatus.clean_mode_tab` carries while the robot is in this mode. */
+	mode: number;
+	/** The exact payload to write into `commands.set_clean_motor_mode` to switch into it. */
+	payload: string;
+	/** Translation key of the tab caption. */
+	labelKey: string;
+}
+
+/** The cleaning-mode bar: what can be switched to, and what the robot is in. */
+export interface CleaningModeTabsModel {
+	/** Empty whenever the device offers nothing to switch between; the bar then stays away. */
+	tabs: CleaningModeTab[];
+	/** Mode the robot reports, or null while unknown. May be a mode no tab stands for. */
+	current: number | null;
+}
+
 /** One published value of a consumable, e.g. remaining hours or remaining percent. */
 export interface ConsumableMetricModel {
 	name: string;
@@ -140,6 +164,8 @@ export interface MapEngineHost {
 	onRobots?: (robots: RobotEntry[], selected: string | null) => void;
 	onStatus?: (status: StatusModel) => void;
 	onModes?: (modes: ModeModel[]) => void;
+	/** The cleaning-mode tab bar, republished with every status update. */
+	onCleaningModes?: (model: CleaningModeTabsModel) => void;
 	/**
 	 * Folder the current robot's Roborock graphics live in, e.g.
 	 * `../../files/roborock/assets/roborock.vacuum.a65`, or null while the model is unknown.
