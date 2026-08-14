@@ -112,6 +112,7 @@
   "roborock adapter settings": "Adapter settings for roborock",
   "rss": "Signal quality",
   "rtsp": "rtsp stream",
+  "save_furnitures": "Furniture ([1,id,x0,y0,x1,y1,x2,y2,x3,y3,type,subType,direction] adds, [0,id] deletes)",
   "sensor_dirty_time": "Time since last cleaning of sensors",
   "set_carpet_clean_mode": "Carpet Avoidance Mode",
   "set_carpet_mode": "Carpet Boost",

@@ -112,6 +112,7 @@
   "roborock adapter settings": "Adaptereinstellungen für roborock",
   "rss": "Signalqualität",
   "rtsp": "RTSP-Stream",
+  "save_furnitures": "Möbel ([1,id,x0,y0,x1,y1,x2,y2,x3,y3,Typ,Untertyp,Ausrichtung] legt an, [0,id] löscht)",
   "sensor_dirty_time": "Zeit seit der letzten Reinigung der Sensoren",
   "set_carpet_clean_mode": "Teppichvermeidungsmodus",
   "set_carpet_mode": "Teppich-Boost",

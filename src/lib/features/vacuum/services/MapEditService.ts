@@ -104,6 +104,124 @@ export function readRetryId(response: unknown): number | undefined | null {
 }
 
 /**
+ * Furniture types the control plugin knows (`FurnitureType`, report section 1.8).
+ *
+ * Used for a warning only - a robot on newer firmware may well accept a type that is not in this
+ * table, and refusing it here would be worse than letting the robot decide.
+ */
+export const FURNITURE_TYPES: Readonly<Record<number, string>> = {
+	0: "FT_UNKNOWN",
+	43: "FT_TVCABINET",
+	44: "FT_TOILET",
+	45: "FT_BED",
+	46: "FT_SOFA",
+	47: "FT_DINNERTABLE",
+	48: "FT_TEATABLE",
+	49: "FT_SHOECABINET",
+	50: "FT_NIGHTSTAND",
+	51: "FT_WARDROBE",
+	52: "FT_OPENCATTOILET",
+	53: "FT_CATTOILET",
+	54: "FT_PETCAGE",
+	55: "FT_PETWATERLOO",
+	56: "FT_PETBOWL",
+	57: "FT_FLOORMIRROR",
+	58: "FT_CATTREE",
+};
+
+/** Length of an "add or change" furniture record (report section 1.8). */
+const FURNITURE_UPSERT_LENGTH = 13;
+
+/** Payload of `save_furnitures`. */
+export interface FurniturePayload {
+	map_flag: number;
+	data: number[][];
+}
+
+/**
+ * Reads a furniture edit a user wrote into the command state.
+ *
+ * Report section 1.8: the payload is `{map_flag, data}`, and every record in `data` is either
+ * `[1, id, x0,y0, x1,y1, x2,y2, x3,y3, type, subType, direction]` to add or change a piece
+ * (`id = -1` for a new one) or `[0, id]` to delete one. Unlike `save_map` this is differential:
+ * the robot only touches the pieces the payload names, so an incomplete list loses nothing.
+ * @param raw Value of the command state, already JSON-parsed by the adapter where possible.
+ * @param defaultMapFlag Map the edit applies to when the payload does not name one.
+ * @returns The validated payload.
+ * @throws If the value is not a well-formed furniture edit.
+ */
+export function parseFurnitures(raw: unknown, defaultMapFlag: number): FurniturePayload {
+	let records: unknown;
+	let mapFlag: number = defaultMapFlag;
+
+	if (Array.isArray(raw)) {
+		records = raw;
+	} else if (raw !== null && typeof raw === "object") {
+		const record = raw as Record<string, unknown>;
+		records = record.data;
+		if (record.map_flag !== undefined) {
+			const flag = Number(record.map_flag);
+			if (!Number.isInteger(flag) || flag < 0) {
+				throw new Error(`save_furnitures got an invalid map_flag: ${JSON.stringify(record.map_flag)}`);
+			}
+			mapFlag = flag;
+		}
+	} else {
+		throw new Error("save_furnitures expects {\"map_flag\": <map>, \"data\": [...]} or a bare array of records.");
+	}
+
+	if (!Array.isArray(records)) {
+		throw new Error("save_furnitures expects a 'data' array of furniture records.");
+	}
+	if (records.length === 0) {
+		throw new Error("save_furnitures got an empty record list; nothing would change.");
+	}
+
+	if (!Number.isInteger(mapFlag) || mapFlag < 0) {
+		throw new Error(`save_furnitures has no usable map_flag (got ${mapFlag}); name one explicitly.`);
+	}
+
+	return { map_flag: mapFlag, data: records.map(parseFurnitureRecord) };
+}
+
+/**
+ * Validates one furniture record.
+ * @param raw One entry of the `data` array.
+ * @param index Position in the list, for the error message.
+ * @returns The record as plain numbers.
+ */
+function parseFurnitureRecord(raw: unknown, index: number): number[] {
+	if (!Array.isArray(raw) || raw.length === 0) {
+		throw new Error(`save_furnitures record ${index} is not a record array.`);
+	}
+
+	const values = raw.map((entry, position) => {
+		const value = typeof entry === "number" ? entry : Number(entry);
+		if (!Number.isInteger(value)) {
+			throw new Error(`save_furnitures record ${index}, position ${position} is not a whole number: ${JSON.stringify(entry)}`);
+		}
+		return value;
+	});
+
+	const operation = values[0];
+	if (operation === 0) {
+		if (values.length !== 2) {
+			throw new Error(`save_furnitures record ${index}: a delete is [0, id], got ${values.length} values.`);
+		}
+		return values;
+	}
+
+	if (operation === 1) {
+		if (values.length !== FURNITURE_UPSERT_LENGTH) {
+			throw new Error(`save_furnitures record ${index}: an add or change is [1, id, x0,y0, x1,y1, x2,y2, x3,y3, type, subType, direction] - ${FURNITURE_UPSERT_LENGTH} values, got ${values.length}.`);
+		}
+		return values;
+	}
+
+	throw new Error(`save_furnitures record ${index}: the first value is the operation, 1 to add or change and 0 to delete, got ${operation}.`);
+}
+
+/**
  * Reads the cleaning sequence a user wrote into the command state.
  *
  * Report section 1.9: the parameter is the ordered array of segment ids, the same shape
@@ -136,11 +254,18 @@ export function parseCleanSequence(raw: unknown): number[] {
  */
 export class MapEditService {
 	/** Commands this service registers and handles. */
-	public static readonly COMMANDS: readonly string[] = ["set_clean_sequence"];
+	public static readonly COMMANDS: readonly string[] = ["set_clean_sequence", "save_furnitures"];
 
+	/**
+	 * @param deps Feature dependencies.
+	 * @param duid Device this service belongs to.
+	 * @param getMapFlag Map an edit applies to when the payload does not name one; the feature class
+	 * knows the active map, the service does not.
+	 */
 	constructor(
 		private readonly deps: FeatureDependencies,
-		private readonly duid: string
+		private readonly duid: string,
+		private readonly getMapFlag: () => number = () => 0
 	) {}
 
 	/**
@@ -155,6 +280,13 @@ export class MapEditService {
 			role: "json",
 			def: "[]",
 			name: translations["set_clean_sequence"] || "Cleaning order (segment IDs, [] resets)",
+		} as CommandSpec);
+
+		addCommand("save_furnitures", {
+			type: "json",
+			role: "json",
+			def: "",
+			name: translations["save_furnitures"] || "Furniture ([1,id,x0,y0,x1,y1,x2,y2,x3,y3,type,subType,direction] adds, [0,id] deletes)",
 		} as CommandSpec);
 	}
 
@@ -180,7 +312,35 @@ export class MapEditService {
 			return { method, params: await this.wrap(method, sequence) };
 		}
 
+		if (method === "save_furnitures") {
+			const payload = parseFurnitures(params, this.getMapFlag());
+			this.warnAboutUnknownFurnitureTypes(payload);
+
+			const added = payload.data.filter((record) => record[0] === 1).length;
+			const deleted = payload.data.length - added;
+			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined, `Saving furniture on map ${payload.map_flag}: ${added} added or changed, ${deleted} deleted.`, "info");
+
+			return { method, params: await this.wrap(method, payload) };
+		}
+
 		throw new Error(`MapEditService cannot build a request for '${method}'.`);
+	}
+
+	/**
+	 * Notes furniture types outside the documented table without refusing them.
+	 *
+	 * Newer firmware may know types the decompiled plugin did not, and rejecting those here would
+	 * block a legitimate edit; a log line is enough to explain a robot that answers with an error.
+	 * @param payload The validated furniture payload.
+	 */
+	private warnAboutUnknownFurnitureTypes(payload: FurniturePayload): void {
+		const unknown = payload.data
+			.filter((record) => record[0] === 1 && FURNITURE_TYPES[record[10]] === undefined)
+			.map((record) => record[10]);
+
+		if (unknown.length > 0) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined, `save_furnitures uses furniture type(s) ${[...new Set(unknown)].join(", ")}, which the Roborock app does not list. Sending them anyway; the robot decides.`, "warn");
+		}
 	}
 
 	/**

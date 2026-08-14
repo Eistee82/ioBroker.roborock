@@ -112,6 +112,7 @@
   "roborock adapter settings": "Paramètres d'adaptateur pour roborock",
   "rss": "Qualité du signal",
   "rtsp": "flux RTSP",
+  "save_furnitures": "Meubles ([1,id,x0,y0,x1,y1,x2,y2,x3,y3,type,sous-type,orientation] ajoute, [0,id] supprime)",
   "sensor_dirty_time": "Temps écoulé depuis le dernier nettoyage des capteurs",
   "set_carpet_clean_mode": "Mode d'évitement de tapis",
   "set_carpet_mode": "Boost de tapis",

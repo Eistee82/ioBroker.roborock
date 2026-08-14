@@ -3,7 +3,7 @@ import { MockAdapter } from "../../../mock/MockAdapter";
 import { MockRobot } from "../../../mock/MockRobot";
 import { Feature } from "../../features.enum";
 import { V1VacuumFeatures } from "../v1VacuumFeatures";
-import { applyRetryEnvelope, MapEditService, parseCleanSequence, readRetryId, RPC_RETRY_FEATURE_BIT } from "./MapEditService";
+import { applyRetryEnvelope, FURNITURE_TYPES, MapEditService, parseCleanSequence, parseFurnitures, readRetryId, RPC_RETRY_FEATURE_BIT } from "./MapEditService";
 
 class TestVacuum extends V1VacuumFeatures {
 	protected getDynamicFeatures(): Set<Feature> {
@@ -162,10 +162,104 @@ describe("MapEditService", () => {
 		});
 	});
 
+	describe("save_furnitures (report section 1.8)", () => {
+		/** A well-formed "add" record: [1, id, four corners in mm, type, subType, direction]. */
+		const bed = [1, -1, 1000, 1000, 2000, 1000, 2000, 3000, 1000, 3000, 45, 0, 0];
+
+		it("registers the command state as writable JSON", async () => {
+			const commands = (vacuum as any).commands;
+			expect(commands).toHaveProperty("save_furnitures");
+			expect(commands.save_furnitures.type).toBe("json");
+
+			await vacuum.createCommandObjects();
+			const obj = mockAdapter.objects[`Devices.${mockRobot.duid}.commands.save_furnitures`];
+			expect(obj).toBeDefined();
+			expect(obj.common.write).toBe(true);
+		});
+
+		it("sends {map_flag, data} and adds the piece", async () => {
+			const sent = await runCommand("save_furnitures", { map_flag: 0, data: [bed] });
+
+			expect(sent.method).toBe("save_furnitures");
+			expect(sent.params).toEqual({ map_flag: 0, data: [bed] });
+			expect([...mockRobot.furnitures.get(0)!.values()]).toHaveLength(1);
+		});
+
+		it("falls back to the active map when the payload names none", async () => {
+			// map_status 12 puts the robot on map slot 3 (12 >> 2).
+			(vacuum as any).mapService.updateCurrentMapIndex(12);
+			expect(vacuum.getCurrentMapIndex()).toBe(3);
+
+			const sent = await runCommand("save_furnitures", { data: [bed] });
+			expect(sent.params.map_flag).toBe(3);
+		});
+
+		it("accepts a bare array of records", async () => {
+			(vacuum as any).mapService.updateCurrentMapIndex(0);
+			const sent = await runCommand("save_furnitures", [bed]);
+			expect(sent.params.data).toEqual([bed]);
+			expect(sent.params.map_flag).toBe(0);
+		});
+
+		it("refuses to guess a map before one is loaded", () => {
+			// V1MapService starts at -1; sending furniture to map 0 on a two-map robot would put it
+			// on the wrong floor, so the payload has to name the map instead.
+			expect(vacuum.getCurrentMapIndex()).toBe(-1);
+			expect(() => parseFurnitures({ data: [bed] }, -1)).toThrow(/no usable map_flag/);
+		});
+
+		it("deletes with [0, id] and leaves the other pieces alone", async () => {
+			await runCommand("save_furnitures", { map_flag: 0, data: [bed, [1, -1, 0, 0, 10, 0, 10, 10, 0, 10, 46, 0, 0]] });
+			const ids = [...mockRobot.furnitures.get(0)!.keys()];
+			expect(ids).toHaveLength(2);
+
+			await runCommand("save_furnitures", { map_flag: 0, data: [[0, ids[0]]] });
+
+			// Differential: only the named piece is gone, the other survives.
+			expect([...mockRobot.furnitures.get(0)!.keys()]).toEqual([ids[1]]);
+		});
+
+		it("is not wrapped in the retry envelope even when the bit is set", async () => {
+			// save_furnitures is not one of the 13 retry methods (report section 1.2).
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, { val: RPC_RETRY_FEATURE_BIT, ack: true });
+
+			const sent = await runCommand("save_furnitures", { map_flag: 0, data: [bed] });
+			expect(sent.params).toEqual({ map_flag: 0, data: [bed] });
+			expect(sent.params.need_retry).toBeUndefined();
+		});
+
+		it("rejects a malformed record instead of sending it", () => {
+			expect(() => parseFurnitures({ data: [[1, -1, 0, 0]] }, 0)).toThrow(/13 values/);
+			expect(() => parseFurnitures({ data: [[0, 1, 2]] }, 0)).toThrow(/\[0, id\]/);
+			expect(() => parseFurnitures({ data: [[2, 1]] }, 0)).toThrow(/the operation/);
+			expect(() => parseFurnitures({ data: [] }, 0)).toThrow(/empty record list/);
+			expect(() => parseFurnitures("bed", 0)).toThrow(/expects/);
+			expect(() => parseFurnitures({ data: [[1, -1, 0, 0, 10, 0, 10, 10, 0, 10, 45, 0, "left"]] }, 0)).toThrow(/whole number/);
+		});
+
+		it("rejects a map_flag that is not a map", () => {
+			expect(() => parseFurnitures({ map_flag: -1, data: [bed] }, 0)).toThrow(/invalid map_flag/);
+		});
+
+		it("lists the documented furniture types", () => {
+			expect(FURNITURE_TYPES[45]).toBe("FT_BED");
+			expect(FURNITURE_TYPES[58]).toBe("FT_CATTREE");
+			// The gaps between 0 and 43 are not assigned in the plugin.
+			expect(FURNITURE_TYPES[42]).toBeUndefined();
+		});
+
+		it("still sends an undocumented furniture type", async () => {
+			const exotic = [1, -1, 0, 0, 10, 0, 10, 10, 0, 10, 99, 0, 0];
+			const sent = await runCommand("save_furnitures", { map_flag: 0, data: [exotic] });
+			expect(sent.params.data).toEqual([exotic]);
+		});
+	});
+
 	describe("scope", () => {
 		it("claims only the commands it registers", () => {
 			const service = new MapEditService(deps, mockRobot.duid);
 			expect(service.handles("set_clean_sequence")).toBe(true);
+			expect(service.handles("save_furnitures")).toBe(true);
 			expect(service.handles("app_start")).toBe(false);
 		});
 

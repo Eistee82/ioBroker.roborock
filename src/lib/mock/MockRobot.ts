@@ -17,6 +17,13 @@ export class MockRobot {
 	public cleanSequence: number[] = [];
 
 	/**
+	 * Furniture per map, keyed by map flag then furniture id. `save_furnitures` is differential, so
+	 * the mock applies the operations instead of replacing the list.
+	 */
+	public furnitures = new Map<number, Map<number, number[]>>();
+	private nextFurnitureId = 1;
+
+	/**
 	 * Makes the robot defer the next call to one of these methods with `{result: "retry", id}`,
 	 * the way firmware with feature bit 26 does. The entry is consumed on the first call.
 	 */
@@ -67,6 +74,8 @@ export class MockRobot {
 			case "set_clean_sequence":
 				this.cleanSequence = MockRobot.unwrapRetryEnvelope(params) as number[];
 				return ["ok"];
+			case "save_furnitures":
+				return this.handleSaveFurnitures(MockRobot.unwrapRetryEnvelope(params));
 			case "get_prop":
 				return this.handleGetProp(params);
 			case "get_status":
@@ -127,6 +136,38 @@ export class MockRobot {
 			return "data" in params ? params.data : params;
 		}
 		return params;
+	}
+
+	/**
+	 * Applies a differential furniture edit: `[1, id, ...]` adds or replaces a piece (`id = -1`
+	 * means "new", so the robot assigns one), `[0, id]` deletes one. Pieces the payload does not
+	 * mention stay untouched - that is what makes this call safe.
+	 * @param payload `{map_flag, data}`.
+	 * @returns The robot's answer.
+	 */
+	private handleSaveFurnitures(payload: any): any {
+		const mapFlag = payload?.map_flag;
+		const data = payload?.data;
+		if (!Number.isInteger(mapFlag) || !Array.isArray(data)) return ["invalid_params"];
+
+		let onMap = this.furnitures.get(mapFlag);
+		if (!onMap) {
+			onMap = new Map<number, number[]>();
+			this.furnitures.set(mapFlag, onMap);
+		}
+
+		for (const record of data) {
+			if (!Array.isArray(record)) return ["invalid_params"];
+			if (record[0] === 0) {
+				onMap.delete(record[1]);
+			} else if (record[0] === 1) {
+				const id = record[1] === -1 ? this.nextFurnitureId++ : record[1];
+				onMap.set(id, [1, id, ...record.slice(2)]);
+			} else {
+				return ["invalid_params"];
+			}
+		}
+		return ["ok"];
 	}
 
 	/**

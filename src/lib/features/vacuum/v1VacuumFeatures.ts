@@ -78,7 +78,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.consumableService = new V1ConsumableService(this.deps, this.duid, this.profile);
 		this.stationService = new StationService(this.deps, this.duid);
 		this.mapService = new V1MapService(this.deps, this.duid);
-		this.mapEditService = new MapEditService(this.deps, this.duid);
+		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex());
 	}
 
 	/**

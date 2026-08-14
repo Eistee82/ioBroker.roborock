@@ -112,6 +112,7 @@
   "roborock adapter settings": "Налаштування адаптера для roborock",
   "rss": "Якість сигналу",
   "rtsp": "потік rtsp",
+  "save_furnitures": "Меблі ([1,id,x0,y0,x1,y1,x2,y2,x3,y3,тип,підтип,орієнтація] додає, [0,id] видаляє)",
   "sensor_dirty_time": "Час після останнього очищення датчиків",
   "set_carpet_clean_mode": "Режим уникнення килимів",
   "set_carpet_mode": "Carpet Boost",
