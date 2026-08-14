@@ -283,6 +283,90 @@ export function getPollIntervalSeconds(context: PollContext): number {
 	return Math.max(POLL_POLICY.minIntervalSeconds, base);
 }
 
+/**
+ * Cadence of the live map update (`liveMapInterval` in the admin UI).
+ *
+ * The app checks for map changes every 1.2 s while the robot works and every 2 s while it stands
+ * still (report section 15, §1.3). Those numbers are what a phone on the same Wi-Fi does with a
+ * screen in front of it; an adapter that runs around the clock is a different case, so the
+ * default here is deliberately slower and the whole thing can be switched off.
+ */
+export const LIVE_MAP_POLICY = Object.freeze({
+	/** Cadence (seconds) of the change check while the robot is working. */
+	activeIntervalSeconds: 3,
+	/**
+	 * Factor applied while the robot is idle or paused. The app slows from 1.2 s to 2 s in that
+	 * situation; 2x keeps the same direction with one constant instead of two.
+	 */
+	idleFactor: 2,
+	/**
+	 * Floor (seconds) for a robot that cannot do incremental maps.
+	 *
+	 * Such a robot has no diff to ask for, so every check is a complete map transfer. The app
+	 * pulls one every second in that case; the adapter must not, so the configured cadence is
+	 * slowed to at least this value and suspended entirely while the robot is idle. Fidelity
+	 * loses against load here on purpose.
+	 */
+	fullMapFloorSeconds: 5
+});
+
+/** Value of `liveMapInterval` that switches the live map update off entirely. */
+export const LIVE_MAP_DISABLED = 0;
+/** Fastest configurable live map cadence. */
+export const MIN_LIVE_MAP_INTERVAL_SECONDS = 1;
+/** Slowest configurable live map cadence. Beyond this the normal poll is the better tool. */
+export const MAX_LIVE_MAP_INTERVAL_SECONDS = 30;
+
+/**
+ * Normalises the configured live map cadence.
+ *
+ * @param configured Raw `liveMapInterval` from the instance config.
+ * @returns The cadence in seconds, or {@link LIVE_MAP_DISABLED} when the feature is off. An
+ *          explicit 0 means off; anything unreadable falls back to the policy default rather
+ *          than silently disabling a feature the user did not switch off.
+ */
+export function resolveLiveMapIntervalSeconds(configured?: number): number {
+	const numeric = typeof configured === "number" ? configured : Number(configured);
+	if (Number.isFinite(numeric) && numeric <= 0) return LIVE_MAP_DISABLED;
+	return clampInteger(
+		configured,
+		MIN_LIVE_MAP_INTERVAL_SECONDS,
+		MAX_LIVE_MAP_INTERVAL_SECONDS,
+		LIVE_MAP_POLICY.activeIntervalSeconds
+	);
+}
+
+/** Inputs that drive the live map cadence for one device. */
+export type LiveMapContext = {
+	/** Configured `liveMapInterval` (seconds); 0 switches the feature off. */
+	configuredSeconds?: number;
+	/** Robot is cleaning, returning, washing, mapping, ... */
+	isActive: boolean;
+	/** Robot announced the incremental map feature bit and its map carries a nonce. */
+	supportsIncrementalMap: boolean;
+};
+
+/**
+ * Resolves how often the live map check may run for one device.
+ *
+ * @param context See {@link LiveMapContext}.
+ * @returns The cadence in seconds, or {@link LIVE_MAP_DISABLED} when nothing should run.
+ */
+export function getLiveMapIntervalSeconds(context: LiveMapContext): number {
+	const configured = resolveLiveMapIntervalSeconds(context.configuredSeconds);
+	if (configured === LIVE_MAP_DISABLED) return LIVE_MAP_DISABLED;
+
+	// Without the diff there is nothing cheap to ask for: every check is a whole map transfer.
+	// That is worth doing while the robot draws on the map, and pure waste while it sits on the
+	// dock — where the adapter fetched nothing at all before this feature existed.
+	if (!context.supportsIncrementalMap) {
+		if (!context.isActive) return LIVE_MAP_DISABLED;
+		return Math.max(configured, LIVE_MAP_POLICY.fullMapFloorSeconds);
+	}
+
+	return context.isActive ? configured : configured * LIVE_MAP_POLICY.idleFactor;
+}
+
 /** Error code carried by {@link ChannelUnavailableError}. */
 export const CHANNEL_UNAVAILABLE_CODE = "CHANNEL_UNAVAILABLE";
 

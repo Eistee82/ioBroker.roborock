@@ -7,10 +7,11 @@ import { FallbackBaseFeatures, FallbackVacuumFeatures } from "./features/fallbac
 import { DEFAULT_PROFILE, VacuumProfile } from "./features/vacuum/v1VacuumFeatures";
 
 import { ProductHelper } from "./productHelper";
-import { getPollIntervalSeconds, isChannelUnavailableError, resolveActiveIntervalSeconds, resolveBackoffMaxSeconds } from "./requestPolicy";
+import { LIVE_MAP_DISABLED, getPollIntervalSeconds, isChannelUnavailableError, resolveActiveIntervalSeconds, resolveBackoffMaxSeconds, resolveLiveMapIntervalSeconds } from "./requestPolicy";
 import { Feature } from "./features/features.enum";
 import { getB01VariantFromModel } from "./b01Variant";
 import { isB01ParkedState } from "./map/b01/B01StateSemantics";
+import { LiveMapPoller } from "./map/LiveMapPoller";
 
 // Import indices to trigger decorators
 import "./features/vacuum/index";
@@ -113,9 +114,36 @@ export class DeviceManager {
 	private nextPollDueAt = new Map<string, number>();
 	/** Adaptive polling: consecutive failed poll cycles per device, drives the error backoff. */
 	private pollErrorCount = new Map<string, number>();
+	/**
+	 * Keeps the map current between two status polls. Rides the one-second ticker below, so it
+	 * adds no timer of its own.
+	 */
+	private readonly liveMapPoller: LiveMapPoller;
 
 	constructor(adapter: Roborock) {
 		this.adapter = adapter;
+		this.liveMapPoller = new LiveMapPoller(adapter as unknown as ConstructorParameters<typeof LiveMapPoller>[0]);
+	}
+
+	/** Protocol versions whose maps come from `get_map_v1` and can therefore use the diff. */
+	private static readonly V1_PROTOCOL_VERSIONS: ReadonlySet<string> = new Set(["1.0", "L01"]);
+
+	/**
+	 * Runs the live map check for one device, without making the poll ticker wait for it.
+	 *
+	 * A map transfer can take seconds; awaiting it here would delay the status poll of every other
+	 * device on the tick. The poller guards itself against overlapping runs and never throws.
+	 *
+	 * @param duid Device Unique ID.
+	 * @param handler The device's feature handler.
+	 * @param isActive Whether the robot is currently working.
+	 */
+	private scheduleLiveMapTick(duid: string, handler: BaseDeviceFeatures, isActive: boolean): void {
+		const version = (handler as unknown as { protocolVersion?: string }).protocolVersion;
+		if (!version || !DeviceManager.V1_PROTOCOL_VERSIONS.has(version)) return;
+		if (!this.liveMapPoller.isEnabled()) return;
+
+		void this.liveMapPoller.tick(duid, handler, isActive);
 	}
 
 	private getHomeDataConsumableMap(handler: BaseDeviceFeatures): Record<string, string> {
@@ -318,8 +346,11 @@ export class DeviceManager {
 		const mainPollInterval = this.adapter.config.updateInterval; // e.g. 60s
 		const activeInterval = resolveActiveIntervalSeconds(this.adapter.config.activePollInterval);
 		const backoffMax = resolveBackoffMaxSeconds(this.adapter.config.pollBackoffMaxInterval);
+		const liveMap = resolveLiveMapIntervalSeconds(this.adapter.config.liveMapInterval);
 
-		this.adapter.rLog("System", null, "Info", undefined, undefined, `Starting main poll (idle ${mainPollInterval}s, while cleaning ${activeInterval}s, error backoff up to ${backoffMax}s). Heavy data updates only after activity finishes.`, "info");
+		this.liveMapPoller.start();
+
+		this.adapter.rLog("System", null, "Info", undefined, undefined, `Starting main poll (idle ${mainPollInterval}s, while cleaning ${activeInterval}s, error backoff up to ${backoffMax}s, live map ${liveMap === LIVE_MAP_DISABLED ? "off" : `${liveMap}s`}). Heavy data updates only after activity finishes.`, "info");
 
 		let mainUpdateCount = mainPollInterval; // Slow loop counter
 
@@ -349,6 +380,13 @@ export class DeviceManager {
 
 				const lastState = this.lastStateCode.get(duid) || 0;
 				const isActive = this.isActiveState(lastState);
+
+				// The map has a much shorter cadence of its own, so it must get a chance on every
+				// tick rather than only when the status poll happens to be due.
+				if (device.online) {
+					this.scheduleLiveMapTick(duid, handler, isActive);
+				}
+
 				// Cloud-side housekeeping is cheap and independent of the robot channel, so it
 				// keeps running on the slow tick even while the device itself is backed off.
 				const dueAt = this.nextPollDueAt.get(duid) ?? 0;
@@ -522,7 +560,10 @@ export class DeviceManager {
 		const isActive = this.isActiveState(currentState);
 		const wasActive = this.isActiveState(lastState);
 
-		if (isActive) {
+		// Skipped only while the live map poller is demonstrably keeping this device's map
+		// current: two independent sources would double the map transfers, but a poller that
+		// never got a cycle through must not silently take the map away from the status poll.
+		if (isActive && !this.liveMapPoller.handlesMapFor(duid)) {
 			await handler.updateMap();
 		}
 
@@ -554,6 +595,7 @@ export class DeviceManager {
 			this.adapter.clearInterval(this.mainUpdateInterval as any);
 			this.mainUpdateInterval = undefined;
 		}
+		this.liveMapPoller.dispose();
 		this.nextPollDueAt.clear();
 		this.pollErrorCount.clear();
 		this.pollingDevices.clear();
