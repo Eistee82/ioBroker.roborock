@@ -11,12 +11,20 @@ import { isDarkColour, themeFromName, themeFromQuery } from "./adminTheme";
  */
 
 describe("themeFromQuery", () => {
-	it("reads the theme the admin hands a tab", () => {
-		expect(themeFromQuery("?instance=0&theme=dark")).toBe("dark");
-		expect(themeFromQuery("instance=0&theme=light")).toBe("light");
+	it("reads the parameter the admin actually writes", () => {
+		// Verbatim from AdminUtils.getHref in the admin's own source: the query it builds for a
+		// tab is `?newReact=true&<instance>&react=<themeType>`. The name is `react`, and looking
+		// for `theme` instead is why three attempts at this found nothing.
+		expect(themeFromQuery("?newReact=true&0&react=dark")).toBe("dark");
+		expect(themeFromQuery("?newReact=true&0&react=light")).toBe("light");
 	});
 
-	it("accepts the other spellings the admin uses", () => {
+	it("prefers the admin's own name over the other spellings", () => {
+		expect(themeFromQuery("?react=dark&theme=light")).toBe("dark");
+	});
+
+	it("accepts the other spellings too, in case the name changes", () => {
+		expect(themeFromQuery("?theme=dark")).toBe("dark");
 		expect(themeFromQuery("?themeName=dark")).toBe("dark");
 		expect(themeFromQuery("?themeType=dark")).toBe("dark");
 	});

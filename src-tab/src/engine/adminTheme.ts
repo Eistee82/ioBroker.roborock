@@ -32,7 +32,16 @@ const DARK_THEME_NAMES = new Set(["dark", "blue"]);
 export function themeFromQuery(search: string): "dark" | "light" | null {
 	try {
 		const params = new URLSearchParams(search);
-		const name = params.get("theme") ?? params.get("themeName") ?? params.get("themeType");
+		// `react` is the one the admin actually writes. From its own source, AdminUtils.getHref:
+		//
+		//     href += `?newReact=true&${instanceNumber}&react=${themeType}`
+		//
+		// `GenericApp` parses this very query but keeps only `instance` and `newReact` - the theme
+		// beside them is dropped, which is why the classic HTML tabs of other adapters follow the
+		// dark mode and a GenericApp tab does not. The other spellings are accepted as well
+		// because nothing guarantees the name stays; the admin's own is checked first.
+		const name =
+			params.get("react") ?? params.get("theme") ?? params.get("themeName") ?? params.get("themeType");
 		if (!name || name === "auto") return null;
 		return DARK_THEME_NAMES.has(name) ? "dark" : "light";
 	} catch {

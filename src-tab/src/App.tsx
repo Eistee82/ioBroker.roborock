@@ -168,15 +168,16 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 	 */
 	private resolveTheme(): IobTheme {
 		const own = this.state.theme;
-		const admin = readAdminThemeName();
-		if (!admin) return own;
 
-		const adminIsDark = admin === "dark";
-		if (adminIsDark === (own.palette.mode === "dark")) return own;
+		const wanted = readAdminThemeName();
+		if (!wanted) return own;
+
+		const wantsDark = wanted === "dark";
+		if (wantsDark === (own.palette.mode === "dark")) return own;
 
 		// `GenericApp.createTheme` builds the very theme it would have built itself, so the
 		// correction stays inside the framework's own palettes rather than inventing one.
-		return this.createTheme(admin) as IobTheme;
+		return this.createTheme(wanted) as IobTheme;
 	}
 
 	render(): React.JSX.Element {
