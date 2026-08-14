@@ -17,8 +17,11 @@ import { ROBOT_STATES, dockActivity, robotPhase } from "./robotStates";
  * `…/files/roborock/…`. The relative prefix therefore has to climb two levels — the same way
  * ioBroker.javascript resolves its own downloads. Keeping it relative also survives an admin
  * that is mounted under a sub path by a reverse proxy, which an absolute `/files/…` would not.
+ *
+ * Exported so `MapEngine.assets.test.ts` can pin exactly that: the obstacle icons once shipped
+ * with an absolute prefix and silently rendered as broken images in every installation.
  */
-const ASSET_BASE = "../../files/roborock/assets";
+export const ASSET_BASE = "../../files/roborock/assets";
 import type {
 	ConsumablePartModel,
 	DockControlModel,
@@ -274,7 +277,7 @@ function measureQ10RoomLabelWidth(label: string): number {
 	return q10RoomLabelMeasureContext.measureText(label).width;
 }
 
-const OBSTACLE_MAPPING: Record<number, string> = {
+export const OBSTACLE_MAPPING: Record<number, string> = {
 	[-99]: "99",
 	0: "0",
 	1: "1",
@@ -302,10 +305,10 @@ const OBSTACLE_MAPPING: Record<number, string> = {
 	99: "99",
 };
 
-function obstacleAssetFileName(suffix: string): string {
+export function obstacleAssetFileName(suffix: string): string {
 	return `projects_comroborocktanos_resources_obstacle_new_p${suffix}.png`;
 }
-function obstacleAssetFileNameAlt(suffix: string): string {
+export function obstacleAssetFileNameAlt(suffix: string): string {
 	return `projects_comroborocktanos_resources_map_object_top_${suffix}.png`;
 }
 
@@ -1534,7 +1537,7 @@ export class MapEngine {
 		const cacheKey = (id: number): string => (roomScope ? roomNameCacheKey(roomScope.duid, roomScope.mapFlag, id) : "");
 		const segmentName = (s: SegmentInfo) => s.name || (roomScope ? this.roomNamesFromStates[cacheKey(s.id)] : "") || "";
 
-		let roomLabels = list
+		const roomLabels = list
 			?.filter((s: SegmentInfo) => segmentName(s))
 			.map((s: SegmentInfo) => ({
 				segmentId: s.id,
