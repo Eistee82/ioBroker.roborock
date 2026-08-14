@@ -42,7 +42,15 @@ export const BASE_FAN: Record<number, string> = { 101: "Quiet", 102: "Balanced",
  * the two ("Mild / Moderate / Intense"), and "Moderate" is a word the app uses in neither set.
  */
 export const BASE_WATER: Record<number, string> = { ...WATER_BOX_MODE_LABELS_STANDARD };
-export const BASE_MOP: Record<number, string> = { 300: "Standard", 301: "Deep", 303: "Deep+" };
+/**
+ * Mop routes in the app's own order: Fast first, then Standard, Deep, Deep+.
+ *
+ * `MopMethods()` lists them as 304, 300, 301, 303 (report 16 §5.3), and the modes that are not
+ * mop-only cut that list to its first two - so **without 304 the Vac & Mop tab is left with a
+ * single route**, which is what it looked like: only "Standard". The value was in
+ * `MOP_MODE_LABELS` all along and simply never offered.
+ */
+export const BASE_MOP: Record<number, string> = { 304: "Fast", 300: "Standard", 301: "Deep", 303: "Deep+" };
 
 // --- Profile Interface ---
 export interface VacuumProfile {

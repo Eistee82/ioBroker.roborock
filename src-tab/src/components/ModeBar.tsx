@@ -36,6 +36,15 @@ interface ModeBarProps {
 const BAR_ICON_SIZE = 51;
 
 /**
+ * Height of every button in the switch bars.
+ *
+ * Derived from the icon plus its padding rather than written as a number, so a row without a
+ * picture - the passes - is exactly as tall as the rows with one. Left to itself a text button is
+ * only as tall as its line, and the rows end up at different heights.
+ */
+const BAR_BUTTON_HEIGHT = BAR_ICON_SIZE + 8;
+
+/**
  * The rows in the order the robot's own app lists them: suction, water, passes, route.
  *
  * The adapter publishes them in a different order (`set_custom_mode`, `set_mop_mode`,
@@ -218,6 +227,7 @@ export function ModeBar({
 										// with one, a square keeps the row of pictograms even.
 										flex: 1,
 										minWidth: 0,
+										height: BAR_BUTTON_HEIGHT,
 										textTransform: "none",
 										lineHeight: 1,
 									}}
@@ -284,7 +294,7 @@ export function ModeBar({
 									key={tab.mode}
 									value={String(tab.mode)}
 									aria-label={label}
-									sx={{ flex: 1, px: 1.25, py: 0.5, textTransform: "none", lineHeight: 1, gap: 0.5 }}
+									sx={{ flex: 1, px: 1.25, py: 0.5, height: BAR_BUTTON_HEIGHT, textTransform: "none", lineHeight: 1, gap: 0.5 }}
 								>
 									{/* The app marks the active tab with a tick; the highlight alone is
 									    easy to miss on a bar that floats above a coloured map. */}
@@ -328,7 +338,7 @@ export function ModeBar({
 							// needs no translation. The spoken name is the full wording, so a screen
 							// reader says "2 passes" rather than "times two".
 							aria-label={I18n.t(count === 2 ? "ui_repeat_twice" : "ui_repeat_once")}
-							sx={{ flex: 1, px: 1.25, py: 0.5, minWidth: 0, textTransform: "none", lineHeight: 1 }}
+							sx={{ flex: 1, px: 1.25, py: 0.5, minWidth: 0, height: BAR_BUTTON_HEIGHT, textTransform: "none", lineHeight: 1 }}
 						>
 							<Typography
 								className="rr-numeric"
