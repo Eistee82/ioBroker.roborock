@@ -43,16 +43,27 @@ function probe(url: string): boolean | Promise<boolean> {
 	return pending;
 }
 
+/**
+ * Edge length of a mode icon in pixels.
+ *
+ * The artwork is 168x168, so this is a matter of taste rather than of resolution. It used to be
+ * 20, which rendered the suction, mop and water pictograms as specks next to their own label -
+ * they are the thing being chosen, and at that size the shape was no longer readable. 32 keeps a
+ * dropdown row at its normal height while making the picture carry the meaning, as it does in the
+ * app.
+ */
+export const MODE_ICON_SIZE = 32;
+
 interface ModeIconProps {
 	/** Icon URL, or null when no icon is known for this value. */
 	src: string | null;
-	/** Edge length in pixels. */
+	/** Edge length in pixels; defaults to {@link MODE_ICON_SIZE}. */
 	size?: number;
 	/** Read by assistive technology; the visible label always stays next to the icon. */
 	alt?: string;
 }
 
-export function ModeIcon({ src, size = 20, alt = "" }: ModeIconProps): React.JSX.Element | null {
+export function ModeIcon({ src, size = MODE_ICON_SIZE, alt = "" }: ModeIconProps): React.JSX.Element | null {
 	// Starting from the cache keeps an already known icon from flickering on re-render.
 	const [ready, setReady] = useState<string | null>(() => (src && probeCache.get(src) === true ? src : null));
 

@@ -57,7 +57,10 @@ export function ModeBar({ modes, assetBase, onChange }: ModeBarProps): React.JSX
 						// An unknown value must not silently pick the first option.
 						value={mode.value ?? ""}
 						onChange={event => onChange(mode.command, event.target.value)}
-						sx={{ minWidth: hasIcons ? 156 : 132 }}
+						// Wider with icons than without: the icon now takes 32px plus its gap, and the
+						// longest label of the eleven languages ("2 Durchgänge") must still fit
+						// beside it rather than being cut off.
+						sx={{ minWidth: hasIcons ? 176 : 132 }}
 						slotProps={{
 							select: {
 								// The closed field renders the same icon + label pair as the open list.
