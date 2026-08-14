@@ -98,6 +98,7 @@
   "msg_ver": "Message Version",
   "Password": "Password",
   "PIN for streaming the camera": "PIN for streaming the camera",
+  "name_segment": "Rename rooms ([{\"segmentId\":16,\"name\":\"Kitchen\",\"tag\":14}])",
   "rdt": "Remaining dry time",
   "Region": "Region",
   "reset_dust_collection_work_times": "Dust collection",

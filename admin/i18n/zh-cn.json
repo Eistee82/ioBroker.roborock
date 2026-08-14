@@ -98,6 +98,7 @@
   "msg_ver": "留言版本",
   "Password": "密码",
   "PIN for streaming the camera": "PIN for streaming the camera",
+  "name_segment": "重命名房间（[{\"segmentId\":16,\"name\":\"厨房\",\"tag\":14}]）",
   "rdt": "???",
   "Region": "Region",
   "reset_dust_collection_work_times": "Dust collection",

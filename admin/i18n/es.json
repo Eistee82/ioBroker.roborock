@@ -98,6 +98,7 @@
   "msg_ver": "Versión del mensaje",
   "Password": "Contraseña",
   "PIN for streaming the camera": "PIN for streaming the camera",
+  "name_segment": "Renombrar habitaciones ([{\"segmentId\":16,\"name\":\"Cocina\",\"tag\":14}])",
   "rdt": "Tiempo de secado restante",
   "Region": "Region",
   "reset_dust_collection_work_times": "Dust collection",

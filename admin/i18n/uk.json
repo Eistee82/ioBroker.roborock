@@ -98,6 +98,7 @@
   "msg_ver": "Версія повідомлення",
   "Password": "Пароль",
   "PIN for streaming the camera": "PIN for streaming the camera",
+  "name_segment": "Перейменувати кімнати ([{\"segmentId\":16,\"name\":\"Кухня\",\"tag\":14}])",
   "rdt": "???",
   "Region": "Region",
   "reset_dust_collection_work_times": "Dust collection",

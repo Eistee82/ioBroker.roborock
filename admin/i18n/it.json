@@ -98,6 +98,7 @@
   "msg_ver": "Versione del messaggio",
   "Password": "Parola d'ordine",
   "PIN for streaming the camera": "PIN for streaming the camera",
+  "name_segment": "Rinomina stanze ([{\"segmentId\":16,\"name\":\"Cucina\",\"tag\":14}])",
   "rdt": "???",
   "Region": "Region",
   "reset_dust_collection_work_times": "Dust collection",

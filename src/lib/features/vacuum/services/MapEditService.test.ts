@@ -3,7 +3,20 @@ import { MockAdapter } from "../../../mock/MockAdapter";
 import { MockRobot } from "../../../mock/MockRobot";
 import { Feature } from "../../features.enum";
 import { V1VacuumFeatures } from "../v1VacuumFeatures";
-import { applyRetryEnvelope, FURNITURE_TYPES, MapEditService, parseCleanSequence, parseFurnitures, readRetryId, RPC_RETRY_FEATURE_BIT } from "./MapEditService";
+import {
+	applyRetryEnvelope,
+	FURNITURE_TYPES,
+	hasFeatureStrBit,
+	MapEditService,
+	MATTER_FEATURE_BIT,
+	parseCleanSequence,
+	parseFurnitures,
+	parseRoomMapping,
+	parseRoomNaming,
+	readRetryId,
+	ROOM_TAGS,
+	RPC_RETRY_FEATURE_BIT
+} from "./MapEditService";
 
 class TestVacuum extends V1VacuumFeatures {
 	protected getDynamicFeatures(): Set<Feature> {
@@ -255,11 +268,190 @@ describe("MapEditService", () => {
 		});
 	});
 
+	describe("name_segment (report section 1.5)", () => {
+		/** Gives the adapter a cloud session with a room catalogue. */
+		function withCloud(rooms: { id: number; name: string }[] = [], created: number | null = 9001): void {
+			deps.http_api.homeID = 12345;
+			deps.http_api.homeData = { rooms: [...rooms] };
+			deps.http_api.realApi = {
+				post: async (_url: string, _body: string) => ({ data: { success: true, result: { id: created } } })
+			};
+		}
+
+		it("registers the command state as writable JSON", async () => {
+			const commands = (vacuum as any).commands;
+			expect(commands).toHaveProperty("name_segment");
+			expect(commands.name_segment.type).toBe("json");
+
+			await vacuum.createCommandObjects();
+			const obj = mockAdapter.objects[`Devices.${mockRobot.duid}.commands.name_segment`];
+			expect(obj).toBeDefined();
+			expect(obj.common.write).toBe(true);
+		});
+
+		it("sends the complete assignment, not just the renamed room", async () => {
+			withCloud([{ id: 777, name: "Kitchen" }]);
+
+			const sent = await runCommand("name_segment", [{ segmentId: 2, name: "Kitchen" }]);
+
+			// The mock robot ships six rooms; all six have to be in the payload, because the
+			// firmware replaces the whole assignment and would drop the rest.
+			expect(sent.params).toHaveLength(6);
+			expect(sent.params.map((entry: any) => entry.robotRoomId)).toEqual([1, 2, 3, 4, 5, 6]);
+
+			const renamed = sent.params.find((entry: any) => entry.robotRoomId === 2);
+			expect(renamed.iotRoomId).toBe("777");
+			// The untouched rooms keep the cloud id and tag they already had.
+			const untouched = sent.params.find((entry: any) => entry.robotRoomId === 1);
+			expect(untouched).toEqual({ iotRoomId: "1060432", robotRoomId: 1, robotTagId: 1 });
+		});
+
+		it("creates a cloud room when no existing one carries the name", async () => {
+			withCloud([], 9001);
+			let posted: { url: string; body: string } | null = null;
+			deps.http_api.realApi.post = async (url: string, body: string) => {
+				posted = { url, body };
+				return { data: { success: true, result: { id: 9001 } } };
+			};
+
+			const sent = await runCommand("name_segment", [{ segmentId: 3, name: "Studio" }]);
+
+			expect(posted!.url).toBe("user/homes/12345/rooms");
+			expect(posted!.body).toBe("name=Studio");
+			expect(sent.params.find((entry: any) => entry.robotRoomId === 3).iotRoomId).toBe("9001");
+			// The new room is cached, so the map resolves the name without another fetch.
+			expect(deps.http_api.homeData.rooms).toContainEqual({ id: 9001, name: "Studio" });
+		});
+
+		it("reuses an existing cloud room instead of creating a duplicate", async () => {
+			withCloud([{ id: 555, name: "Bathroom" }]);
+			let posts = 0;
+			deps.http_api.realApi.post = async () => {
+				posts++;
+				return { data: { success: true, result: { id: 1 } } };
+			};
+
+			const sent = await runCommand("name_segment", [{ segmentId: 4, name: "Bathroom" }]);
+
+			expect(posts).toBe(0);
+			expect(sent.params.find((entry: any) => entry.robotRoomId === 4).iotRoomId).toBe("555");
+		});
+
+		it("changes only the tag without needing a cloud session", async () => {
+			deps.http_api.realApi = null;
+			deps.http_api.homeID = null;
+
+			const sent = await runCommand("name_segment", [{ segmentId: 5, tag: 13 }]);
+
+			expect(sent.params.find((entry: any) => entry.robotRoomId === 5)).toEqual({ iotRoomId: "1060436", robotRoomId: 5, robotTagId: 13 });
+			expect(mockRobot.roomMapping).toHaveLength(6);
+		});
+
+		it("refuses to rename without a cloud session, because names live there", async () => {
+			deps.http_api.realApi = null;
+			deps.http_api.homeID = null;
+			deps.http_api.homeData = { rooms: [] };
+
+			await expect(runCommand("name_segment", [{ segmentId: 5, name: "Den" }])).rejects.toThrow(/no cloud session/);
+		});
+
+		it("refuses a segment that is not on the map", async () => {
+			withCloud([{ id: 1, name: "Nowhere" }]);
+			await expect(runCommand("name_segment", [{ segmentId: 99, name: "Nowhere" }])).rejects.toThrow(/not on the current map/);
+		});
+
+		it("refuses when the current mapping cannot be read", async () => {
+			withCloud([{ id: 1, name: "Kitchen" }]);
+			mockRobot.roomMapping = [];
+
+			await expect(runCommand("name_segment", [{ segmentId: 2, name: "Kitchen" }])).rejects.toThrow(/incomplete list/);
+		});
+
+		it("leaves the robot's assignment intact for the rooms it did not rename", async () => {
+			withCloud([{ id: 777, name: "Kitchen" }]);
+			await runCommand("name_segment", [{ segmentId: 2, name: "Kitchen" }]);
+
+			// The mock replaces its mapping exactly as the firmware does, so a short payload would
+			// show up here as lost rooms.
+			expect(mockRobot.roomMapping).toHaveLength(6);
+			expect(mockRobot.roomMapping).toContainEqual([1, "1060432", 1]);
+			expect(mockRobot.roomMapping).toContainEqual([2, "777", 15]);
+		});
+
+		it("skips sync_rooms_info unless the robot reports the Matter bit", async () => {
+			withCloud([{ id: 777, name: "Kitchen" }]);
+			await runCommand("name_segment", [{ segmentId: 2, name: "Kitchen" }]);
+			expect(mockRobot.syncedRoomNames).toBeNull();
+		});
+
+		it("sends sync_rooms_info before name_segment when the Matter bit is set", async () => {
+			withCloud([{ id: 777, name: "Kitchen" }]);
+			// Bit 67 set in the hex feature string.
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info_str`, { val: (1n << 67n).toString(16), ack: true });
+
+			await runCommand("name_segment", [{ segmentId: 2, name: "Kitchen" }]);
+
+			expect(mockRobot.syncedRoomNames).toEqual([{ id: "777", name: "Kitchen" }]);
+			const order = mockRobot.seen.map((entry) => entry.method);
+			expect(order.indexOf("sync_rooms_info")).toBeLessThan(order.indexOf("name_segment"));
+		});
+
+		it("wraps the payload when the retry bit is set", async () => {
+			withCloud([{ id: 777, name: "Kitchen" }]);
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, { val: RPC_RETRY_FEATURE_BIT, ack: true });
+
+			const sent = await runCommand("name_segment", [{ segmentId: 2, name: "Kitchen" }]);
+
+			expect(sent.params.need_retry).toBe(1);
+			expect(sent.params.data).toHaveLength(6);
+		});
+
+		it("rejects a malformed request instead of sending it", () => {
+			expect(() => parseRoomNaming([{ name: "Kitchen" }])).toThrow(/needs a 'segmentId'/);
+			expect(() => parseRoomNaming([{ segmentId: 2 }])).toThrow(/changes nothing/);
+			expect(() => parseRoomNaming([{ segmentId: 2, name: "" }])).toThrow(/empty name/);
+			expect(() => parseRoomNaming([{ segmentId: 2, name: "x".repeat(31) }])).toThrow(/up to 30 characters/);
+			expect(() => parseRoomNaming([{ segmentId: 2, tag: 99 }])).toThrow(/not a room type/);
+			expect(() => parseRoomNaming([])).toThrow(/empty list/);
+			expect(() => parseRoomNaming(["Kitchen"])).toThrow(/must be an object/);
+		});
+
+		it("accepts a single object as well as a list", () => {
+			expect(parseRoomNaming({ segmentId: 2, name: "Kitchen" })).toEqual([{ segmentId: 2, name: "Kitchen" }]);
+		});
+
+		it("knows the eleven selectable room tags plus 'other'", () => {
+			expect(ROOM_TAGS[14]).toBe("kitchen");
+			expect(ROOM_TAGS[12]).toBe("other");
+			// 0, 4, 5 and 11 are not assigned in the plugin.
+			for (const gap of [0, 4, 5, 11]) expect(ROOM_TAGS[gap]).toBeUndefined();
+		});
+
+		it("reads both shapes of get_room_mapping", () => {
+			const legacy = parseRoomMapping([[16, "abc", 14], [17, "def"]], 0);
+			expect(legacy.get(16)).toEqual({ iotRoomId: "abc", tag: 14 });
+			expect(legacy.get(17)).toEqual({ iotRoomId: "def" });
+
+			const modern = parseRoomMapping([{ map_info: [{ mapFlag: 1, rooms: [{ id: 20, iot_name_id: "xyz", tag: 6 }] }] }], 1);
+			expect(modern.get(20)).toEqual({ iotRoomId: "xyz", tag: 6 });
+			// A different floor's rooms are not mixed in.
+			expect(parseRoomMapping([{ map_info: [{ mapFlag: 1, rooms: [{ id: 20 }] }, { mapFlag: 2, rooms: [{ id: 30 }] }] }], 2).has(30)).toBe(true);
+		});
+
+		it("reads bit 67 out of the hex feature string", () => {
+			expect(hasFeatureStrBit((1n << 67n).toString(16), MATTER_FEATURE_BIT)).toBe(true);
+			expect(hasFeatureStrBit((1n << 66n).toString(16), MATTER_FEATURE_BIT)).toBe(false);
+			expect(hasFeatureStrBit("not hex", MATTER_FEATURE_BIT)).toBe(false);
+			expect(hasFeatureStrBit(undefined, MATTER_FEATURE_BIT)).toBe(false);
+		});
+	});
+
 	describe("scope", () => {
 		it("claims only the commands it registers", () => {
 			const service = new MapEditService(deps, mockRobot.duid);
 			expect(service.handles("set_clean_sequence")).toBe(true);
 			expect(service.handles("save_furnitures")).toBe(true);
+			expect(service.handles("name_segment")).toBe(true);
 			expect(service.handles("app_start")).toBe(false);
 		});
 

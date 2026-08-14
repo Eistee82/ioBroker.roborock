@@ -98,6 +98,7 @@
   "msg_ver": "Nachrichtenversion",
   "Password": "Passwort",
   "PIN for streaming the camera": "PIN für Kamerastream",
+  "name_segment": "Räume umbenennen ([{\"segmentId\":16,\"name\":\"Küche\",\"tag\":14}])",
   "rdt": "Restlaufzeit der Trocknung",
   "Region": "Region",
   "reset_dust_collection_work_times": "Reset Staubaufsammeln",

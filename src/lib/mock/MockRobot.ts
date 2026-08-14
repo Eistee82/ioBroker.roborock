@@ -23,6 +23,9 @@ export class MockRobot {
 	public furnitures = new Map<number, Map<number, number[]>>();
 	private nextFurnitureId = 1;
 
+	/** Last `sync_rooms_info` payload, or null when the robot never got one. */
+	public syncedRoomNames: any = null;
+
 	/**
 	 * Makes the robot defer the next call to one of these methods with `{result: "retry", id}`,
 	 * the way firmware with feature bit 26 does. The entry is consumed on the first call.
@@ -76,6 +79,11 @@ export class MockRobot {
 				return ["ok"];
 			case "save_furnitures":
 				return this.handleSaveFurnitures(MockRobot.unwrapRetryEnvelope(params));
+			case "name_segment":
+				return this.handleNameSegment(MockRobot.unwrapRetryEnvelope(params));
+			case "sync_rooms_info":
+				this.syncedRoomNames = MockRobot.unwrapRetryEnvelope(params);
+				return ["ok"];
 			case "get_prop":
 				return this.handleGetProp(params);
 			case "get_status":
@@ -167,6 +175,31 @@ export class MockRobot {
 				return ["invalid_params"];
 			}
 		}
+		return ["ok"];
+	}
+
+	/**
+	 * Replaces the whole segment-to-cloud-room assignment, the way the firmware does: rooms missing
+	 * from the payload lose their assignment. Mirrored faithfully so a test can prove the adapter
+	 * always sends the complete list.
+	 * @param payload `[{iotRoomId, robotRoomId, robotTagId}, ...]`.
+	 * @returns The robot's answer.
+	 */
+	private handleNameSegment(payload: any): any {
+		if (!Array.isArray(payload) || payload.length === 0) return ["invalid_params"];
+
+		const replacement: any[] = [];
+		for (const entry of payload) {
+			const segmentId = entry?.robotRoomId;
+			const iotRoomId = entry?.iotRoomId;
+			if (!Number.isInteger(segmentId) || typeof iotRoomId !== "string") return ["invalid_params"];
+
+			replacement.push(entry.robotTagId === undefined
+				? [segmentId, iotRoomId]
+				: [segmentId, iotRoomId, entry.robotTagId]);
+		}
+
+		this.roomMapping = replacement;
 		return ["ok"];
 	}
 

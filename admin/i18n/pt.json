@@ -98,6 +98,7 @@
   "msg_ver": "Versão da mensagem",
   "Password": "Senha",
   "PIN for streaming the camera": "PIN for streaming the camera",
+  "name_segment": "Renomear divisões ([{\"segmentId\":16,\"name\":\"Cozinha\",\"tag\":14}])",
   "rdt": "???",
   "Region": "Region",
   "reset_dust_collection_work_times": "Dust collection",

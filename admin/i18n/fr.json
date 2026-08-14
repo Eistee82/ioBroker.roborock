@@ -98,6 +98,7 @@
   "msg_ver": "Version du message",
   "Password": "Mot de passe",
   "PIN for streaming the camera": "PIN for streaming the camera",
+  "name_segment": "Renommer les pièces ([{\"segmentId\":16,\"name\":\"Cuisine\",\"tag\":14}])",
   "rdt": "???",
   "Region": "Region",
   "reset_dust_collection_work_times": "Dust collection",

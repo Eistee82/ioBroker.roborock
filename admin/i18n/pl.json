@@ -98,6 +98,7 @@
   "msg_ver": "Wersja wiadomości",
   "Password": "Hasło",
   "PIN for streaming the camera": "PIN for streaming the camera",
+  "name_segment": "Zmień nazwy pokoi ([{\"segmentId\":16,\"name\":\"Kuchnia\",\"tag\":14}])",
   "rdt": "???",
   "Region": "Region",
   "reset_dust_collection_work_times": "Dust collection",
