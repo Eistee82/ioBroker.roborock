@@ -67,6 +67,40 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 
 	onConnectionReady(): void {
 		this.setState({ ready: true });
+		this.applyThemeToDocument();
+	}
+
+	componentDidUpdate(): void {
+		this.applyThemeToDocument();
+	}
+
+	/**
+	 * Writes the theme variables onto the document root and paints the page itself.
+	 *
+	 * They used to sit on a `Box` inside the app, which is not enough for two reasons. MUI renders
+	 * tooltips, menus and dialogs through a portal into `document.body` - outside that Box, where
+	 * the variables do not reach, so those parts kept light-mode colours in a dark admin. And
+	 * `html`/`body` carried no themed background at all: whatever the app does not cover stayed
+	 * white, which in a dark admin is a bright frame around a dark page.
+	 *
+	 * Setting them on `documentElement` covers both, portals included, because everything in the
+	 * document inherits from there.
+	 */
+	private applyThemeToDocument(): void {
+		const theme = createRoborockTheme(this.state.theme);
+		const root = document.documentElement;
+
+		for (const [name, value] of Object.entries(themeCssVariables(theme))) {
+			root.style.setProperty(name, value);
+		}
+
+		// The page behind the app, for the moment before React paints and for anything it does
+		// not cover. `color-scheme` additionally hands the mode to the browser, so the parts it
+		// draws itself - scrollbars above all - follow along.
+		const ground = theme.palette.background.default;
+		root.style.setProperty("color-scheme", theme.palette.mode);
+		root.style.backgroundColor = ground;
+		document.body.style.backgroundColor = ground;
 	}
 
 	render(): React.JSX.Element {

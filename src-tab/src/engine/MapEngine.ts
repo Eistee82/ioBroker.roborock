@@ -248,7 +248,14 @@ const UI_CONSTANTS = {
 	ROBOT_SIZE_BASE: 5,
 	CHARGER_SIZE_BASE: 3,
 	OBSTACLE_RADIUS_BASE: 3,
-	ZONE_STROKE_BASE: 1.5,
+	/**
+	 * Edge weight of a cleaning zone, divided by the zoom so it stays constant on screen.
+	 *
+	 * This is set as an inline style and therefore beats anything `.zone-rect` says in the
+	 * stylesheet - raising the value in the CSS alone changes nothing. It used to be 1.5, which
+	 * over the blue floor of the map was a line one had to look for.
+	 */
+	ZONE_STROKE_BASE: 4,
 	ZONE_HANDLE_RADIUS_BASE: 5,
 	PIN_WIDTH_BASE: 29,
 	PIN_HEIGHT_BASE: 24,

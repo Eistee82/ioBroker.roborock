@@ -58,12 +58,15 @@ body,
  * The zone has to read as a zone at a glance, against a map that is itself blue and busy.
  * It used to be a 28% wash with a 1.5px edge, which on a light floor was barely a tint.
  */
+/*
+ * The zone has to read as a zone at a glance, against a map that is itself blue and busy.
+ *
+ * Note the edge is NOT set here: `MapEngine` writes `stroke-width` as an inline style, divided
+ * by the zoom, and an inline style beats this rule. Its weight lives in `ZONE_STROKE_BASE`.
+ */
 .zone-rect {
-	fill: rgba(46, 196, 192, 0.42);
-	stroke: var(--rr-turquoise);
-	stroke-width: 3;
-	/* The edge keeps its weight at every zoom level - a hairline at 4x zoom is not an edge. */
-	vector-effect: non-scaling-stroke;
+	fill: rgba(46, 196, 192, 0.55);
+	stroke: #26d9d4;
 	cursor: move;
 }
 
