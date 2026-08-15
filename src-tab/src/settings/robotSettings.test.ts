@@ -139,6 +139,12 @@ describe("the state ids the source has to read", () => {
 			`${ROOT}.settings.set_dnd_timer`,
 			`${ROOT}.settings.set_dust_collection_mode`,
 			`${ROOT}.settings.app_set_dryer_setting`,
+			// The five on/off settings that share one shape on the wire; see `KNOWN_SETTINGS`.
+			`${ROOT}.settings.set_clean_follow_ground_material_status`,
+			`${ROOT}.settings.set_optimize_battery_status`,
+			`${ROOT}.settings.set_right_brush_stretch_status`,
+			`${ROOT}.settings.set_stretch_tag_status`,
+			`${ROOT}.settings.set_gap_deep_clean_status`,
 		].sort());
 	});
 });

@@ -25,8 +25,10 @@ import {
 	GET_TIMEZONE,
 	SET_DRYER_SETTING,
 	SET_DUST_COLLECTION_MODE,
+	STATUS_TOGGLES,
 	V1ProbedCapabilityService
 } from "./v1ProbedCapabilities";
+import type { StatusToggle } from "./v1ProbedCapabilities";
 import {
 	APP_RC_END,
 	APP_RC_MOVE,
@@ -658,6 +660,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		} else if (finalMethod === SET_DRYER_SETTING) {
 			void this.readProbedValue(GET_DRYER_SETTING, [], (r) => this.probedService.applyDryerSettingResponse(r));
 		}
+
+		await this.noteStatusToggleResult(finalMethod, response);
 
 		this.noteRemoteControlResult(finalMethod);
 
@@ -1680,6 +1684,90 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		await this.probeAndApply(GET_DUST_COLLECTION_MODE, [], Feature.DustCollectionMode, SET_DUST_COLLECTION_MODE);
 		await this.probeAndApply(GET_DRYER_SETTING, [], Feature.DryerSetting, SET_DRYER_SETTING);
 		await this.detectRemoteControl();
+		await this.detectStatusToggles();
+	}
+
+	/**
+	 * Setters this robot answered the getter for, and which are therefore worth publishing.
+	 *
+	 * Filled by {@link detectStatusToggles} and read by {@link initStatusToggles}. Kept as a set
+	 * rather than as five separate features, because the five differ in nothing but their name -
+	 * five enum entries and five near-identical registration methods would be five places for the
+	 * next one to drift out of step.
+	 */
+	private readonly probedStatusToggles = new Set<string>();
+
+	/**
+	 * Asks the robot about each of the five on/off settings and remembers the ones it has.
+	 *
+	 * All five are read-probed, so an unexpected answer costs nothing: `get_*` cannot change the
+	 * device. The measurement on the test device is what makes this worth doing rather than
+	 * declaring the switches for a model class - of the five, the a65 answers **one**
+	 * (`get_clean_follow_ground_material_status` → `{"status":0}`) and rejects the other four with
+	 * `unknown_method` (`_appanalysis/geraetefaehigkeiten-1786790619395.json`). A model table would
+	 * have had to be right about all five for every robot; the robot is right about itself.
+	 *
+	 * One feature is applied for the whole group, and only when at least one switch survived - a
+	 * robot that has none of them gets no folder entry and no control, which is the point.
+	 */
+	private async detectStatusToggles(): Promise<void> {
+		for (const toggle of STATUS_TOGGLES) {
+			if (this.folderOfCommand(toggle.setter)) continue;
+
+			const verdict = await this.capabilityProbe.probe(toggle.getter, []);
+			if (verdict !== "capable") continue;
+
+			this.probedStatusToggles.add(toggle.setter);
+		}
+
+		if (this.probedStatusToggles.size > 0) await this.applyFeature(Feature.StatusToggles);
+	}
+
+	/**
+	 * Publishes the on/off settings the robot answered for, and reads each one once.
+	 *
+	 * The read is not optional comfort here. None of these five appears in the status packet of any
+	 * robot measured so far (48 fields on the test device, `_appanalysis/local-mitschnitt.log`), so
+	 * without it the switch would sit at its default and claim a position the robot never reported -
+	 * a switch showing "off" for a setting that is on is the same lie as a dead switch. It is not
+	 * awaited, for the reason `initDoNotDisturb` states.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.StatusToggles)
+	public async initStatusToggles(): Promise<void> {
+		for (const toggle of STATUS_TOGGLES) {
+			if (!this.probedStatusToggles.has(toggle.setter)) continue;
+
+			this.probedService.registerStatusToggle(toggle, (name, spec, group) => this.addCommand(name, spec, group));
+			void this.readStatusToggle(toggle);
+		}
+	}
+
+	/**
+	 * Keeps an on/off setting in step with the robot after it was read or written.
+	 *
+	 * The read-back after a write is the same reasoning as for the empty mode and the drying
+	 * setting: the robot is the authority on what it really took, none of these five shows up in a
+	 * status packet, so asking again is the only honest check. It is also why none of them is in
+	 * `commandVerification` - an expectation on a status field the robot never sends would be
+	 * exactly the false alarm that had to be removed from `set_dnd_timer`.
+	 *
+	 * @param finalMethod The method that actually went on the wire.
+	 * @param response The robot's answer.
+	 */
+	private async noteStatusToggleResult(finalMethod: string, response: unknown): Promise<void> {
+		const toggle = STATUS_TOGGLES.find((entry) => entry.getter === finalMethod || entry.setter === finalMethod);
+		if (!toggle || !this.probedStatusToggles.has(toggle.setter)) return;
+
+		if (finalMethod === toggle.getter) {
+			await this.probedService.applyStatusToggleResponse(toggle, response);
+			return;
+		}
+		void this.readStatusToggle(toggle);
+	}
+
+	/** Reads one on/off setting and publishes its position, swallowing failure. */
+	private async readStatusToggle(toggle: StatusToggle): Promise<void> {
+		await this.readProbedValue(toggle.getter, [], (response) => this.probedService.applyStatusToggleResponse(toggle, response));
 	}
 
 	/**

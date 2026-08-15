@@ -99,6 +99,125 @@ export const GET_DRYER_SETTING = "app_get_dryer_setting";
 export const SET_DRYER_SETTING = "app_set_dryer_setting";
 
 /**
+ * One on/off setting whose read and write are a matching `get_*`/`set_*` pair around a `status`
+ * field.
+ *
+ * ## Why they share one description
+ *
+ * These five look identical on the wire and differ only in their name, so anything they had in
+ * common would otherwise be copied five times. What they must **not** share is their proof: each
+ * line of the table below was read on its own, and two candidates that looked exactly like these
+ * were dropped because theirs did not hold up (see the module comment of the table).
+ */
+export interface StatusToggle {
+	/** Reading command; also the capability probe that decides whether the switch exists at all. */
+	getter: string;
+	/** Writing command. */
+	setter: string;
+	/** Roborock string key of the label, and what to show when the catalogue has no entry. */
+	labelKey: string;
+	labelFallback: string;
+	/** Roborock string key of the explanation shown as the object's description. */
+	descKey: string;
+	descFallback: string;
+	/** Where the value and the payload were read; goes into the log of a refused write. */
+	fundstelle: string;
+}
+
+/**
+ * The on/off settings this module offers, and the proof behind each one.
+ *
+ * Line numbers marked A65 refer to the decompiled control plugin of the test device. **Every one of
+ * these was re-read for this table**, wrapper *and* caller, because a wrapper alone does not prove a
+ * payload: three of the five forward their argument unread, and it is the caller that builds the
+ * `{status}` object. That is the same trap `app_set_dryer_setting` sat in - it was held back for a
+ * while on the belief that it passed its argument through, which turned out to be wrong.
+ *
+ * | Setting | Wrapper | Where `{status: 1|0}` is built | Read back from |
+ * | --- | --- | --- | --- |
+ * | Clean along floor direction | A65:230453-230464, builds `{status: a0}` | caller A65:858136-858145, `on ? 1 : 0` | A65:859820-859826, `result.status == 1` |
+ * | Adjusted battery level | A65:230661-230672, builds `{status: a0}` | caller A65:847220-847229, `on ? 1 : 0` | A65:847519-847524, `result.status == 1` |
+ * | Extended cleaning (side brush) | A65:230683-230692, **forwards `a0`** | caller A65:858511-858520, builds `{status: on ? 1 : 0}` | switch state `rightBrushStretch` |
+ * | Extended mopping (corners) | A65:230217-230226, **forwards `a0`** | caller A65:858600-858609, builds `{status: on ? 1 : 0}` | switch state `cornerStrechSwitch` |
+ * | Extended cleaning for crevices | A65:230497-230506, **forwards `a0`** | caller A65:946537-946546, builds `{status: on ? 1 : 0}` | switch state `gapDeepCleanEnabled` |
+ *
+ * The labels are the keys the app itself reads for these very switches - checked at
+ * A65:861343 (floor direction), A65:852465/852471 (battery), A65:861012/861019 (side brush),
+ * A65:861055/861062 (corner mopping) and A65:946938/946943 (crevices). Roborock spells two of them
+ * twice; the app reads `…_stretch_…`, not the `…_strech_…` variant that also exists in the
+ * catalogue, and both title and detail of all five exist in **all eleven** adapter languages.
+ *
+ * ## Three neighbours that are deliberately absent
+ *
+ * - **`set_corner_clean_mode`** has the cleanest payload of the lot - its wrapper computes
+ *   `{status: a0 ? 1 : 0}` by itself (A65:230197-230215), so not even the caller can get it wrong.
+ *   It is still not here, because **there is no `get_corner_clean_mode` anywhere in the plugin**
+ *   and the test device's status packet does not carry `corner_clean_mode` either (48 fields,
+ *   `_appanalysis/local-mitschnitt.log`). With no way to ask whether a robot has it, the only
+ *   options are a switch on every robot or none, and a switch that writes into the void is the
+ *   fault this mechanism exists to prevent.
+ * - **`set_mop_motor_status`** builds `{status: a0}` (A65:230617-230628) and has **no caller in the
+ *   entire plugin** - the argument is never computed anywhere, so whether 1 means on is a guess.
+ *   Same shape as `set_airdry_hours` in `_appanalysis/18-funktionsluecken.md` §C18.
+ * - **`set_identify_ground_material_status` / `set_identify_furniture_status`** have proven payloads
+ *   (`{status: on ? 1 : 0}`, A65:837983-838005), but the app drives **both from one switch**,
+ *   `onSceneSwitch`. Publishing them as two independent switches would let a user reach a
+ *   combination the app never produces, and nothing read here says the robot handles it sensibly.
+ */
+export const STATUS_TOGGLES: ReadonlyArray<StatusToggle> = [
+	{
+		getter: "get_clean_follow_ground_material_status",
+		setter: "set_clean_follow_ground_material_status",
+		labelKey: "ground_material_clean_direction_title",
+		labelFallback: "Clean along floor direction",
+		descKey: "ground_material_clean_direction_detail",
+		descFallback: "The robot cleans along the direction of the floor to minimise scraping against the floor seams. The direction has to be set per room in the Roborock app; this adapter cannot set it.",
+		fundstelle: "A65:230453-230464, A65:858136-858145"
+	},
+	{
+		getter: "get_optimize_battery_status",
+		setter: "set_optimize_battery_status",
+		labelKey: "setting_optimize_batter_title",
+		labelFallback: "Adjusted Battery Level",
+		descKey: "setting_optimize_batter_detail",
+		descFallback: "The battery level is calculated more accurately once this is on.",
+		fundstelle: "A65:230661-230672, A65:847220-847229"
+	},
+	{
+		getter: "get_right_brush_stretch_status",
+		setter: "set_right_brush_stretch_status",
+		labelKey: "setting_ground_right_brush_stretch_title",
+		labelFallback: "FlexiArm Design Extended Cleaning",
+		descKey: "setting_ground_right_brush_stretch_detail",
+		descFallback: "The robot extends the flexible side brush along corners for better cleaning.",
+		fundstelle: "A65:230683-230692, A65:858511-858520"
+	},
+	{
+		getter: "get_stretch_tag_status",
+		setter: "set_stretch_tag_status",
+		labelKey: "setting_ground_corner_stretch_title",
+		labelFallback: "FlexiArm Design Extended Mopping",
+		descKey: "setting_ground_corner_stretch_detail",
+		descFallback: "While mopping along edges and corners the right mop extends closer to the wall.",
+		fundstelle: "A65:230217-230226, A65:858600-858609"
+	},
+	{
+		getter: "get_gap_deep_clean_status",
+		setter: "set_gap_deep_clean_status",
+		labelKey: "setting_gap_deep_clean_title",
+		labelFallback: "FlexiArm Design Extended Cleaning for Crevices",
+		descKey: "setting_gap_deep_clean_detail",
+		descFallback: "The robot identifies crevices below appliances and furniture and extends the flexible side brush into them.",
+		fundstelle: "A65:230497-230506, A65:946537-946546"
+	}
+];
+
+/** Finds the toggle a command belongs to, by either of its two names. */
+export function statusToggleFor(command: string): StatusToggle | undefined {
+	return STATUS_TOGGLES.find((toggle) => toggle.setter === command || toggle.getter === command);
+}
+
+/**
  * The empty modes the app offers, with the Roborock string key of each label.
  *
  * Mode 3 is absent on purpose; see the module comment. The keys are the ones `getCollectionModes()`
@@ -143,6 +262,27 @@ function unwrapPayload(response: unknown): unknown {
 	}
 	while (Array.isArray(payload) && payload.length === 1) payload = payload[0];
 	return payload;
+}
+
+/**
+ * Turns whatever was written into a state into the 1 or 0 the robot expects.
+ *
+ * Deliberately permissive where ioBroker itself is: `main.ts` already converts a switch write with
+ * its own `isTruthy` before this is reached, but a script can call the feature class directly, and
+ * the strings `"false"` and `"0"` are what a text field produces. Reading either of those as **on**
+ * would switch something on that the user switched off.
+ *
+ * @param value Raw value.
+ * @returns 1 for on, 0 for off.
+ */
+function toBooleanFlag(value: unknown): number {
+	if (typeof value === "string") {
+		const text = value.trim().toLowerCase();
+		if (text === "" || text === "false" || text === "0" || text === "off" || text === "no") return 0;
+		return 1;
+	}
+	if (typeof value === "number") return value === 0 ? 0 : 1;
+	return value ? 1 : 0;
 }
 
 /** Reads a finite number out of a value the robot may have sent as a string. */
@@ -286,6 +426,24 @@ export function parseDryerSettingResponse(response: unknown): DryerSetting | nul
 
 	if (enabled === null && dryTimeSeconds === null) return null;
 	return { enabled, dryTimeSeconds };
+}
+
+/**
+ * Reads the answer of one of the {@link STATUS_TOGGLES} getters, which arrives as `{"status":0}`.
+ *
+ * The comparison is against 1 and not "anything truthy", because that is what the app does on both
+ * sides it was read on (A65:847523 and A65:859824-859826 both compute `1 == status`). A robot that
+ * answered 2 would therefore read as off here, exactly as it would in the app.
+ *
+ * @param response Raw robot answer.
+ * @returns Whether the setting is on, or null when the answer carries no `status`.
+ */
+export function parseStatusToggleResponse(response: unknown): boolean | null {
+	const payload = unwrapPayload(response);
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+
+	const status = finiteNumber((payload as Record<string, unknown>).status);
+	return status === null ? null : status === 1;
 }
 
 /** True for a value the empty mode may be set to. */
@@ -432,6 +590,66 @@ export class V1ProbedCapabilityService {
 		this.claimed.add(SET_DRYER_SETTING).add(GET_DRYER_SETTING);
 	}
 
+	/**
+	 * Registers one on/off setting and its read button.
+	 *
+	 * `role: "switch.enable"` is not decoration: `main.ts` sends **both** positions of a boolean only
+	 * for a command whose role is in ioBroker's switch family, and treats every other boolean as a
+	 * button that fires on `true` and springs back. A switch registered without it could be turned
+	 * on and never off - the fault nineteen commands had until the switch/button distinction was
+	 * introduced.
+	 *
+	 * @param toggle Which setting to register.
+	 * @param addCommand Registration callback of the feature class.
+	 */
+	public registerStatusToggle(toggle: StatusToggle, addCommand: (name: string, spec: Record<string, unknown>, group?: string) => void): void {
+		const label = this.text(toggle.labelKey, toggle.labelFallback);
+
+		addCommand(toggle.setter, {
+			type: "boolean",
+			role: "switch.enable",
+			name: label,
+			desc: this.text(toggle.descKey, toggle.descFallback),
+			def: false,
+			write: true
+		}, "settings");
+
+		addCommand(toggle.getter, {
+			type: "boolean",
+			role: "button",
+			name: `Read ${label}`,
+			def: false
+		}, "queries");
+
+		this.claimed.add(toggle.setter).add(toggle.getter);
+	}
+
+	/**
+	 * Publishes the position of one on/off setting.
+	 *
+	 * Written onto the switch itself rather than into a second read-only state. These five are not
+	 * in the status packet of any robot measured so far, so the switch is the only place the value
+	 * can live, and a mirror state beside it would only be a second thing to keep in step.
+	 *
+	 * @param toggle Which setting the answer belongs to.
+	 * @param response Raw robot answer.
+	 * @returns Whether a position was published.
+	 */
+	public async applyStatusToggleResponse(toggle: StatusToggle, response: unknown): Promise<boolean> {
+		const enabled = parseStatusToggleResponse(response);
+		if (enabled === null) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
+				`Unreadable ${toggle.getter} answer: ${JSON.stringify(response)}`, "warn");
+			return false;
+		}
+
+		await this.deps.adapter.setStateChanged(`Devices.${this.duid}.settings.${toggle.setter}`, {
+			val: enabled,
+			ack: true
+		});
+		return true;
+	}
+
 	// --- Parameters ---------------------------------------------------------------------------
 
 	/**
@@ -446,6 +664,14 @@ export class V1ProbedCapabilityService {
 	 * @returns The method and parameters to send.
 	 */
 	public buildCommandParams(method: string, value: unknown): { method: string; params: unknown } {
+		const toggle = statusToggleFor(method);
+		if (toggle) {
+			// The getter takes `new Array(0)` in every one of the five wrappers; the setter always
+			// carries `{status: 1|0}`, whether the wrapper builds that object or the caller does.
+			if (method === toggle.getter) return { method, params: [] };
+			return { method, params: { status: toBooleanFlag(value) } };
+		}
+
 		if (method === GET_TIMEZONE) return { method: GET_TIMEZONE, params: [] };
 		if (method === GET_DUST_COLLECTION_MODE) return { method: GET_DUST_COLLECTION_MODE, params: [] };
 		if (method === GET_DRYER_SETTING) return { method: GET_DRYER_SETTING, params: [] };

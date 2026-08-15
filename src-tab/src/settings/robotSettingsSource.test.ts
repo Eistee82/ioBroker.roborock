@@ -82,8 +82,17 @@ function harness(objects: Record<string, { common: Record<string, unknown> }> = 
 	};
 }
 
+/**
+ * Waits for the source to finish its reload.
+ *
+ * This used to be twelve microtask turns, which is a count of the awaits the source happened to
+ * have at the time - adding five settings to `KNOWN_SETTINGS` pushed it past twelve and made three
+ * unrelated tests fail with an empty model. A macrotask drains everything queued behind it
+ * regardless of how many awaits there are, so the number of settings no longer decides whether
+ * these tests pass.
+ */
 async function settle(): Promise<void> {
-	for (let i = 0; i < 12; i++) await Promise.resolve();
+	for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("RobotSettingsSource", () => {

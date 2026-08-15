@@ -142,6 +142,19 @@ const KNOWN_SETTINGS: ReadonlyArray<
 	// positions travel in `common.states`, so nothing about them is decided here.
 	{ kind: "choice", command: "set_dust_collection_mode" },
 	{ kind: "choice", command: "app_set_dryer_setting" },
+	// Five on/off settings that share one shape on the wire - a `get_*`/`set_*` pair around a
+	// `status` field - and are each unlocked by their own getter, like the two above. Their labels
+	// and explanations travel on the object in Roborock's own wording, so nothing about them is
+	// decided here either; the entry is only which command to look for.
+	//
+	// Measured on the test device, four of the five are answered with `unknown_method` and never get
+	// an object (`_appanalysis/geraetefaehigkeiten-1786790619395.json`). That is the intended
+	// outcome, not a gap: a robot that cannot do something shows nothing rather than a dead switch.
+	{ kind: "switch", command: "set_clean_follow_ground_material_status" },
+	{ kind: "switch", command: "set_optimize_battery_status" },
+	{ kind: "switch", command: "set_right_brush_stretch_status" },
+	{ kind: "switch", command: "set_stretch_tag_status" },
+	{ kind: "switch", command: "set_gap_deep_clean_status" },
 ];
 
 /** Builds the object id of the settings folder of one device. */

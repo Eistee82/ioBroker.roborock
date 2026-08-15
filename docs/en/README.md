@@ -170,6 +170,20 @@ duration and the on/off state are additionally readable as `deviceStatus.dryer_d
 screens; whether every dock accepts it is not proven. If one rejects it, the command check says so
 in the log.
 
+Five more settings are plain on/off switches, and which of them a robot gets is again decided by
+asking it: **Clean along floor direction**, **Adjusted Battery Level**, **FlexiArm Design Extended
+Cleaning** for the side brush, **FlexiArm Design Extended Mopping** for the corners, and **FlexiArm
+Design Extended Cleaning for Crevices**. Each is unlocked by its own read command, so a robot that
+does not know one simply has no switch for it - the test device, measured, answers exactly one of
+the five. Every label and every explanation is Roborock's own wording. None of these five appears in
+the status the robot sends by itself, so the adapter reads each one once at start-up and again after
+every change; there is also a read button per switch in the `queries` folder.
+
+One of them is worth a caveat that comes from Roborock, not from this adapter: **Clean along floor
+direction only does anything once a floor direction has been set for each room**, and that is set in
+the Roborock app under *Edit Surface*. The switch here turns the behaviour on; it cannot set the
+directions, because the two values that command carries are not established.
+
 Under **cleaning info** there is also the robot's **estimate** of the running clean: estimated total
 and remaining area, total and remaining time, progress in percent, the battery the remaining area is
 expected to need, and time and battery per square metre. These values only mean something during a

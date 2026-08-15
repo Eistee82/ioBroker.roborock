@@ -25,6 +25,10 @@ export enum Feature {
 	DryerSetting = "DryerSetting", // Adds the drying selector
 	RobotTimezone = "RobotTimezone", // Adds the robot time zone state and its read button
 	CleanEstimate = "CleanEstimate", // Adds the estimate of the running clean
+	// One feature for the five on/off settings of v1ProbedCapabilities.ts that share a shape: a
+	// `get_*`/`set_*` pair around a `status` field. Each is unlocked by its own getter; the feature
+	// is applied when at least one of them survived, and registers exactly those.
+	StatusToggles = "StatusToggles", // Adds the probed on/off settings
 	// Not a probe: the four `app_rc_*` calls are all actions, and a capability probe may only send a
 	// `get_*` (capabilityProbe.ts). The robot reports this one itself, as firmware feature 125 - the
 	// same number the app reads in `isRemoteSupported()`. See lib/features/vacuum/remoteControl.ts.

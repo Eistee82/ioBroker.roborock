@@ -180,6 +180,22 @@ unter `deviceStatus.dryer_dry_time` und `deviceStatus.dryer_enabled`. Die 5-Stun
 der App nur auf einer von zwei Trocknungsseiten vor; ob jede Station sie annimmt, ist nicht belegt.
 Lehnt eine sie ab, meldet das die Kommandoprüfung im Log.
 
+Fünf weitere Einstellungen sind einfache Ein/Aus-Schalter, und auch hier entscheidet die Frage an
+den Roboter, welche davon er bekommt: **Entlang der Bodenrichtung reinigen**, **Angepasster
+Akkustand**, **FlexiArm-Design: erweiterte Reinigung** für die Seitenbürste, **FlexiArm-Design:
+erweitertes Wischen** für die Ecken und **FlexiArm-Design: erweiterte Reinigung von Ritzen**. Jeder
+hängt an seinem eigenen Lesebefehl — kennt ein Roboter einen davon nicht, gibt es dafür schlicht
+keinen Schalter; das Testgerät beantwortet gemessen genau einen der fünf. Jede Beschriftung und jede
+Erläuterung ist Roborocks eigener Wortlaut. Keiner der fünf steht im Status, den der Roboter von
+sich aus schickt, deshalb liest der Adapter jeden beim Start einmal und nach jeder Änderung erneut;
+im Ordner `queries` liegt zusätzlich je ein Leseknopf.
+
+Bei einem davon ist ein Vorbehalt nötig, und er stammt von Roborock, nicht von diesem Adapter:
+**Entlang der Bodenrichtung reinigen wirkt erst, wenn je Raum eine Bodenrichtung gesetzt ist**, und
+das geschieht in der Roborock-App unter *Bodenbelag bearbeiten*. Der Schalter hier schaltet das
+Verhalten ein; die Richtungen kann er nicht setzen, weil die beiden Werte, die jener Befehl trägt,
+nicht belegt sind.
+
 Unter **Reinigungsinformationen** liegt außerdem die **Restschätzung** des Roboters: geschätzte
 Gesamt- und Restfläche, Gesamt- und Restdauer, Fortschritt in Prozent, der für die Restfläche
 erwartete Akkuverbrauch sowie Zeit und Akku je Quadratmeter. Diese Werte ergeben nur während eines
