@@ -5,7 +5,7 @@ import { V1VacuumFeatures } from "../../src/lib/features/vacuum/v1VacuumFeatures
 import {
 	GET_MULTI_MAPS_LIST,
 	MapInventoryStates,
-	RESTORE_PROBE,
+	backupMenuOffered,
 	V1MapInventoryService,
 	allBackups,
 	parseMultiMapsList
@@ -26,6 +26,15 @@ vi.mock("../../src/lib/map/MapManager", () => ({
  * spaces is the reason several assertions here look pedantic - `recover_multi_map` is handed the
  * flag of the **live** map, so confusing the two would name a different floor.
  */
+
+/**
+ * `new_feature_info` of the test device, measured twice
+ * (`_appanalysis/24-faehigkeitsmerkmale.md` §7): bit 49, `isSupportBackupMap`, is set.
+ */
+const WITH_BACKUP_BIT = 2247395306799103;
+
+/** The same value with bit 49 cleared - a robot whose map menu offers no restore entry. */
+const WITHOUT_BACKUP_BIT = WITH_BACKUP_BIT - 2 ** 49;
 
 /** What the a65 really answers to `get_multi_maps_list`. */
 const MEASURED_LIST = [{
@@ -94,7 +103,7 @@ describe("reading the map list", () => {
 });
 
 describe("what the inventory publishes", () => {
-	function createService(): { service: V1MapInventoryService; written: Map<string, unknown> } {
+	function createService(featureInfo?: unknown): { service: V1MapInventoryService; written: Map<string, unknown> } {
 		const written = new Map<string, unknown>();
 		const deps = {
 			adapter: {
@@ -102,7 +111,9 @@ describe("what the inventory publishes", () => {
 				setStateChanged: vi.fn(async (id: string, state: { val: unknown }) => {
 					written.set(id, state.val);
 				}),
-				rLog: vi.fn()
+				rLog: vi.fn(),
+				errorMessage: (e) => String(e),
+				getStateAsync: vi.fn(async () => (featureInfo === undefined ? null : { val: featureInfo }))
 			},
 			ensureState: vi.fn().mockResolvedValue(undefined),
 			ensureFolder: vi.fn().mockResolvedValue(undefined)
@@ -160,10 +171,60 @@ describe("what the inventory publishes", () => {
 		expect(written.get(id(MapInventoryStates.activeMapName))).toBe("Erdgeschoss");
 	});
 
-	it("says plainly whether the robot can restore at all", async () => {
-		const { service, written } = createService();
-		await service.publishRestoreSupport(false);
+	it("offers a restore when there are backups and the firmware bit is set", async () => {
+		// The two proven halves together. Bit 49 of `new_feature_info` is the whole `visible`
+		// condition of the app's two backup menu entries (A65:725540-725576), and `bak_maps` is the
+		// list they are filled from.
+		const { service, written } = createService(WITH_BACKUP_BIT);
+		await service.applyMultiMapsList(MEASURED_LIST);
+
+		expect(written.get(id(MapInventoryStates.backupCount))).toBe(2);
+		expect(written.get(id(MapInventoryStates.restoreSupported))).toBe(true);
+	});
+
+	it("says no when the firmware does not offer the menu, however many backups there are", async () => {
+		const { service, written } = createService(WITHOUT_BACKUP_BIT);
+		await service.applyMultiMapsList(MEASURED_LIST);
+
+		expect(written.get(id(MapInventoryStates.backupCount))).toBe(2);
 		expect(written.get(id(MapInventoryStates.restoreSupported))).toBe(false);
+	});
+
+	it("says no when the robot keeps no backups, bit or no bit", async () => {
+		const { service, written } = createService(WITH_BACKUP_BIT);
+		await service.applyMultiMapsList([{ max_multi_map: 4, max_bak_map: 1, multi_map_count: 1, map_info: [{ mapFlag: 0, add_time: 1, length: 3, name: "EG", bak_maps: [] }] }]);
+
+		expect(written.get(id(MapInventoryStates.restoreSupported))).toBe(false);
+	});
+
+	it("lets the backup count decide alone when the bitfield is not there", async () => {
+		// The asymmetry, and the whole reason this method was repaired: a **cleared** bit is the
+		// robot saying no, a **missing** field says nothing. Answering "no" to silence is what told
+		// the user his robot could not restore, on no evidence at all.
+		const { service, written } = createService(undefined);
+		await service.applyMultiMapsList(MEASURED_LIST);
+
+		expect(written.get(id(MapInventoryStates.restoreSupported))).toBe(true);
+	});
+
+	it("reads bit 49 by dividing, because a shift would truncate", async () => {
+		// Bit 49 is above 32; `value & (1 << 49)` gives the wrong answer in JavaScript. The app hits
+		// the same wall and divides (A65:234000-234037). A test rather than a comment, because the
+		// symptom is a silent false.
+		expect(backupMenuOffered(WITH_BACKUP_BIT)).toBe(true);
+		expect(backupMenuOffered(WITHOUT_BACKUP_BIT)).toBe(false);
+		// The measured value of the test device, whose bit 49 is set.
+		expect(backupMenuOffered(2247395306799103)).toBe(true);
+	});
+
+	it("tells a denial and a silence apart", async () => {
+		expect(backupMenuOffered(null)).toBeNull();
+		expect(backupMenuOffered(undefined)).toBeNull();
+		expect(backupMenuOffered("")).toBeNull();
+		expect(backupMenuOffered("not a number")).toBeNull();
+		expect(backupMenuOffered(-1)).toBeNull();
+		// A string that *is* a number still counts - ioBroker states carry whatever was written.
+		expect(backupMenuOffered(String(WITH_BACKUP_BIT))).toBe(true);
 	});
 });
 
@@ -174,7 +235,7 @@ describe("who is offered the map inventory", () => {
 	let rejected: Set<string>;
 
 	beforeEach(() => {
-		rejected = new Set([RESTORE_PROBE]); // what the test device really does
+		rejected = new Set<string>();
 		sendRequest = vi.fn(async (_duid: string, method: string) => {
 			if (rejected.has(method)) return "unknown_method";
 			if (method === GET_MULTI_MAPS_LIST) return MEASURED_LIST;
@@ -248,30 +309,19 @@ describe("who is offered the map inventory", () => {
 		expect(vacuum.folderOf(GET_MULTI_MAPS_LIST)).toBeNull();
 	});
 
-	it("reports that the test device cannot restore, although it lists backups", async () => {
-		// The finding this whole state exists for: two backups in the list, `unknown_method` for
-		// the restore list. Without saying so, the backups look like something a user could use.
+	it("reports that the test device would be offered its backups, and asks nothing extra for it", async () => {
+		// The correction this state was repaired for. The old version probed `get_recover_maps`,
+		// which belongs to the app's *other* restore flow and is rejected by this robot - so the
+		// state said "no" while the app's backup menu would have shown two entries.
 		const vacuum = createVacuum();
 		await vacuum.runDetection();
+		// The list read is deliberately not awaited by the detection, and the restore state is
+		// written at the end of it. Three macrotasks rather than a count of microtasks: the chain
+		// is `getState` -> parse -> five state writes, and counting its awaits is how a test starts
+		// failing the next time one is added.
+		for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 
-		expect(sendRequest.mock.calls.map((call) => call[1])).toContain(RESTORE_PROBE);
-		expect(adapterMock.setStateChanged).toHaveBeenCalledWith(
-			`Devices.duid-test.${MapInventoryStates.restoreSupported}`,
-			{ val: false, ack: true }
-		);
-	});
-
-	it("reports that a robot which answers the restore list can restore", async () => {
-		rejected.delete(RESTORE_PROBE);
-		sendRequest.mockImplementation(async (_duid: string, method: string) => {
-			if (method === RESTORE_PROBE) return [[3, 1786781087]];
-			if (method === GET_MULTI_MAPS_LIST) return MEASURED_LIST;
-			return "unknown_method";
-		});
-
-		const vacuum = createVacuum();
-		await vacuum.runDetection();
-
+		expect(sendRequest.mock.calls.map((call) => call[1])).not.toContain("get_recover_maps");
 		expect(adapterMock.setStateChanged).toHaveBeenCalledWith(
 			`Devices.duid-test.${MapInventoryStates.restoreSupported}`,
 			{ val: true, ack: true }

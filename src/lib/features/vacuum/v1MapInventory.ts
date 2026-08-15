@@ -39,17 +39,34 @@ import { DeviceStateWriter } from "../deviceStateWriter";
  * made for it. `get_segment_status` is left out for the first of those reasons alone: its wrapper
  * (A65:228968-228983) has no caller either, and its `[1]` is undecoded.
  *
- * ## Whether the robot can restore a backup is asked, not assumed
+ * ## Whether a backup would be offered - and a correction to an earlier version of this file
  *
- * `bak_maps` promises something the robot may not be able to deliver. The app's restore flow starts
- * at `get_recover_maps` (A65:228906-228921, caller A65:461041-461052), which turns the answer into
- * a list of `{id, time}` pairs - and **the test device answers `unknown_method`**. So on that robot
- * the app's own restore list is empty although two backups are listed.
+ * **This file previously claimed that the Roborock app shows an empty restore list on the test
+ * device, and that was wrong.** The claim rested on `get_recover_maps` answering `unknown_method`,
+ * which is true and measured - but that call belongs to a **different** flow.
  *
- * That is worth saying out loud rather than hiding, which is why {@link RESTORE_PROBE} is asked
- * once and the answer published as {@link MapInventoryStates.restoreSupported}. A user who sees a
- * backup dated last week and no way to use it deserves to know it is the robot refusing, not the
- * adapter lacking a button.
+ * The app has two, and they share no call at all:
+ *
+ * | | "Reset map" (`reset_map_*`) | **"Map backup"** (`backup_map_new` / `recover_map_new`) |
+ * | --- | --- | --- |
+ * | Entry | its own page | map menu, `visible = isSupportBackupMap()` = **`new_feature_info` bit 49**, A65:725540-725576 |
+ * | List from | `get_recover_maps`, `[id, time]` pairs, A65:461041-461052 | **`bak_maps` of `get_multi_maps_list`**, A65:708608-708625 |
+ * | Restore | `recover_map(id)`, A65:461295-461300 | `recover_multi_map({map_flag})`, A65:691505-691530 |
+ *
+ * So both earlier readings were right about their own flow: the **old** one really is absent on
+ * this robot, and bit 49 really does mean something - it unlocks the **new** one, which never asks
+ * `get_recover_maps`. `_appanalysis/26-luecken-stand.md` §7 has the full derivation.
+ *
+ * The test device carries one backup per map, so **in the app that list would be populated**.
+ * {@link MapInventoryStates.restoreSupported} therefore no longer probes the wrong call. It answers
+ * the question the two proven halves can answer together:
+ *
+ * > Are there backups, and does this robot's menu offer them?
+ *
+ * **It does not say that restoring works.** `recover_multi_map` is a **write** and has never been
+ * measured - deliberately, because it overwrites the map that is loaded, and Roborock's own warning
+ * (`recover_map_hint`) says the schedules and commands attached to it stop working. Asking a robot
+ * to prove a destructive call by making it is not a capability probe.
  *
  * ## What is deliberately absent, with the payloads for whoever builds them
  *
@@ -66,14 +83,52 @@ import { DeviceStateWriter } from "../deviceStateWriter";
  * **The two restore calls do not take the same number**, and that is the trap: `recover_multi_map`
  * is handed the flag of the map that is loaded, not the flag inside `bak_maps`. On the test device
  * that is 0 or 1, while the backups call themselves 4 and 5. Passing a `bak_maps` flag there would
- * name a different map.
+ * name a different map. Proven twice over, at A65:691527-691530 and again at A65:919178-919180 -
+ * both pass `RSM.currentMapId`.
+ *
+ * **And the payload never names the backup.** `{map_flag}` is the whole of it: which of the stored
+ * backups the robot is meant to load appears nowhere in the request. On a robot that keeps **one**
+ * backup per map - the test device's `max_bak_map` is 1 - that is unambiguous. Whether a robot with
+ * several can be told which one is **not answerable from this bundle**, and it is the first thing
+ * to establish before a restore button is built for such a device.
  */
 
 /** RPC that lists the map slots, their names and their backups. */
 export const GET_MULTI_MAPS_LIST = "get_multi_maps_list";
 
-/** RPC whose answer decides whether the robot offers restoring at all. */
-export const RESTORE_PROBE = "get_recover_maps";
+/**
+ * Bit of `new_feature_info` that decides whether the robot's map menu offers backup and restore.
+ *
+ * `isSupportBackupMap()` in the control plugin; it is the whole `visible` condition of both menu
+ * items (A65:725540-725576). Without it the app shows no restore entry at all, however many
+ * backups the robot lists.
+ *
+ * Bit 49 is **above** 32, so a plain `value & (1 << 49)` would silently give the wrong answer -
+ * JavaScript's bit operators truncate to 32 bits. The app hits the same wall and divides instead
+ * (`(robotNewFeatures / 2**32) >> s & m`, A65:234000-234037); {@link backupMenuOffered} does the
+ * same. `MapEditService` gets away with `&` only because its bit 26 is below the cut.
+ */
+export const BACKUP_MAP_FEATURE_BIT = 49;
+
+/** State the feature bitfield arrives in; `processStatus` turns every unhandled key into one. */
+export const NEW_FEATURE_INFO_STATE = "deviceStatus.new_feature_info";
+
+/**
+ * Reads bit 49 out of a `new_feature_info` value.
+ *
+ * @param raw Value of the `new_feature_info` state, in whatever shape it was stored.
+ * @returns True or false when the field could be read, **null when it could not** - and the two
+ *   are different answers. "The robot says no" is a fact; "the robot never told us" is not, and
+ *   turning the second into the first is exactly the mistake this state is being repaired from.
+ */
+export function backupMenuOffered(raw: unknown): boolean | null {
+	if (raw === undefined || raw === null || raw === "") return null;
+	const value = typeof raw === "number" ? raw : Number(raw);
+	if (!Number.isFinite(value) || value < 0) return null;
+
+	const high = Math.floor(value / 2 ** 32);
+	return (high & (1 << (BACKUP_MAP_FEATURE_BIT - 32))) !== 0;
+}
 
 /** Folder this module publishes into. Deliberately not `floors`, which `V1MapService` owns. */
 export const MAP_INVENTORY_FOLDER = "mapInventory";
@@ -261,6 +316,11 @@ export class V1MapInventoryService {
 
 		// Re-publish the active map's name, which may have changed with the list.
 		await this.publishActiveMap(this.publishedFlag, true);
+
+		// Published from here rather than from the feature class, because it needs this very list:
+		// the count of `bak_maps` is one of its two inputs. Asking for it beside the list read - as
+		// the removed probe did - meant the answer could be computed before the list had arrived.
+		await this.publishRestoreSupport();
 		return true;
 	}
 
@@ -305,19 +365,54 @@ export class V1MapInventoryService {
 	}
 
 	/**
-	 * Publishes whether the robot offers restoring a backup at all.
+	 * Publishes whether a restore would be offered for the backups listed beside it.
 	 *
-	 * @param supported What the probe of {@link RESTORE_PROBE} concluded.
+	 * Two proven halves, and both are needed:
+	 *
+	 * - **there is something to restore** - `bak_maps` is not empty, which is the list the app's
+	 *   own restore page is built from;
+	 * - **the robot's menu offers it** - `new_feature_info` bit 49, the whole `visible` condition
+	 *   of both menu entries.
+	 *
+	 * Neither alone would do. Without the bit the app shows no entry however many backups exist;
+	 * without backups the entry is there and empty.
+	 *
+	 * **When the bit cannot be read the count decides alone.** That is a deliberate asymmetry: a
+	 * cleared bit is the robot saying no and is reported as such, but a *missing* field says
+	 * nothing, and answering "no" to it would recreate the exact fault this method was repaired
+	 * from - a state that told the user his robot cannot do something nobody had established.
+	 *
+	 * The published value never claims that restoring **works**; see the file comment. It claims
+	 * that backups exist and that the app would offer them.
 	 */
-	public async publishRestoreSupport(supported: boolean): Promise<void> {
+	public async publishRestoreSupport(): Promise<void> {
+		const backups = this.inventory ? allBackups(this.inventory).length : 0;
+		const menuOffered = backupMenuOffered(await this.readNewFeatureInfo());
+		const offered = backups > 0 && menuOffered !== false;
+
 		await this.stateWriter.ensureFolder(MAP_INVENTORY_FOLDER);
 		await this.stateWriter.ensureAndSetState(MapInventoryStates.restoreSupported, {
-			name: "Robot can restore a map backup",
-			desc: "Answered by the robot itself. When false, the backups listed beside this are not usable - not even in the Roborock app.",
+			name: "A stored backup would be offered for restoring",
+			desc:
+				"True when the robot lists at least one backup and its firmware offers the restore menu "
+				+ "(new_feature_info bit 49). This adapter has no restore button; the state says whether the "
+				+ "Roborock app would show one, not that restoring has been tried.",
 			type: "boolean",
 			role: "indicator",
 			read: true,
 			write: false
-		}, supported);
+		}, offered);
+	}
+
+	/** Reads the feature bitfield, or null when it is not there. Never throws. */
+	private async readNewFeatureInfo(): Promise<unknown> {
+		try {
+			const state = await this.deps.adapter.getStateAsync(`Devices.${this.duid}.${NEW_FEATURE_INFO_STATE}`);
+			return state?.val ?? null;
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
+				`Could not read ${NEW_FEATURE_INFO_STATE}, judging the restore menu by the backup count alone: ${this.deps.adapter.errorMessage(e)}`, "debug");
+			return null;
+		}
 	}
 }

@@ -32,7 +32,7 @@ import {
 import type { StatusToggle } from "./v1ProbedCapabilities";
 import { CHANGE_SOUND_VOLUME, GET_SOUND_VOLUME, V1SoundVolumeService } from "./v1SoundVolume";
 import { APP_GET_LOCALE, GET_SERIAL_NUMBER, V1DeviceIdentityService } from "./v1DeviceIdentity";
-import { GET_MULTI_MAPS_LIST, RESTORE_PROBE, V1MapInventoryService } from "./v1MapInventory";
+import { GET_MULTI_MAPS_LIST, V1MapInventoryService } from "./v1MapInventory";
 import { CLOSE_VALLEY_TIMER, GET_VALLEY_TIMER, SET_VALLEY_TIMER, V1OffPeakChargingService } from "./v1OffPeakCharging";
 import {
 	APP_RC_END,
@@ -1835,10 +1835,9 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	 * Read-only throughout - see `v1MapInventory.ts` for why `get_map_status` is not used and for
 	 * the payloads of the three destructive calls that were established but deliberately not built.
 	 *
-	 * The restore question is asked here rather than assumed, because `bak_maps` promises something
-	 * the test device cannot deliver: it lists two backups and answers `get_recover_maps` with
-	 * `unknown_method`. Reporting that is the difference between "this adapter has no button" and
-	 * "this robot cannot do it".
+	 * Whether those backups would be offered for restoring is published by the service itself, out
+	 * of the list plus one firmware bit. It used to be probed here with `get_recover_maps`, and that
+	 * was wrong: the app has two restore flows and that call belongs to the other one.
 	 */
 	@BaseDeviceFeatures.DeviceFeature(Feature.MapInventory)
 	public async initMapInventory(): Promise<void> {
@@ -1849,30 +1848,11 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			def: false
 		}, "queries");
 
+		// `mapInventory.restoreSupported` is published from inside this read, because the backup
+		// count is one of the two inputs it is computed from. It used to be a separate probe of
+		// `get_recover_maps` here - that call belongs to the app's *other* restore flow and answered
+		// for the wrong one; see the file comment of `v1MapInventory.ts`.
 		void this.readProbedValue(GET_MULTI_MAPS_LIST, [], (response) => this.mapInventoryService.applyMultiMapsList(response));
-
-		// The probe answers "can this robot restore at all", and its verdict is the state's value.
-		// A robot that never answers counts as "cannot", which is the same direction of error the
-		// probe itself takes - and the honest one here, because the alternative is a state that
-		// says restoring works on a robot that has never confirmed it.
-		//
-		// **Awaited**, unlike the list read above. This runs inside `detectProbedCapabilities`,
-		// where every other probe is awaited too, and it is one request on the probe's own low
-		// priority - it cannot overtake a status poll. Leaving it dangling would mean the state
-		// appears some time after the objects were written, which is the timing that made runtime
-		// detected features invisible in the first place.
-		await this.publishRestoreSupport();
-	}
-
-	/** Asks whether the robot offers restoring a backup, and writes the answer down. */
-	private async publishRestoreSupport(): Promise<void> {
-		try {
-			const verdict = await this.capabilityProbe.probe(RESTORE_PROBE, []);
-			await this.mapInventoryService.publishRestoreSupport(verdict === "capable");
-		} catch (e: unknown) {
-			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
-				`Could not determine whether the robot restores map backups: ${this.deps.adapter.errorMessage(e)}`, "debug");
-		}
 	}
 
 	/**
