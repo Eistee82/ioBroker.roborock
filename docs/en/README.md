@@ -120,7 +120,8 @@ the one that reported last decides what everyone sees. Changing the setting repa
 stored maps at once and does not cost the robots a single request.
 
 The **settings** panel carries the persistent robot settings. Today that is Do Not Disturb, the
-child lock and obstacle avoidance; it is the place further settings will be added to. A control only
+child lock, obstacle avoidance, the dock's empty mode and the drying setting; it is the place
+further settings will be added to. A control only
 appears for a robot that really has the setting, and there are two ways the adapter finds that out:
 some settings announce themselves in the status the robot sends anyway, and for the rest the adapter
 **asks the robot once at start-up** whether it knows the matching read command. A robot that answers
@@ -143,14 +144,37 @@ a time you change while the mode is off is kept in the browser and sent when you
 the window is in the **robot's own clock**, not in the ioBroker host's: the robot stores four plain
 numbers with no time zone attached, and the Roborock app has a device time zone screen of its own
 for exactly that reason. If the robot's time zone differs from yours, the quiet period sits at a
-different hour than the one shown here. The robot answers `get_timezone` with its own zone - on the
-test device `Europe/Berlin`, i.e. the same one - so a doubt about this is one cheap read away rather
-than an unanswerable worry. The adapter does not ask for it yet.
+different hour than the one shown here. **That is now checkable:** where the robot can say so, its
+zone stands in `deviceStatus.timezone` - on the test device `Europe/Berlin`, i.e. the same one.
+Roborock puts the caveat this way itself: "Inaccurate robot time zone may affect DND mode accuracy."
+The adapter only **reads** the zone; setting it is still done in the Roborock app.
 
 The child lock is an ordinary switch. Both settings are also readable in the object tree, and both
 are checked after they are sent: the robot answers `["ok"]` even to a setting it drops, so the
 adapter compares what it asked for against what the robot reports afterwards and says so in the log
 when the two disagree.
+
+The **empty mode** decides how hard the dock empties the dustbin. It is a choice of four steps -
+*Smart*, *Light*, *Balanced* and *Max* - in Roborock's own wording. Worth knowing: internally the
+four steps are **not** numbered 0 to 3 but 0, 1, 2 and 4. Number 3 exists in the device but has no
+name in any language and no place in the app's own picker, so the adapter does not offer it. If a
+robot reports some other step by itself it is shown unchanged - what the device says about itself is
+a fact - it simply cannot be written back.
+
+The **drying setting** is a single choice rather than a switch plus a duration, because the protocol
+has one call that always carries both. So the choice has a *No-Drying* position and the durations 2,
+3, 4 and 5 hours. Setting it to *No-Drying* sends the last reported duration along with it, exactly
+as the Roborock app does, which also sends a duration when switching drying off. The selected
+duration and the on/off state are additionally readable as `deviceStatus.dryer_dry_time` and
+`deviceStatus.dryer_enabled`. The five hour step appears on only one of the app's two drying
+screens; whether every dock accepts it is not proven. If one rejects it, the command check says so
+in the log.
+
+Under **cleaning info** there is also the robot's **estimate** of the running clean: estimated total
+and remaining area, total and remaining time, progress in percent, the battery the remaining area is
+expected to need, and time and battery per square metre. These values only mean something during a
+run; in the dock they describe the last one that finished. The adapter does not poll them - there is
+a button for it in the `queries` folder.
 
 The **cleaning history** sits below the dock panel, collapsed like its neighbours. It lists
 the recorded runs newest first with the moment each one started, how long it took, how much

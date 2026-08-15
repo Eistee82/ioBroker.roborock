@@ -126,8 +126,8 @@ zeichnet die gespeicherten Karten sofort neu und kostet die Roboter keine einzig
 Anfrage.
 
 Die Tafel **Einstellungen** trägt die dauerhaften Roboter-Einstellungen. Heute sind das „Nicht
-stören", die Kindersicherung und die Kollisionsvermeidung; dort werden weitere Einstellungen nach
-und nach einsortiert. Ein Bedienelement erscheint nur bei einem Roboter, der die Einstellung
+stören", die Kindersicherung, die Kollisionsvermeidung, der Entleerungsmodus der Station und die
+Trocknung; dort werden weitere Einstellungen nach und nach einsortiert. Ein Bedienelement erscheint nur bei einem Roboter, der die Einstellung
 wirklich hat, und der Adapter findet das auf zwei Wegen heraus: Manche Einstellungen melden sich im
 Status, den der Roboter ohnehin schickt; für die übrigen **fragt der Adapter den Roboter einmal beim
 Start**, ob er den zugehörigen Lesebefehl kennt. Wer antwortet, bekommt das Bedienelement; wer mit
@@ -152,14 +152,39 @@ im Browser stehen und geht erst beim Einschalten an den Roboter. Und das Fenster
 **Uhr des Roboters**, nicht in der des ioBroker-Hosts: Der Roboter speichert vier nackte Zahlen ohne
 Zeitzone, und die Roborock-App hat genau dafür eine eigene Seite für die Gerätezeitzone. Weicht die
 Zeitzone des Roboters von der eigenen ab, liegt die Ruhezeit zu einer anderen Stunde als der hier
-angezeigten. Der Roboter beantwortet `get_timezone` mit seiner eigenen Zeitzone — beim Testgerät
-`Europe/Berlin`, also derselben —, ein Zweifel daran ist also eine billige Abfrage entfernt und
-keine unbeantwortbare Sorge. Der Adapter fragt sie bisher nicht ab.
+angezeigten. **Das ist jetzt nachprüfbar:** Kann der Roboter es sagen, steht seine Zeitzone unter
+`deviceStatus.timezone` — beim Testgerät `Europe/Berlin`, also dieselbe. Roborock selbst formuliert
+den Vorbehalt so: „Eine falsche Roboter-Zeitzone kann sich auf die Genauigkeit des Modus ‚Nicht
+stören' auswirken." Der Adapter **liest** die Zeitzone nur; gestellt wird sie weiterhin in der
+Roborock-App.
 
 Die Kindersicherung ist ein gewöhnlicher Schalter. Beide Einstellungen sind auch im Objektbaum
 lesbar, und beide werden nach dem Senden überprüft: Der Roboter antwortet auch auf eine verworfene
 Einstellung mit `["ok"]`, deshalb vergleicht der Adapter das Gewünschte mit dem, was der Roboter
 danach meldet, und sagt es im Log, wenn beides nicht zusammenpasst.
+
+Der **Entleerungsmodus** bestimmt, wie kräftig die Station den Staubbehälter leert. Er ist eine
+Auswahl aus vier Stufen — *Smart*, *Leicht*, *Mittel* und *Max.* —, in Roborocks eigenem Wortlaut.
+Auffällig ist, dass die vier Stufen intern **nicht** 0 bis 3 heißen, sondern 0, 1, 2 und 4: Die
+Nummer 3 gibt es im Gerät, sie hat aber in keiner Sprache einen Namen und in der App keinen
+Auswahlplatz. Der Adapter bietet sie deshalb nicht an. Meldet ein Roboter von sich aus eine andere
+Stufe, wird sie unverändert angezeigt — was das Gerät über sich sagt, ist eine Tatsache — und lässt
+sich nur nicht zurückschreiben.
+
+Die **Trocknung** ist eine einzige Auswahl statt eines Schalters und einer Dauer, weil das Protokoll
+nur einen Befehl kennt: Er trägt Dauer und Ein/Aus stets gemeinsam. Die Auswahl hat deshalb die
+Stellung *Kein Trocknen* und die Dauern 2, 3, 4 und 5 Stunden. Wird auf *Kein Trocknen* gestellt,
+schickt der Adapter die zuletzt gemeldete Dauer mit — genau wie die Roborock-App, die dabei
+ebenfalls eine Dauer mitsendet. Die eingestellte Dauer und der Ein/Aus-Zustand stehen zusätzlich
+unter `deviceStatus.dryer_dry_time` und `deviceStatus.dryer_enabled`. Die 5-Stunden-Stufe kommt in
+der App nur auf einer von zwei Trocknungsseiten vor; ob jede Station sie annimmt, ist nicht belegt.
+Lehnt eine sie ab, meldet das die Kommandoprüfung im Log.
+
+Unter **Reinigungsinformationen** liegt außerdem die **Restschätzung** des Roboters: geschätzte
+Gesamt- und Restfläche, Gesamt- und Restdauer, Fortschritt in Prozent, der für die Restfläche
+erwartete Akkuverbrauch sowie Zeit und Akku je Quadratmeter. Diese Werte ergeben nur während eines
+Laufs Sinn; in der Station beschreiben sie den zuletzt beendeten. Der Adapter fragt sie nicht von
+sich aus ab — dafür gibt es einen Knopf im Ordner `queries`.
 
 Der **Reinigungsverlauf** steht unter der Stationstafel und ist wie seine Nachbarn
 eingeklappt. Er listet die aufgezeichneten Läufe, neueste zuerst, mit dem Beginn, der Dauer,

@@ -18,6 +18,15 @@ import {
 	SET_DND_TIMER,
 	V1RobotSettingsService
 } from "./services/V1RobotSettingsService";
+import {
+	GET_CLEAN_ESTIMATE_INFO,
+	GET_DRYER_SETTING,
+	GET_DUST_COLLECTION_MODE,
+	GET_TIMEZONE,
+	SET_DRYER_SETTING,
+	SET_DUST_COLLECTION_MODE,
+	V1ProbedCapabilityService
+} from "./v1ProbedCapabilities";
 import { getLocalizedErrorStates } from "./adapterErrorMapping";
 import {
 	VACUUM_CONSTANTS,
@@ -107,6 +116,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected mapService: V1MapService;
 	protected mapEditService: MapEditService;
 	protected settingsService: V1RobotSettingsService;
+	protected probedService: V1ProbedCapabilityService;
 
 	/**
 	 * Asks the robot which commands it knows, once per adapter run.
@@ -140,6 +150,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.stationService = new StationService(this.deps, this.duid);
 		this.mapService = new V1MapService(this.deps, this.duid);
 		this.settingsService = new V1RobotSettingsService(this.deps, this.duid);
+		this.probedService = new V1ProbedCapabilityService(this.deps, this.duid);
 		// Splitting or merging rooms renumbers the segments, so everything the adapter holds about
 		// them is stale the moment the robot confirms; the service asks for a refresh at that point.
 		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex(), async () => {
@@ -601,6 +612,24 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			await this.readDoNotDisturbWindow();
 		}
 
+		if (finalMethod === GET_TIMEZONE) {
+			await this.probedService.applyTimezoneResponse(response);
+		} else if (finalMethod === GET_CLEAN_ESTIMATE_INFO) {
+			await this.probedService.applyCleanEstimateResponse(response);
+		} else if (finalMethod === GET_DUST_COLLECTION_MODE) {
+			await this.probedService.applyDustCollectionModeResponse(response);
+		} else if (finalMethod === GET_DRYER_SETTING) {
+			await this.probedService.applyDryerSettingResponse(response);
+		} else if (finalMethod === SET_DUST_COLLECTION_MODE) {
+			// The robot is the authority on what it really took, and neither setting shows up in the
+			// status packet - so reading it back is the only honest check. That is also why neither
+			// is in `commandVerification`: an expectation on a status field it never reports would
+			// be exactly the false alarm that had to be removed from `set_dnd_timer`.
+			void this.readProbedValue(GET_DUST_COLLECTION_MODE, [], (r) => this.probedService.applyDustCollectionModeResponse(r));
+		} else if (finalMethod === SET_DRYER_SETTING) {
+			void this.readProbedValue(GET_DRYER_SETTING, [], (r) => this.probedService.applyDryerSettingResponse(r));
+		}
+
 		this.noteCommandForVerification(finalMethod, response, params);
 	}
 
@@ -752,6 +781,10 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		if (this.settingsService.handles(method)) {
 			return this.settingsService.buildCommandParams(method, params);
+		}
+
+		if (this.probedService.handles(method)) {
+			return this.probedService.buildCommandParams(method, params);
 		}
 
 		if (method === "reset_consumable" && id) {
@@ -1558,36 +1591,61 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	}
 
 	/**
-	 * Publishes the child lock switch, unless the model class already declared one.
-	 *
-	 * `A179Features` brings its own `set_child_lock_status` together with its own parameter
-	 * building, and it calls `super.getCommandParams` before its own branch runs
-	 * (`a179_features.ts:1303-1330`). Registering a second definition here would leave that model
-	 * with two owners for one command; see {@link V1RobotSettingsService} for the whole reasoning.
-	 */
-	/**
 	 * Asks the robot which of the probeable commands it has.
 	 *
-	 * Exactly one entry today, and that is deliberate: every probe costs a request at start-up, and
-	 * a capability only belongs here once its **write** side is proven too. Obstacle avoidance is:
-	 * the wrapper builds `{status}` (a65 control plugin, A65:230180-230192) and its switch handler
-	 * computes `status = on ? 1 : 0` (`onToggleAvoidCollision`, A65:837660-837680). The measurement
-	 * showed the a65 answers the getter although the adapter only ever offered the command to the
-	 * a179 (`_appanalysis/19-geraetefaehigkeiten.md` §4).
+	 * Every entry here costs one request at start-up, and a capability only belongs here once its
+	 * **write** side is proven too - a probe that shows a robot can *read* something proves nothing
+	 * about how to write it. The two purely reading entries go first because neither can change
+	 * anything on the device, so an unexpected answer costs nothing at all.
 	 *
-	 * Deliberately **not** here yet, although the a65 answers their getters: the carpet deep clean
-	 * status, the dryer setting, the smart wash parameters and the mop wash mode. Their setters pass
-	 * their argument straight through in the app, so the payload is unread - and a probe that proves
-	 * a robot can *read* something proves nothing about how to write it. `get_wash_towel_mode` yes /
-	 * `get_wash_towel_params` no is the standing warning that even neighbours differ.
+	 * | Capability | Why its write side is proven | Fundstelle |
+	 * | --- | --- | --- |
+	 * | Obstacle avoidance | wrapper builds `{status}`, switch computes `on ? 1 : 0` | A65:230180-230192, A65:837660-837680 |
+	 * | Empty mode | picker keys 0/1/2/**4** reach `{mode}` unchanged | A65:438312-438375, A65:230399-230410 |
+	 * | Drying | wrapper composes `{on:{dry_time}, status}`, three call sites agree | A65:230351-230370 |
+	 * | Time zone, estimate | read-only, nothing is written | — |
+	 *
+	 * The measurement showed the a65 answers all five getters although the adapter offered four of
+	 * the commands to the a179 alone and the empty mode to nobody
+	 * (`_appanalysis/19-geraetefaehigkeiten.md` §4, `_appanalysis/22-einstellungsblock.md`).
+	 *
+	 * Still deliberately absent although the a65 answers their getters: the carpet deep clean status,
+	 * the smart wash parameters and the mop wash mode. Their setters pass their argument straight
+	 * through in the app, so the payload is unread. `get_wash_towel_mode` yes / `get_wash_towel_params`
+	 * no is the standing warning that even neighbours differ.
 	 */
 	protected override async detectProbedCapabilities(): Promise<void> {
-		if (this.folderOfCommand(SET_COLLISION_AVOID_STATUS)) return;
+		await this.probeAndApply(GET_TIMEZONE, [], Feature.RobotTimezone, GET_TIMEZONE);
+		await this.probeAndApply(GET_CLEAN_ESTIMATE_INFO, {}, Feature.CleanEstimate, GET_CLEAN_ESTIMATE_INFO);
+		await this.probeAndApply(GET_COLLISION_AVOID_STATUS, {}, Feature.CollisionAvoid, SET_COLLISION_AVOID_STATUS);
+		await this.probeAndApply(GET_DUST_COLLECTION_MODE, [], Feature.DustCollectionMode, SET_DUST_COLLECTION_MODE);
+		await this.probeAndApply(GET_DRYER_SETTING, [], Feature.DryerSetting, SET_DRYER_SETTING);
+	}
 
-		const verdict = await this.capabilityProbe.probe(GET_COLLISION_AVOID_STATUS, {});
+	/**
+	 * Asks for one capability and applies its feature when the robot has it.
+	 *
+	 * **The guard is per capability, not per method.** Until the second entry arrived this was a
+	 * plain `return` at the top of the caller, which read the same and is not: a robot whose model
+	 * class already declares obstacle avoidance would have left the whole method before any other
+	 * capability was ever asked about. That is the kind of early return that stays correct exactly
+	 * as long as there is one thing to do.
+	 *
+	 * @param getter Reading command that decides the question; also what the probe sends.
+	 * @param params Exactly what the app's own wrapper sends, `[]` or `{}`.
+	 * @param feature Feature to apply on a positive verdict.
+	 * @param declared Command whose presence means a model class already owns this capability. It is
+	 *                 not always the getter: for a writable setting the setter is what a model class
+	 *                 declares, and two owners for one command would tear its parameter building
+	 *                 apart - `A179Features` calls `super.getCommandParams` before its own branch.
+	 */
+	private async probeAndApply(getter: string, params: unknown, feature: Feature, declared: string): Promise<void> {
+		if (this.folderOfCommand(declared)) return;
+
+		const verdict = await this.capabilityProbe.probe(getter, params);
 		if (verdict !== "capable") return;
 
-		await this.applyFeature(Feature.CollisionAvoid);
+		await this.applyFeature(feature);
 	}
 
 	@BaseDeviceFeatures.DeviceFeature(Feature.CollisionAvoid)
@@ -1595,10 +1653,85 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.settingsService.registerCollisionAvoidCommand((name, spec, group) => this.addCommand(name, spec, group));
 	}
 
+	/**
+	 * Publishes the child lock switch, unless the model class already declared one.
+	 *
+	 * `A179Features` brings its own `set_child_lock_status` together with its own parameter
+	 * building, and it calls `super.getCommandParams` before its own branch runs
+	 * (`a179_features.ts:1303-1330`). Registering a second definition here would leave that model
+	 * with two owners for one command; see {@link V1RobotSettingsService} for the whole reasoning.
+	 */
 	@BaseDeviceFeatures.DeviceFeature(Feature.ChildLock)
 	public async initChildLock(): Promise<void> {
 		if (this.folderOfCommand(SET_CHILD_LOCK_STATUS)) return;
 		this.settingsService.registerChildLockCommand((name, spec, group) => this.addCommand(name, spec, group));
+	}
+
+	/**
+	 * Publishes the robot's time zone and reads it once.
+	 *
+	 * Worth its own state because the Do Not Disturb window runs in the robot's clock, not the
+	 * host's - Roborock says so itself (`setting_timezone_remark_owner`). Read-only: setting the
+	 * zone stays in the app.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.RobotTimezone)
+	public async initRobotTimezone(): Promise<void> {
+		this.probedService.registerTimezoneCommand((name, spec, group) => this.addCommand(name, spec, group));
+		void this.readProbedValue(GET_TIMEZONE, [], (response) => this.probedService.applyTimezoneResponse(response));
+	}
+
+	/**
+	 * Publishes the read button of the cleaning estimate.
+	 *
+	 * Deliberately **not** read at start-up, unlike the other three: the estimate only means
+	 * something while the robot is cleaning, and at start-up it is in its dock nearly every time.
+	 * Asking then would publish the last finished run as if it were current.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.CleanEstimate)
+	public async initCleanEstimate(): Promise<void> {
+		this.probedService.registerCleanEstimateCommand((name, spec, group) => this.addCommand(name, spec, group));
+	}
+
+	/** Publishes the dock's empty mode selector and reads its current position once. */
+	@BaseDeviceFeatures.DeviceFeature(Feature.DustCollectionMode)
+	public async initDustCollectionMode(): Promise<void> {
+		this.probedService.registerDustCollectionModeCommand((name, spec, group) => this.addCommand(name, spec, group));
+		void this.readProbedValue(GET_DUST_COLLECTION_MODE, [], (response) => this.probedService.applyDustCollectionModeResponse(response));
+	}
+
+	/**
+	 * Publishes the drying selector and reads its current setting once.
+	 *
+	 * The read is not optional comfort here: switching drying **off** still has to carry a duration,
+	 * and this is what tells the service which one the robot currently holds. Without it the off
+	 * position would fall back on the app's own default of 7200 s (A65:968341-968346).
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.DryerSetting)
+	public async initDryerSetting(): Promise<void> {
+		this.probedService.registerDryerSettingCommand((name, spec, group) => this.addCommand(name, spec, group));
+		void this.readProbedValue(GET_DRYER_SETTING, [], (response) => this.probedService.applyDryerSettingResponse(response));
+	}
+
+	/**
+	 * Reads one probed value and hands it to its publisher, swallowing failure.
+	 *
+	 * Never awaited by its callers, for the reason {@link initDoNotDisturb} states: these run from
+	 * the initialisation path, and a request with an eight second timeout in front of it would stall
+	 * the first poll. Failure is logged and dropped - each of these is a convenience, and the read
+	 * button in `queries` remains for a second attempt.
+	 *
+	 * @param method Reading command to send.
+	 * @param params Exactly what the app's own wrapper sends.
+	 * @param apply  Publisher for the answer.
+	 */
+	private async readProbedValue(method: string, params: unknown, apply: (response: unknown) => Promise<unknown>): Promise<void> {
+		try {
+			const response = await this.deps.adapter.requestsHandler.sendRequest(this.duid, method, params, { priority: -5 });
+			await apply(response);
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
+				`Failed to read ${method}: ${this.deps.adapter.errorMessage(e)}`, "warn");
+		}
 	}
 
 	/**
