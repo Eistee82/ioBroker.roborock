@@ -255,12 +255,21 @@ export async function drawMapV1(
 	// has to be drawn turned rather than as the bounding box `toRect` produces below. The other two
 	// overlays (`CURTAIN`, `MISS_ZONE`) are not editable and stay here either way.
 	const restrictedZones: DrawZoneRectInput[] = [];
+	/**
+	 * One stored zone as draw input: its four corners, plus the bounding box they span.
+	 *
+	 * The corners are what a renderer should draw - the map stores four of them precisely so a zone
+	 * can be turned. The bounding box comes along because it is the older half of the interface and
+	 * a renderer that ignores `points` still has to place something; for an upright zone, which is
+	 * the overwhelming majority, the two are the same rectangle.
+	 */
 	const toRect = (zone: number[]) => {
 		const xs = [zone[0], zone[2], zone[4], zone[6]];
 		const ys = [zone[1], zone[3], zone[5], zone[7]];
 		const p1 = robotToPx(Math.min(...xs), Math.max(...ys));
 		const p2 = robotToPx(Math.max(...xs), Math.min(...ys));
-		return { x: p1.x, y: p2.y, w: p2.x - p1.x, h: p1.y - p2.y };
+		const points = [0, 2, 4, 6].map((offset) => robotToPx(zone[offset], zone[offset + 1]));
+		return { x: p1.x, y: p2.y, w: p2.x - p1.x, h: p1.y - p2.y, points };
 	};
 	const skipEditable = options.editableZonesDrawnElsewhere === true;
 	if (!skipEditable && mapData.FORBIDDEN_ZONES?.length) {

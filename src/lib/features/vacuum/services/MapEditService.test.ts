@@ -632,6 +632,182 @@ describe("MapEditService", () => {
 			expect(onRobot.no_mop).toEqual([existingNoMop]);
 		});
 
+		/**
+		 * The retry envelope reaches the zone commands too.
+		 *
+		 * Firmware bit 26 is **set** on the test device (`0008004056C8FFFE`, read-only measurement
+		 * in `_appanalysis/19-geraetefaehigkeiten.md`), so `save_map` has to travel as
+		 * `{data, need_retry: 1}` there. A path that built its payload without going through
+		 * `wrap()` would send it bare, and the robot would most likely drop it without a word.
+		 *
+		 * The bit is read from the robot's own status rather than assumed, which is what keeps a
+		 * device that does not have it working: it gets the bare payload, as the second case pins.
+		 */
+		it("wraps a zone edit in the retry envelope on a robot whose bit 26 is set", async () => {
+			withMap();
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, {
+				val: RPC_RETRY_FEATURE_BIT,
+				ack: true
+			});
+
+			const sent = await runCommand("add_no_go_zone", [8000, 9000, 9000, 8000]);
+
+			expect(sent.method).toBe("save_map");
+			expect(sent.params.need_retry).toBe(1);
+			expect(Array.isArray(sent.params.data)).toBe(true);
+		});
+
+		it("sends a zone edit bare on a robot without that bit", async () => {
+			withMap();
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info`, {
+				val: 0x1000,
+				ack: true
+			});
+
+			const sent = await runCommand("add_no_go_zone", [8000, 9000, 9000, 8000]);
+
+			expect(Array.isArray(sent.params)).toBe(true);
+			expect(sent.params.need_retry).toBeUndefined();
+		});
+
+		// --- Naming a zone by an index that may have moved -------------------------------------
+
+		/**
+		 * The safeguard against a shifted index.
+		 *
+		 * An index only means something next to the list it counts into, and that list lives on the
+		 * robot: the phone app adds a no-go zone, every later index shifts by one, and a removal
+		 * that trusts its number deletes the neighbour. Silently - the robot answers `["ok"]` either
+		 * way. There is no undo, and `get_recover_maps` answers `unknown_method` on the test device,
+		 * so no robot-side backup is known to exist.
+		 */
+		it("refuses a removal whose index no longer holds the zone the caller meant", async () => {
+			withMap();
+			onRobot.no_go = [existingNoGo, [4000, 4000, 5000, 4000, 5000, 3000, 4000, 3000]];
+
+			// The caller read the list when its own zone was at index 0; by now something else is.
+			await expect(
+				runCommand("remove_map_zone", { kind: "no_go", index: 0, zone: [9, 9, 9, 9, 9, 9, 9, 9] })
+			).rejects.toThrow(/has changed since that list was read/);
+
+			// And nothing was written at all - not a partial set, not a set with one zone gone.
+			expect(saved).toBeNull();
+			expect(onRobot.no_go).toHaveLength(2);
+		});
+
+		it("removes it when the coordinates do match", async () => {
+			withMap();
+			onRobot.no_go = [existingNoGo, [4000, 4000, 5000, 4000, 5000, 3000, 4000, 3000]];
+
+			await runCommand("remove_map_zone", { kind: "no_go", index: 0, zone: existingNoGo });
+
+			expect(onRobot.no_go).toEqual([[4000, 4000, 5000, 4000, 5000, 3000, 4000, 3000]]);
+		});
+
+		it("still removes by index alone, so every caller written before this keeps working", async () => {
+			withMap();
+			onRobot.no_go = [existingNoGo];
+
+			await runCommand("remove_map_zone", { kind: "no_go", index: 0 });
+
+			expect(onRobot.no_go).toEqual([]);
+		});
+
+		// --- Moving one in a single cycle -------------------------------------------------------
+
+		it("moves a zone without the map ever holding one fewer", async () => {
+			withMap();
+			const moved = [1500, 2500, 3500, 2500, 3500, 1500, 1500, 1500];
+
+			await runCommand("update_map_zone", { kind: "no_go", index: 0, zone: moved });
+
+			// One save_map, and the count is unchanged: there is no moment in between.
+			expect(onRobot.no_go).toEqual([moved]);
+			expect(onRobot.wall).toEqual([existingWall]);
+			expect(onRobot.no_mop).toEqual([existingNoMop]);
+		});
+
+		it("keeps a moved zone at its own position in the list", async () => {
+			// "Remove, then add" would move it to the end, and every index after it would shift -
+			// which is exactly what the safeguard above then rejects on the next request.
+			withMap();
+			const second = [4000, 4000, 5000, 4000, 5000, 3000, 4000, 3000];
+			onRobot.no_go = [existingNoGo, second];
+			const moved = [1500, 2500, 3500, 2500, 3500, 1500, 1500, 1500];
+
+			await runCommand("update_map_zone", { kind: "no_go", index: 0, zone: moved });
+
+			expect(onRobot.no_go).toEqual([moved, second]);
+		});
+
+		it("moves a zone on a map that is already at the limit", async () => {
+			// The count does not change, so the ten-per-kind limit must not apply. A map full of
+			// no-go zones has to stay editable.
+			withMap();
+			onRobot.no_go = Array.from({ length: MAX_COUNT_WALL_OR_FBZ }, (_, i) => [i, 0, i + 1, 0, i + 1, 1, i, 1]);
+			const moved = [900, 900, 1000, 900, 1000, 800, 900, 800];
+
+			await runCommand("update_map_zone", { kind: "no_go", index: 3, zone: moved });
+
+			expect(onRobot.no_go).toHaveLength(MAX_COUNT_WALL_OR_FBZ);
+			expect(onRobot.no_go[3]).toEqual(moved);
+		});
+
+		it("turns a zone, which is the shape only four corners can carry", async () => {
+			withMap();
+			const turned = [1000, 2000, 2910, 2580, 3490, 1670, 1580, 1090];
+
+			await runCommand("update_map_zone", { kind: "no_go", index: 0, zone: turned });
+
+			expect(onRobot.no_go).toEqual([turned]);
+		});
+
+		it("moves a wall by its two end points", async () => {
+			withMap();
+
+			await runCommand("update_map_zone", { kind: "wall", index: 0, zone: [500, 600, 700, 800] });
+
+			expect(onRobot.wall).toEqual([[500, 600, 700, 800]]);
+		});
+
+		it("refuses a move whose index no longer holds the zone the caller meant", async () => {
+			withMap();
+
+			await expect(
+				runCommand("update_map_zone", {
+					kind: "no_go",
+					index: 0,
+					zone: [1, 1, 2, 1, 2, 0, 1, 0],
+					from: [9, 9, 9, 9, 9, 9, 9, 9]
+				})
+			).rejects.toThrow(/has changed since that list was read/);
+
+			expect(saved).toBeNull();
+			expect(onRobot.no_go).toEqual([existingNoGo]);
+		});
+
+		it("refuses a move that names a zone the map does not have", async () => {
+			withMap();
+
+			await expect(
+				runCommand("update_map_zone", { kind: "no_go", index: 5, zone: [1, 1, 2, 1, 2, 0, 1, 0] })
+			).rejects.toThrow(/numbered 0 to 0/);
+			expect(saved).toBeNull();
+		});
+
+		it("validates the new coordinates exactly as an add would", async () => {
+			withMap();
+
+			// Same parser, so a shape that could not be added cannot be moved into either.
+			await expect(runCommand("update_map_zone", { kind: "no_go", index: 0, zone: [1, 2, 3] })).rejects.toThrow(
+				/eight numbers .*or four numbers/
+			);
+			await expect(
+				runCommand("update_map_zone", { kind: "wall", index: 0, zone: [5, 5, 5, 5] })
+			).rejects.toThrow(/two different end points/);
+			expect(saved).toBeNull();
+		});
+
 		it("sends the records in the walls-then-zones order the app uses", async () => {
 			withMap();
 
@@ -818,12 +994,26 @@ describe("MapEditService", () => {
 		});
 
 		it("reads a removal request", () => {
-			expect(parseZoneRemoval({ kind: "no_mop", index: 2 })).toEqual({ kind: "no_mop", index: 2 });
-			expect(parseZoneRemoval("all")).toEqual({ kind: "all", index: null });
-			expect(parseZoneRemoval({ kind: "all" })).toEqual({ kind: "all", index: null });
+			expect(parseZoneRemoval({ kind: "no_mop", index: 2 })).toEqual({ kind: "no_mop", index: 2, expected: null });
+			expect(parseZoneRemoval("all")).toEqual({ kind: "all", index: null, expected: null });
+			expect(parseZoneRemoval({ kind: "all" })).toEqual({ kind: "all", index: null, expected: null });
 			expect(() => parseZoneRemoval({ kind: "carpet", index: 0 })).toThrow(/remove_map_zone expects/);
 			expect(() => parseZoneRemoval({ kind: "no_go" })).toThrow(/counted from 0/);
 			expect(() => parseZoneRemoval({ kind: "no_go", index: -1 })).toThrow(/counted from 0/);
+		});
+
+		it("reads the coordinates a removal expects to find, and insists they are well formed", () => {
+			// A caller that sends `zone` means to have it checked. Ignoring a malformed one would
+			// switch the safeguard off exactly where somebody thought they had switched it on.
+			expect(parseZoneRemoval({ kind: "no_go", index: 1, zone: [1, 2, 3, 4, 5, 6, 7, 8] })).toEqual({
+				kind: "no_go",
+				index: 1,
+				expected: [1, 2, 3, 4, 5, 6, 7, 8]
+			});
+			expect(parseZoneRemoval({ kind: "wall", index: 0, zone: [1, 2, 3, 4] }).expected).toEqual([1, 2, 3, 4]);
+			// A wall has four numbers, a zone eight; the wrong count is a mistake, not a hint.
+			expect(() => parseZoneRemoval({ kind: "no_go", index: 0, zone: [1, 2, 3, 4] })).toThrow(/needs 8 numbers/);
+			expect(() => parseZoneRemoval({ kind: "wall", index: 0, zone: [1, 2, "x", 4] })).toThrow(/not a number/);
 		});
 
 		it("builds the payload the app builds", () => {

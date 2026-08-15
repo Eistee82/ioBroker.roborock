@@ -252,19 +252,58 @@ export abstract class BaseDeviceFeatures {
 	 * can add and overwrite but never delete (`main.ts`, `applyCommonUpdate`;
 	 * `test/unit/object_common_shrink.test.ts`).
 	 *
+	 * ## Why the trigger is a new command and not the `changed` flag
+	 *
+	 * `changed` is broader than "there is something to publish". Every implementation sets it when
+	 * the detection runs for the first time, and the B01 one sets it whenever the status carries
+	 * `dss` - whether or not a single command was added. Acting on that would give **every** device
+	 * an object pass it never had before, including the B01 and Q10 devices this project has no
+	 * hardware to test against.
+	 *
+	 * So the flag is not the trigger; the command inventory is. Only when the detection really
+	 * registered a command that was not there before does anything get written, and a device whose
+	 * detection adds nothing behaves exactly as it did. That is the narrowest condition that still
+	 * closes the gap.
+	 *
 	 * @param statusData The robot's status, as the caller received it.
-	 * @returns Whether the detection reported a change.
+	 * @returns Whether new command objects were published.
 	 */
 	protected async applyRuntimeFeatureDetection(statusData: Readonly<Record<string, any>>): Promise<boolean> {
 		// The same guard all three call sites carried before, kept in one place so the pairing of
 		// "detect" and "publish what was detected" cannot come apart again.
 		if (this.runtimeDetectionComplete) return false;
 
-		const changed = await this.detectAndApplyRuntimeFeatures(statusData);
-		if (!changed) return false;
+		const before = this.commandInventory();
+		await this.detectAndApplyRuntimeFeatures(statusData);
+		const added = this.commandInventory().filter((entry) => !before.includes(entry));
 
+		if (added.length === 0) return false;
+
+		this.deps.adapter.rLog("System", this.duid, "Debug", this.protocolVersion || undefined, undefined,
+			`Runtime detection added ${added.length} command(s): ${added.join(", ")}. Publishing their objects.`, "debug");
 		await this.createCommandObjects();
 		return true;
+	}
+
+	/**
+	 * Asks the robot which of the probeable commands it knows, and registers those it does.
+	 *
+	 * Runs from `initialize()` before the objects are written, and only when the device is online.
+	 * The default does nothing: a protocol that was never measured this way must not start sending
+	 * probes on a guess. `V1VacuumFeatures` overrides it.
+	 */
+	protected async detectProbedCapabilities(): Promise<void> {
+		// No probe by default; see the class comment of CapabilityProbe for why silence is the
+		// safe answer for a device nobody has measured.
+	}
+
+	/** Every registered command as `folder.name`, for telling "something was added" from "something happened". */
+	private commandInventory(): string[] {
+		const inventory = Object.keys(this.commands).map((name) => `commands.${name}`);
+		for (const [folder, group] of Object.entries(this.extraCommandGroups)) {
+			for (const name of Object.keys(group)) inventory.push(`${folder}.${name}`);
+		}
+		return inventory;
 	}
 
 	// --- Core Initialization Logic ---
@@ -289,6 +328,20 @@ export abstract class BaseDeviceFeatures {
 			await this.applyModelSpecifics();
 		} catch (e: unknown) {
 			this.deps.adapter.rLog("System", this.duid, "Error", undefined, undefined, `Error applying model specifics: ${this.deps.adapter.errorMessage(e)}`, "error");
+		}
+
+		// 1b. Ask the robot what it can, while an answer can still decide whether an object is
+		// created at all. That is the whole point of doing it here rather than later: a control
+		// that is never created cannot be a control that writes into the void.
+		//
+		// A device that is offline is not asked and is offered nothing - the same direction of
+		// error the probe itself takes, see `capabilityProbe.ts`.
+		if (online) {
+			try {
+				await this.detectProbedCapabilities();
+			} catch (e: unknown) {
+				this.deps.adapter.rLog("System", this.duid, "Warn", undefined, undefined, `Error probing capabilities: ${this.deps.adapter.errorMessage(e)}`, "warn");
+			}
 		}
 
 		// 2. Create/Update ioBroker Objects (Commands)

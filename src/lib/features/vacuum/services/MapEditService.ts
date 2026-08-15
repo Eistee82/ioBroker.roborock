@@ -12,6 +12,7 @@ import {
 	ZONE_LABELS,
 	ZONE_LENGTHS,
 	ZONE_REMOVE_COMMAND,
+	ZONE_UPDATE_COMMAND,
 } from "../../../../common/mapZoneKinds";
 import type { MapZoneKind } from "../../../../common/mapZoneKinds";
 import type { CommandSpec, FeatureDependencies } from "../../baseDeviceFeatures";
@@ -551,23 +552,38 @@ export interface ZoneRemoval {
 	kind: MapZoneKind | "all";
 	/** Position within that kind as `mapEdit.zones` lists it, or `null` for `"all"`. */
 	index: number | null;
+	/**
+	 * The coordinates the caller believes are at that index, or `null` when it named none.
+	 *
+	 * **This is what makes an index safe to act on.** An index is only meaningful next to the list
+	 * it counts into, and that list can change between the moment a user sees it and the moment
+	 * this command runs - the phone app adds a no-go zone, every later index shifts by one, and a
+	 * removal that trusts its number deletes the neighbour. Silently: the robot answers `["ok"]`
+	 * either way, and there is no undo. `get_recover_maps` answers `unknown_method` on the test
+	 * device, so a robot-side backup cannot be relied on to exist.
+	 *
+	 * Optional so that every caller written before this existed - a script, the object tree, an
+	 * older tab - keeps working unchanged.
+	 */
+	expected: number[] | null;
 }
 
 /**
  * Reads a removal a user wrote into the `remove_map_zone` command state.
  *
  * `save_map` has no zone ids (report section 2.1), so a zone can only be named by its position in
- * the list the adapter publishes under `mapEdit.zones`.
+ * the list the adapter publishes under `mapEdit.zones`. The optional `zone` key carries the
+ * coordinates that position is expected to hold; see {@link ZoneRemoval.expected}.
  * @param raw Value of the command state, already JSON-parsed by the adapter where possible.
  * @returns What is to be removed.
  * @throws If the value names neither a kind and index nor "all".
  */
 export function parseZoneRemoval(raw: unknown): ZoneRemoval {
 	const kinds = Object.keys(MAP_RECORD_TYPES) as MapZoneKind[];
-	const usage = `remove_map_zone expects {"kind": "${kinds.join("\" | \"")}", "index": 0} or "all" to clear every wall and zone.`;
+	const usage = `remove_map_zone expects {"kind": "${kinds.join("\" | \"")}", "index": 0} or "all" to clear every wall and zone. Add "zone": [coordinates] to have the position checked before anything is removed.`;
 
 	if (typeof raw === "string" && raw.trim().toLowerCase() === "all") {
-		return { kind: "all", index: null };
+		return { kind: "all", index: null, expected: null };
 	}
 	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
 		throw new Error(usage);
@@ -575,7 +591,7 @@ export function parseZoneRemoval(raw: unknown): ZoneRemoval {
 
 	const record = raw as Record<string, unknown>;
 	const kind = String(record.kind ?? "").trim().toLowerCase();
-	if (kind === "all") return { kind: "all", index: null };
+	if (kind === "all") return { kind: "all", index: null, expected: null };
 
 	if (!kinds.includes(kind as MapZoneKind)) {
 		throw new Error(usage);
@@ -586,7 +602,111 @@ export function parseZoneRemoval(raw: unknown): ZoneRemoval {
 		throw new Error(`remove_map_zone needs the position of the ${ZONE_LABELS[kind as MapZoneKind]} within its own list, counted from 0; got ${JSON.stringify(record.index)}.`);
 	}
 
-	return { kind: kind as MapZoneKind, index };
+	return { kind: kind as MapZoneKind, index, expected: parseExpectedZone(kind as MapZoneKind, record.zone) };
+}
+
+/**
+ * Reads the optional coordinates a caller expects to find at the named index.
+ *
+ * Deliberately strict about the shape: a caller that sends a `zone` key means to have it checked,
+ * and quietly ignoring a malformed one would turn the safeguard off exactly where somebody thought
+ * they had switched it on.
+ * @param kind Which overlay, so the record length is known.
+ * @param raw Value of the `zone` key, or undefined when the caller sent none.
+ * @returns The coordinates, or null when the caller named none.
+ * @throws If a value was given but is not a record of that kind.
+ */
+function parseExpectedZone(kind: MapZoneKind, raw: unknown): number[] | null {
+	if (raw === undefined || raw === null) return null;
+
+	if (!Array.isArray(raw) || raw.length !== ZONE_LENGTHS[kind]) {
+		throw new Error(`remove_map_zone: "zone" names the coordinates the ${ZONE_LABELS[kind]} at that index is expected to have, so it needs ${ZONE_LENGTHS[kind]} numbers; got ${JSON.stringify(raw)}. Leave it out to remove by index alone.`);
+	}
+
+	return raw.map((entry, position) => {
+		const value = typeof entry === "number" ? entry : Number(entry);
+		if (!Number.isFinite(value)) {
+			throw new Error(`remove_map_zone: coordinate ${position} of "zone" is not a number: ${JSON.stringify(entry)}`);
+		}
+		return Math.round(value);
+	});
+}
+
+/**
+ * Refuses a change whose target is not where the caller thinks it is.
+ *
+ * The one check that stands between a shifted index and a deleted boundary the user built by hand.
+ * It errs towards refusing: a rejected attempt costs a second click, a wrongly removed no-go zone
+ * costs work that took months and that no robot-side backup is known to hold.
+ * @param kind Which overlay, for the message.
+ * @param index Position that was named.
+ * @param actual What the robot's own map holds there.
+ * @param expected What the caller said it should hold, or null when it said nothing.
+ * @throws If the two differ.
+ */
+function assertZoneMatches(kind: MapZoneKind, index: number, actual: number[], expected: number[] | null): void {
+	if (expected === null) return;
+	if (actual.length === expected.length && actual.every((value, position) => value === expected[position])) return;
+
+	throw new Error(`The ${ZONE_LABELS[kind]} at index ${index} is at ${actual.join(", ")}, but the request expected ${expected.join(", ")}. The map has changed since that list was read - most likely another app or script added or removed a zone - so the index now points at a different one. Nothing was changed; read mapEdit.zones again and repeat the request.`);
+}
+
+/** What a user asked to be changed in place. */
+export interface ZoneUpdate {
+	/** Which overlay. */
+	kind: MapZoneKind;
+	/** Position within that kind as `mapEdit.zones` lists it. */
+	index: number;
+	/** The coordinates it is to have afterwards. */
+	zone: number[];
+	/** What that position is expected to hold now, or null when the caller named nothing. */
+	expected: number[] | null;
+}
+
+/**
+ * Reads a change a user wrote into the `update_map_zone` command state.
+ *
+ * **Why this exists rather than "remove, then add".** Those are two `save_map` calls, and each one
+ * rewrites the robot's complete set of walls and zones from a fresh read of its map. Between them
+ * the zone is gone; if the second call fails - the map cannot be fetched, the robot does not answer
+ * - it stays gone. And whether the second read already reflects the first write is not decidable
+ * from outside the firmware: if it does not, the removed zone comes back and the moved one is added
+ * beside it.
+ *
+ * One command that replaces a record inside a single read-change-write cycle has neither problem by
+ * construction. The index and the write come from the same read, and there is no moment in which
+ * the map holds one fewer zone than the user has.
+ * @param raw Value of the command state, already JSON-parsed by the adapter where possible.
+ * @returns What is to be changed.
+ * @throws If the value does not name a kind, an index and a well-formed zone.
+ */
+export function parseZoneUpdate(raw: unknown): ZoneUpdate {
+	const kinds = Object.keys(MAP_RECORD_TYPES) as MapZoneKind[];
+	const usage = `update_map_zone expects {"kind": "${kinds.join("\" | \"")}", "index": 0, "zone": [coordinates]}, and optionally "from": [coordinates] to have the position checked first.`;
+
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+		throw new Error(usage);
+	}
+
+	const record = raw as Record<string, unknown>;
+	const kind = String(record.kind ?? "").trim().toLowerCase();
+	if (!kinds.includes(kind as MapZoneKind)) {
+		throw new Error(usage);
+	}
+
+	const index = Number(record.index);
+	if (!Number.isInteger(index) || index < 0) {
+		throw new Error(`update_map_zone needs the position of the ${ZONE_LABELS[kind as MapZoneKind]} within its own list, counted from 0; got ${JSON.stringify(record.index)}.`);
+	}
+
+	// The new coordinates go through the very same parser an `add_...` uses, so a moved zone and a
+	// new one can never be validated differently.
+	return {
+		kind: kind as MapZoneKind,
+		index,
+		zone: parseZoneInput(kind as MapZoneKind, record.zone),
+		expected: parseExpectedZone(kind as MapZoneKind, record.from),
+	};
 }
 
 /**
@@ -793,6 +913,9 @@ export class MapEditService {
 	/** Command that removes one wall or zone, or clears them all. */
 	public static readonly ZONE_REMOVE_COMMAND = ZONE_REMOVE_COMMAND;
 
+	/** Command that changes one wall or zone in place, in a single read-change-write cycle. */
+	public static readonly ZONE_UPDATE_COMMAND = ZONE_UPDATE_COMMAND;
+
 	/** The two commands that change segment ids and therefore invalidate room-bound settings. */
 	public static readonly SEGMENT_EDIT_COMMANDS: readonly string[] = ["split_segment", "merge_segment"];
 
@@ -805,6 +928,7 @@ export class MapEditService {
 		"set_carpet_mode",
 		...Object.keys(MapEditService.ZONE_ADD_COMMANDS),
 		MapEditService.ZONE_REMOVE_COMMAND,
+		MapEditService.ZONE_UPDATE_COMMAND,
 		...MapEditService.SEGMENT_EDIT_COMMANDS,
 	];
 
@@ -907,6 +1031,14 @@ export class MapEditService {
 			desc: translations["map_zone_write_hint"] || MapEditService.ZONE_WRITE_HINT_EN,
 		} as CommandSpec);
 
+		addCommand(MapEditService.ZONE_UPDATE_COMMAND, {
+			type: "json",
+			role: "json",
+			def: "",
+			name: translations["update_map_zone"] || "Move or resize a wall or zone ({\"kind\":\"no_go\",\"index\":0,\"zone\":[x0,y0,x1,y1,x2,y2,x3,y3]})",
+			desc: translations["map_zone_write_hint"] || MapEditService.ZONE_WRITE_HINT_EN,
+		} as CommandSpec);
+
 		addCommand("split_segment", {
 			type: "json",
 			role: "json",
@@ -1002,6 +1134,10 @@ export class MapEditService {
 
 		if (method === MapEditService.ZONE_REMOVE_COMMAND) {
 			return this.buildSaveMap((overlays) => this.removeZone(overlays, parseZoneRemoval(params)));
+		}
+
+		if (method === MapEditService.ZONE_UPDATE_COMMAND) {
+			return this.buildSaveMap((overlays) => this.updateZone(overlays, parseZoneUpdate(params)));
 		}
 
 		if (method === "split_segment") {
@@ -1147,6 +1283,32 @@ export class MapEditService {
 	}
 
 	/**
+	 * Replaces one wall or zone in the set that was read off the robot.
+	 *
+	 * The count does not change, so {@link MAX_COUNT_WALL_OR_FBZ} is deliberately **not** checked
+	 * here: a map already holding ten no-go zones must still be able to move one of them. The limit
+	 * belongs to {@link MapEditService.addZone}, which is the only operation that can exceed it.
+	 * @param overlays The set read off the robot; changed in place.
+	 * @param update What the user asked to change.
+	 * @returns A sentence for the log.
+	 * @throws If the named zone is not there, or is not the one the caller meant.
+	 */
+	private updateZone(overlays: MapOverlays, update: ZoneUpdate): string {
+		const list = overlays[update.kind];
+		if (update.index >= list.length) {
+			throw new Error(list.length === 0
+				? `The map has no ${ZONE_LABELS[update.kind]}s, so there is no index ${update.index} to change.`
+				: `The map has ${list.length} ${ZONE_LABELS[update.kind]}(s), numbered 0 to ${list.length - 1}; there is no index ${update.index}. mapEdit.zones lists them.`);
+		}
+
+		assertZoneMatches(update.kind, update.index, list[update.index], update.expected);
+
+		const before = list[update.index];
+		list[update.index] = update.zone;
+		return `Moving the ${ZONE_LABELS[update.kind]} at index ${update.index} from ${before.join(", ")} to ${update.zone.join(", ")}.`;
+	}
+
+	/**
 	 * Removes one wall or zone from the set that was read off the robot, or clears them all.
 	 * @param overlays The set read off the robot; changed in place.
 	 * @param removal What the user asked to remove.
@@ -1172,6 +1334,9 @@ export class MapEditService {
 				? `The map has no ${ZONE_LABELS[removal.kind]}s, so there is no index ${index} to remove.`
 				: `The map has ${list.length} ${ZONE_LABELS[removal.kind]}(s), numbered 0 to ${list.length - 1}; there is no index ${index}. mapEdit.zones lists them.`);
 		}
+
+		// Before anything is taken out: is the thing at that index still the thing the caller meant?
+		assertZoneMatches(removal.kind, index, list[index], removal.expected);
 
 		const [removed] = list.splice(index, 1);
 		return `Removing the ${ZONE_LABELS[removal.kind]} at index ${index} (${removed.join(", ")}).`;

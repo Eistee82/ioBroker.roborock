@@ -87,6 +87,15 @@ export const ZONE_ADD_COMMANDS: Readonly<Record<string, MapZoneKind>> = {
 export const ZONE_REMOVE_COMMAND = "remove_map_zone";
 
 /**
+ * Command that changes one wall or zone in place.
+ *
+ * Exists so that moving one is a **single** read-change-write cycle. "Remove, then add" would be
+ * two, with the zone absent in between and with the second cycle reading a map that may not yet
+ * show the first write - see `parseZoneUpdate` in `MapEditService.ts` for the full reasoning.
+ */
+export const ZONE_UPDATE_COMMAND = "update_map_zone";
+
+/**
  * Highest coordinate a map record can hold.
  *
  * The blocks are read as `uint16` (`MapParser.ts:307`, `:322`), so a coordinate outside this range

@@ -81,6 +81,85 @@ function createMapFixture(): V1MapDataForDrawing {
 	} as V1MapDataForDrawing;
 }
 
+describe("the shape a stored zone is drawn as", () => {
+	/** A zone turned by roughly 17 degrees; no two corners share an x or a y. */
+	const TURNED = [1000, 2000, 2910, 2580, 3490, 1670, 1580, 1090];
+
+	it("hands the renderer the four corners, not just a box around them", async () => {
+		const { renderer, zones } = createRecordingRenderer();
+		await drawMapV1(
+			{
+				IMAGE: {
+					position: { left: 0, top: 0 },
+					dimensions: { width: 100, height: 100 },
+					pixels: { floor: [0], obstacle: [], segments: [] }
+				},
+				FORBIDDEN_ZONES: [TURNED]
+			} as V1MapDataForDrawing,
+			renderer
+		);
+
+		expect(zones).toHaveLength(1);
+		expect(zones[0].points).toHaveLength(4);
+
+		// The corners really are turned: reduced to a box, all four would sit on two x values and
+		// two y values. This is the fault the polygon fixes - the box covers floor the robot drives.
+		const xs = new Set(zones[0].points?.map((point) => point.x));
+		const ys = new Set(zones[0].points?.map((point) => point.y));
+		expect(xs.size).toBe(4);
+		expect(ys.size).toBe(4);
+	});
+
+	it("still describes an upright zone by the same box as before", async () => {
+		// The promise to every existing installation: a map without a turned zone keeps exactly the
+		// picture it has today. For an upright zone the polygon and the box are the same rectangle.
+		const { renderer, zones } = createRecordingRenderer();
+		await drawMapV1(
+			{
+				IMAGE: {
+					position: { left: 0, top: 0 },
+					dimensions: { width: 100, height: 100 },
+					pixels: { floor: [0], obstacle: [], segments: [] }
+				},
+				FORBIDDEN_ZONES: [uprightZone(1000, 1000, 2000, 2000)]
+			} as V1MapDataForDrawing,
+			renderer
+		);
+
+		const zone = zones[0];
+		const xs = zone.points?.map((point) => point.x) ?? [];
+		const ys = zone.points?.map((point) => point.y) ?? [];
+		expect(new Set(xs).size).toBe(2);
+		expect(new Set(ys).size).toBe(2);
+		// And the polygon spans exactly the box the older half of the interface reports.
+		expect(Math.min(...xs)).toBeCloseTo(Math.min(zone.x, zone.x + zone.w), 6);
+		expect(Math.max(...xs)).toBeCloseTo(Math.max(zone.x, zone.x + zone.w), 6);
+		expect(Math.min(...ys)).toBeCloseTo(Math.min(zone.y, zone.y + zone.h), 6);
+		expect(Math.max(...ys)).toBeCloseTo(Math.max(zone.y, zone.y + zone.h), 6);
+	});
+
+	it("gives the corners to every zone kind that has them, not only to no-go zones", async () => {
+		const { renderer, zones } = createRecordingRenderer();
+		await drawMapV1(
+			{
+				IMAGE: {
+					position: { left: 0, top: 0 },
+					dimensions: { width: 100, height: 100 },
+					pixels: { floor: [0], obstacle: [], segments: [] }
+				},
+				FORBIDDEN_ZONES: [TURNED],
+				NO_MOP_ZONE: [TURNED],
+				CURTAIN: [TURNED],
+				MISS_ZONE: [TURNED]
+			} as V1MapDataForDrawing,
+			renderer
+		);
+
+		expect(zones).toHaveLength(4);
+		expect(zones.every((zone) => zone.points?.length === 4)).toBe(true);
+	});
+});
+
 describe("drawMapV1 and the editable overlays", () => {
 	it("draws all of them by default, which is what the adapter's own PNG needs", async () => {
 		const { renderer, zones, walls } = createRecordingRenderer();

@@ -15,6 +15,9 @@ export enum Feature {
 	// Disturb window, one that reports `lock_status` has a child lock. See V1RobotSettingsService.
 	DoNotDisturb = "DoNotDisturb", // Adds the Do Not Disturb window and its off button
 	ChildLock = "ChildLock", // Adds the child lock switch
+	// Not detected from the status but by asking the robot: `get_collision_avoid_status` either
+	// answers or comes back `unknown_method`. See lib/features/capabilityProbe.ts.
+	CollisionAvoid = "CollisionAvoid", // Adds the obstacle avoidance switch
 
 	// --- Actions primarily creating States (non-command) ---
 	LiveVideo = "LiveVideo", // Creates camera stream URL states

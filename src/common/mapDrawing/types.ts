@@ -92,6 +92,20 @@ export interface DrawZoneRectInput {
 	h: number;
 	fill: string;
 	stroke: string;
+	/**
+	 * The zone's actual corners, when it has some.
+	 *
+	 * A map stores a no-go zone, a no-mop zone and their relatives as **four corner points**, which
+	 * is what lets the Roborock app offer them a rotate handle - a turned rectangle is a shape the
+	 * map can hold. `x/y/w/h` above can only describe an upright one, so a turned zone reduced to
+	 * them becomes its bounding box: a different, larger rectangle covering floor the robot is
+	 * perfectly happy to drive on.
+	 *
+	 * When this is set, a renderer draws the polygon and ignores `x/y/w/h`; when it is not, it draws
+	 * the rectangle exactly as before. The two agree for every upright zone, so nothing changes for
+	 * a map that has none - which is almost every map, and the reason this went unnoticed.
+	 */
+	points?: { x: number; y: number }[];
 }
 
 /** Virtual wall: line from (x1,y1) to (x2,y2). */

@@ -204,6 +204,39 @@ describe("commands registered by a runtime-detected feature", () => {
 		expect(harness.stateWrites.some(([id]) => String(id).endsWith("settings.set_child_lock_status"))).toBe(false);
 	});
 
+	it("does nothing at all when the detection added no command", async () => {
+		// The narrow trigger, and the reason for it: `changed` is set by every implementation on its
+		// first run, and by the B01 one whenever the status carries `dss` - regardless of whether a
+		// command was added. Acting on the flag would hand an object pass to every device, including
+		// the B01 and Q10 hardware this project cannot test against. A status without any of the
+		// fields that switch a feature on must therefore leave everything untouched.
+		const harness = createDeps();
+		const vacuum = await boot(harness);
+
+		const ensuredBefore = harness.ensured.length;
+		const updatedBefore = harness.updated.length;
+		const writesBefore = harness.stateWrites.length;
+
+		const published = await (vacuum as any).applyRuntimeFeatureDetection({ state: 8, battery: 100 });
+
+		expect(published).toBe(false);
+		expect(harness.ensured.length).toBe(ensuredBefore);
+		expect(harness.updated.length).toBe(updatedBefore);
+		expect(harness.stateWrites.length).toBe(writesBefore);
+	});
+
+	it("reports that it published, so the decision is visible in the log", async () => {
+		const harness = createDeps();
+		const vacuum = await boot(harness);
+
+		const published = await (vacuum as any).applyRuntimeFeatureDetection(STATUS_WITH_RUNTIME_FEATURES);
+
+		expect(published).toBe(true);
+		const lines = ((harness.deps as any).adapter.rLog as ReturnType<typeof vi.fn>).mock.calls
+			.map((call: any[]) => String(call[5]));
+		expect(lines.some((line) => line.includes("Runtime detection added") && line.includes("set_child_lock_status"))).toBe(true);
+	});
+
 	it("still gives a statically declared feature its object", async () => {
 		// The control from the original investigation: applied before the objects are written, so
 		// it never depended on this path and must keep working.

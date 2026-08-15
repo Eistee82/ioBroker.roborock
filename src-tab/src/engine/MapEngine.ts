@@ -540,12 +540,17 @@ export class MapEngine {
 	/** Key of the wall or zone whose handles are shown, or null. */
 	private selectedMapZoneKey: string | null = null;
 	/**
-	 * The wall or zone being placed, in the robot's own millimetres, or null.
+	 * The wall or zone being edited, in the robot's own millimetres, or null.
+	 *
+	 * Covers both cases, because they are the same thing from the user's side: a brand new zone
+	 * (`origin` null) and one that already exists on the robot and is being moved, resized or
+	 * turned (`origin` set). Either way nothing is sent until it is saved - which is what turns an
+	 * arbitrary number of drags into exactly one rewrite of the robot's complete set.
 	 *
 	 * Kept in millimetres rather than in pixels because the map is redrawn on every poll; a draft
 	 * in screen coordinates would drift with the picture underneath it.
 	 */
-	private mapZoneDraft: { kind: MapZoneKind; box: ZoneBox } | null = null;
+	private mapZoneDraft: { kind: MapZoneKind; box: ZoneBox; origin: MapZone | null } | null = null;
 	/** Cache: "duid.mapFlag.roomId" -> room name (from get_room_names for cloud maps). */
 	private roomNamesFromStates: Record<string, string> = {};
 	/** Guard: "duid.mapFlag" of the floor whose room names have already been requested. */
@@ -3062,18 +3067,55 @@ export class MapEngine {
 		const params = this.mapZoneParams();
 		if (!params) return [];
 
+		const draft = this.mapZoneDraft;
+		const editedKey = draft?.origin ? mapZoneKey(draft.origin) : null;
+
 		const shapes: MapZoneShape[] = [];
 		for (const zone of this.mapZones) {
-			const shape = this.mapZoneShape(mapZoneKey(zone), zone.kind, zone.points, false, shapes.length, params);
+			const key = mapZoneKey(zone);
+			// A zone being edited is drawn from the draft rather than from the map, and keeps its own
+			// key: the data join then reuses the very element the gesture is running on, so a redraw
+			// in the middle of a drag cannot pull it out from under the pointer.
+			const edited = key === editedKey && draft !== null;
+			const points = edited ? boxPoints(draft.kind, draft.box) : zone.points;
+			const shape = this.mapZoneShape(key, zone.kind, points, edited, shapes.length, params);
 			if (shape) shapes.push(shape);
 		}
 
-		if (this.mapZoneDraft) {
-			const points = boxPoints(this.mapZoneDraft.kind, this.mapZoneDraft.box);
-			const shape = this.mapZoneShape(MAP_ZONE_DRAFT_KEY, this.mapZoneDraft.kind, points, true, shapes.length, params);
+		if (draft && !draft.origin) {
+			const points = boxPoints(draft.kind, draft.box);
+			const shape = this.mapZoneShape(MAP_ZONE_DRAFT_KEY, draft.kind, points, true, shapes.length, params);
 			if (shape) shapes.push(shape);
 		}
 		return shapes;
+	}
+
+	/** Key the draft is drawn under: its own while new, the edited zone's while changing one. */
+	private mapZoneDraftKey(): string | null {
+		if (!this.mapZoneDraft) return null;
+		return this.mapZoneDraft.origin ? mapZoneKey(this.mapZoneDraft.origin) : MAP_ZONE_DRAFT_KEY;
+	}
+
+	/**
+	 * Turns the selected zone into a draft, so a gesture on it changes nothing on the robot yet.
+	 *
+	 * Called at the start of every gesture rather than by a button: a handle the user can grab is a
+	 * promise that grabbing it does something, and asking them to press "edit" first would be a
+	 * step whose only purpose is to tell the program what it can see for itself.
+	 * @returns True when there is a draft to work on afterwards.
+	 */
+	private beginMapZoneEdit(): boolean {
+		if (this.mapZoneDraft) return true;
+
+		const zone = this.mapZones.find((candidate) => mapZoneKey(candidate) === this.selectedMapZoneKey);
+		if (!zone) return false;
+
+		const box = pointsBox(zone.kind, zone.points);
+		if (!box) return false;
+
+		this.mapZoneDraft = { kind: zone.kind, box, origin: zone };
+		this.publishMapZoneModel();
+		return true;
 	}
 
 	/**

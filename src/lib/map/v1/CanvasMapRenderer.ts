@@ -34,6 +34,7 @@ export interface NodeCanvasContext2D {
 	beginPath(): void;
 	moveTo(x: number, y: number): void;
 	lineTo(x: number, y: number): void;
+	closePath(): void;
 	stroke(): void;
 	fill(): void;
 	fillRect(x: number, y: number, w: number, h: number): void;
@@ -307,9 +308,24 @@ export class CanvasMapRenderer implements IMapRenderer {
 	drawRestrictedZones(zones: DrawZoneRectInput[], virtualWalls: DrawVirtualWallInput[]): void {
 		for (const z of zones) {
 			this.ctx.fillStyle = z.fill;
-			this.ctx.fillRect(z.x, z.y, z.w, z.h);
 			this.ctx.strokeStyle = z.stroke;
 			this.ctx.lineWidth = (1 * VISUAL_BLOCK_SIZE) / 2;
+
+			// The corners when the zone has them: a map stores these zones as four points, and a
+			// turned one is a different shape from the box around it. See `DrawZoneRectInput.points`.
+			if (z.points && z.points.length >= 3) {
+				this.ctx.beginPath();
+				this.ctx.moveTo(z.points[0].x, z.points[0].y);
+				for (let i = 1; i < z.points.length; i++) {
+					this.ctx.lineTo(z.points[i].x, z.points[i].y);
+				}
+				this.ctx.closePath();
+				this.ctx.fill();
+				this.ctx.stroke();
+				continue;
+			}
+
+			this.ctx.fillRect(z.x, z.y, z.w, z.h);
 			this.ctx.strokeRect(z.x, z.y, z.w, z.h);
 		}
 		for (const w of virtualWalls) {

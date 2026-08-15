@@ -810,6 +810,20 @@ export class SVGMapRenderer implements IMapRenderer {
 			const y = Math.min(z.y, z.y + z.h);
 			const w = Math.abs(z.w);
 			const h = Math.abs(z.h);
+
+			// The corners when the zone has them: a map stores these zones as four points, and a
+			// turned one is a different shape from the box around it. See `DrawZoneRectInput.points`.
+			if (z.points && z.points.length >= 3) {
+				overlay
+					.append("polygon")
+					.attr("class", "restricted-zone")
+					.attr("points", z.points.map((point) => `${point.x},${point.y}`).join(" "))
+					.style("fill", z.fill)
+					.style("stroke", z.stroke)
+					.style("stroke-width", `${(1 * VISUAL_BLOCK_SIZE) / 2}px`);
+				continue;
+			}
+
 			overlay
 				.append("rect")
 				.attr("class", "restricted-zone")

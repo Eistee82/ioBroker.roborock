@@ -63,6 +63,7 @@ import {
 	ZONE_BLOCKS,
 	ZONE_LENGTHS,
 	ZONE_REMOVE_COMMAND,
+	ZONE_UPDATE_COMMAND,
 } from "@adapter/common/mapZoneKinds";
 import type { MapZoneKind } from "@adapter/common/mapZoneKinds";
 
@@ -74,6 +75,9 @@ export const MAP_ZONE_LIMIT = MAX_COUNT_WALL_OR_FBZ;
 
 /** The command that removes one, or clears them all. */
 export const MAP_ZONE_REMOVE_COMMAND = ZONE_REMOVE_COMMAND;
+
+/** The command that changes one in place, in a single read-change-write cycle. */
+export const MAP_ZONE_UPDATE_COMMAND = ZONE_UPDATE_COMMAND;
 
 /**
  * In drawing order: walls last, so a wall stays clickable where it crosses a zone.
@@ -389,6 +393,32 @@ export function zoneAddPayload(kind: MapZoneKind, points: MapZonePoint[]): numbe
  */
 export function zoneRemovalPayload(zone: MapZone): { kind: MapZoneKind; index: number; zone: number[] } {
 	return { kind: zone.kind, index: zone.index, zone: zoneAddPayload(zone.kind, zone.points) };
+}
+
+/**
+ * The payload of `update_map_zone` for one changed wall or zone.
+ *
+ * `from` carries what that index held when the user started, so the adapter can refuse rather than
+ * write over a zone that is no longer the one they were looking at. `zone` is where it is to be
+ * afterwards.
+ *
+ * One command rather than a removal followed by an addition, and the difference is not cosmetic:
+ * those would be two complete rewrites of the robot's set of walls and zones, with the zone absent
+ * in between, and with the second rewrite reading a map that may not show the first one yet.
+ * @param origin The zone as it stands on the robot.
+ * @param points Where it is to be afterwards, in millimetres.
+ * @returns The object for the command state.
+ */
+export function zoneUpdatePayload(
+	origin: MapZone,
+	points: MapZonePoint[],
+): { kind: MapZoneKind; index: number; zone: number[]; from: number[] } {
+	return {
+		kind: origin.kind,
+		index: origin.index,
+		zone: zoneAddPayload(origin.kind, points),
+		from: zoneAddPayload(origin.kind, origin.points),
+	};
 }
 
 /** How many of one kind are on the map, so the tab can stop at the limit before the adapter does. */
