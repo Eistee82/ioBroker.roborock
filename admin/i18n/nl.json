@@ -389,5 +389,6 @@
   "ui_remote_forward_right": "Vooruit rechts",
   "ui_remote_back_left": "Achteruit links",
   "ui_remote_back_right": "Achteruit rechts",
-  "clean_sequence": "Schoonmaakvolgorde in de robot (segment-ID's, leeg betekent dat de robot beslist)"
+  "clean_sequence": "Schoonmaakvolgorde in de robot (segment-ID's, leeg betekent dat de robot beslist)",
+  "ui_floor_active": "robot is hier"
 }

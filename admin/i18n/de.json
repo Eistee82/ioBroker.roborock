@@ -389,5 +389,6 @@
   "ui_remote_forward_right": "Vorwärts rechts",
   "ui_remote_back_left": "Rückwärts links",
   "ui_remote_back_right": "Rückwärts rechts",
-  "clean_sequence": "Reinigungsreihenfolge des Roboters (Segment-IDs, leer heißt der Roboter entscheidet)"
+  "clean_sequence": "Reinigungsreihenfolge des Roboters (Segment-IDs, leer heißt der Roboter entscheidet)",
+  "ui_floor_active": "Roboter ist hier"
 }

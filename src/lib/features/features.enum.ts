@@ -31,6 +31,7 @@ export enum Feature {
 	StatusToggles = "StatusToggles", // Adds the probed on/off settings
 	SoundVolume = "SoundVolume", // Adds the speaking volume and the sound test
 	DeviceIdentity = "DeviceIdentity", // Adds the serial number and the locale block, read-only
+	MapInventory = "MapInventory", // Adds which map is loaded and what backups exist, read-only
 	// Not a probe: the four `app_rc_*` calls are all actions, and a capability probe may only send a
 	// `get_*` (capabilityProbe.ts). The robot reports this one itself, as firmware feature 125 - the
 	// same number the app reads in `isRemoteSupported()`. See lib/features/vacuum/remoteControl.ts.

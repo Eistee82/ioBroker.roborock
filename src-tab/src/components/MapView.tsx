@@ -39,6 +39,7 @@ import type { MapColorScheme } from "../engine/mapOverlayColors";
 import { CommandFeedbackSource } from "../feedback/commandFeedbackSource";
 import { formatFeedbackMessage } from "../feedback/commandFeedback";
 import type { CommandFeedbackSeverity } from "../feedback/commandFeedback";
+import { ActiveFloorSource } from "../map/activeFloorSource";
 import { RemotePad } from "./RemotePad";
 import { EMPTY_REMOTE, RemoteDriver } from "../remote/remoteDriver";
 import type { RemoteDriverModel } from "../remote/remoteDriver";
@@ -156,12 +157,15 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [robotSettings, setRobotSettings] = useState<RobotSettingsModel | null>(null);
 	// Everything about driving the robot by hand; `supported: false` keeps the pad away entirely.
 	const [remote, setRemote] = useState<RemoteDriverModel>(EMPTY_REMOTE);
+	// Which floor the robot itself is on; null when it does not report one.
+	const [activeFloor, setActiveFloor] = useState<number | null>(null);
 
 	const connection = useMemo(() => createEngineConnection(socket), [socket]);
 	const historySourceRef = useRef<CleaningHistorySource | null>(null);
 	const settingsSourceRef = useRef<RobotSettingsSource | null>(null);
 	const feedbackSourceRef = useRef<CommandFeedbackSource | null>(null);
 	const remoteDriverRef = useRef<RemoteDriver | null>(null);
+	const activeFloorRef = useRef<ActiveFloorSource | null>(null);
 
 	/** Everything the tab itself could not do; always an error, never an open question. */
 	const showError = useCallback((message: string) => {
@@ -329,6 +333,24 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 		void remoteDriverRef.current?.setDevice(instanceId, selectedRobot);
 	}, [connection, instanceId, selectedRobot]);
 
+	/*
+	 * Which floor the robot is on. Its own tiny source rather than part of the engine: the engine
+	 * decides what is drawn, this only remarks on what is drawn - see `map/activeFloorSource.ts`.
+	 */
+	useEffect(() => {
+		const source = new ActiveFloorSource(connection, { onActiveFloor: setActiveFloor });
+		activeFloorRef.current = source;
+
+		return () => {
+			source.destroy();
+			activeFloorRef.current = null;
+		};
+	}, [connection]);
+
+	useEffect(() => {
+		void activeFloorRef.current?.setDevice(instanceId, selectedRobot);
+	}, [connection, instanceId, selectedRobot]);
+
 	const writeSetting = useCallback((write: SettingWrite) => {
 		void settingsSourceRef.current?.apply(write);
 	}, []);
@@ -417,14 +439,21 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 								}}
 								sx={{ minWidth: 148 }}
 							>
-								{floors.map(floor => (
-									<MenuItem
-										key={floor.value}
-										value={floor.value}
-									>
-										{floor.label}
-									</MenuItem>
-								))}
+								{floors.map(floor => {
+									// The floor the robot is on is marked rather than named twice: on a
+									// robot with two maps the selector shows what is *drawn*, and
+									// looking at the cellar while the robot cleans the ground floor
+									// used to be indistinguishable from looking at where it is.
+									const isActive = activeFloor !== null && Number(floor.value) === activeFloor;
+									return (
+										<MenuItem
+											key={floor.value}
+											value={floor.value}
+										>
+											{isActive ? `${floor.label} ● ${I18n.t("ui_floor_active")}` : floor.label}
+										</MenuItem>
+									);
+								})}
 							</TextField>
 						) : null}
 					</Stack>

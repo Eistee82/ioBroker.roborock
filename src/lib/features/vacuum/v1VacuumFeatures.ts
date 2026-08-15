@@ -31,6 +31,7 @@ import {
 import type { StatusToggle } from "./v1ProbedCapabilities";
 import { CHANGE_SOUND_VOLUME, GET_SOUND_VOLUME, V1SoundVolumeService } from "./v1SoundVolume";
 import { APP_GET_LOCALE, GET_SERIAL_NUMBER, V1DeviceIdentityService } from "./v1DeviceIdentity";
+import { GET_MULTI_MAPS_LIST, RESTORE_PROBE, V1MapInventoryService } from "./v1MapInventory";
 import {
 	APP_RC_END,
 	APP_RC_MOVE,
@@ -133,6 +134,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected probedService: V1ProbedCapabilityService;
 	protected soundVolumeService: V1SoundVolumeService;
 	protected deviceIdentityService: V1DeviceIdentityService;
+	protected mapInventoryService: V1MapInventoryService;
 
 	/**
 	 * Asks the robot which commands it knows, once per adapter run.
@@ -188,6 +190,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.probedService = new V1ProbedCapabilityService(this.deps, this.duid);
 		this.soundVolumeService = new V1SoundVolumeService(this.deps, this.duid);
 		this.deviceIdentityService = new V1DeviceIdentityService(this.deps, this.duid);
+		this.mapInventoryService = new V1MapInventoryService(this.deps, this.duid);
 		// Splitting or merging rooms renumbers the segments, so everything the adapter holds about
 		// them is stale the moment the robot confirms; the service asks for a refresh at that point.
 		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex(), async () => {
@@ -681,6 +684,11 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			await this.deviceIdentityService.applySerialNumberResponse(response);
 		} else if (finalMethod === APP_GET_LOCALE) {
 			await this.deviceIdentityService.applyLocaleResponse(response);
+		} else if (finalMethod === GET_MULTI_MAPS_LIST && this.hasFeature(Feature.MapInventory)) {
+			// Guarded on the feature because `V1MapService` asks for the same list on its own and
+			// its answer travels the same path; a robot that was never offered the inventory must
+			// not get its states created as a side effect of somebody else's request.
+			await this.mapInventoryService.applyMultiMapsList(response);
 		}
 
 		this.noteRemoteControlResult(finalMethod);
@@ -1715,6 +1723,53 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		await this.detectStatusToggles();
 		await this.probeAndApply(GET_SOUND_VOLUME, [], Feature.SoundVolume, CHANGE_SOUND_VOLUME);
 		await this.probeAndApply(GET_SERIAL_NUMBER, [], Feature.DeviceIdentity, GET_SERIAL_NUMBER);
+		await this.probeAndApply(GET_MULTI_MAPS_LIST, [], Feature.MapInventory, GET_MULTI_MAPS_LIST);
+	}
+
+	/**
+	 * Publishes which map is loaded and what backups the robot says it keeps.
+	 *
+	 * Read-only throughout - see `v1MapInventory.ts` for why `get_map_status` is not used and for
+	 * the payloads of the three destructive calls that were established but deliberately not built.
+	 *
+	 * The restore question is asked here rather than assumed, because `bak_maps` promises something
+	 * the test device cannot deliver: it lists two backups and answers `get_recover_maps` with
+	 * `unknown_method`. Reporting that is the difference between "this adapter has no button" and
+	 * "this robot cannot do it".
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.MapInventory)
+	public async initMapInventory(): Promise<void> {
+		this.addCommand(GET_MULTI_MAPS_LIST, {
+			type: "boolean",
+			role: "button",
+			name: "Read the map list and its backups",
+			def: false
+		}, "queries");
+
+		void this.readProbedValue(GET_MULTI_MAPS_LIST, [], (response) => this.mapInventoryService.applyMultiMapsList(response));
+
+		// The probe answers "can this robot restore at all", and its verdict is the state's value.
+		// A robot that never answers counts as "cannot", which is the same direction of error the
+		// probe itself takes - and the honest one here, because the alternative is a state that
+		// says restoring works on a robot that has never confirmed it.
+		//
+		// **Awaited**, unlike the list read above. This runs inside `detectProbedCapabilities`,
+		// where every other probe is awaited too, and it is one request on the probe's own low
+		// priority - it cannot overtake a status poll. Leaving it dangling would mean the state
+		// appears some time after the objects were written, which is the timing that made runtime
+		// detected features invisible in the first place.
+		await this.publishRestoreSupport();
+	}
+
+	/** Asks whether the robot offers restoring a backup, and writes the answer down. */
+	private async publishRestoreSupport(): Promise<void> {
+		try {
+			const verdict = await this.capabilityProbe.probe(RESTORE_PROBE, []);
+			await this.mapInventoryService.publishRestoreSupport(verdict === "capable");
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
+				`Could not determine whether the robot restores map backups: ${this.deps.adapter.errorMessage(e)}`, "debug");
+		}
 	}
 
 	/**
@@ -2176,6 +2231,16 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected override async processResultKey(folder: string, key: string, val: unknown): Promise<void> {
 		if (key === "map_status") {
 			const mapIdxChanged = this.mapService.updateCurrentMapIndex(Number(val));
+
+			// Written on every poll but only when it really moved; the service guards that itself.
+			// This is the one place the active slot is known without asking for anything, which is
+			// why the inventory takes it from here rather than calling `get_map_status` - see
+			// `v1MapInventory.ts` for why that call is not used at all.
+			if (this.hasFeature(Feature.MapInventory)) {
+				void this.mapInventoryService.publishActiveMap(this.mapService.currentIndex)
+					.catch((e: unknown) => this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
+						`Could not publish the active map: ${this.deps.adapter.errorMessage(e)}`, "debug"));
+			}
 
 			if (mapIdxChanged) {
 				this.deps.adapter.rLog("MapManager", this.duid, "Info", "1.0", undefined, `[MapSync] Map changed to index ${this.mapService.currentIndex}. Updating room mapping.`, "info");

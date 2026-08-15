@@ -207,6 +207,20 @@ Zahleneingabeweg selbst prüft, bevor sie sendet. Das modellabhängige Fenster w
 Adapter abbaut. Lehnt ein Roboter einen Wert außerhalb seines eigenen Fensters ab, meldet er das,
 und die Kommandoprüfung schreibt es auf.
 
+Bei einem Roboter mit mehreren Karten **markiert die Etagenauswahl jetzt die Etage, auf der der
+Roboter tatsächlich steht**. Beides fällt auseinander, sobald man den Keller ansieht, während der
+Roboter das Erdgeschoss reinigt — und bisher sagte nichts, was was ist. Daneben veröffentlicht der
+Adapter unter **Karteninventar**, welche Karte geladen ist und welche **Sicherungen** der Roboter
+meldet: beim Testgerät eine je Karte, mit dem Datum der Sicherung und der Etage, zu der sie gehört.
+
+Zu den Sicherungen gehört ein ehrlicher Vorbehalt, und der ist ein eigener Datenpunkt:
+`mapInventory.restoreSupported`. Der Roboter wird gefragt, ob er überhaupt wiederherstellen kann —
+und **das Testgerät sagt nein**: Es listet zwei Sicherungen und lehnt genau den Befehl ab, mit dem
+die Roborock-App ihre Wiederherstellungsliste holt. Diese Sicherungen sind also nicht nutzbar, weder
+über diesen Adapter noch über die App. Das auszusprechen ist der Unterschied zwischen „dieser
+Adapter hat keinen Knopf" und „dieser Roboter kann das nicht". Nichts hiervon löscht, stellt wieder
+her oder benennt eine Karte um; das ist zerstörerisch und gehört hinter eine Rückfrage.
+
 Unter **Geräteinformationen** erscheinen die **Seriennummer** des Roboters und sein **Regionsblock**,
 beides rein lesend und beides nur bei einem Roboter, der darauf antwortet: das verwendete
 Sprachpaket, Roborocks `bom`-Zeichenkette, die Region, die Sprache seiner Stimme und die Zeitzone,

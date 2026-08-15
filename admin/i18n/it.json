@@ -389,5 +389,6 @@
   "ui_remote_forward_right": "Avanti a destra",
   "ui_remote_back_left": "Indietro a sinistra",
   "ui_remote_back_right": "Indietro a destra",
-  "clean_sequence": "Ordine di pulizia memorizzato nel robot (ID dei segmenti, vuoto significa che decide il robot)"
+  "clean_sequence": "Ordine di pulizia memorizzato nel robot (ID dei segmenti, vuoto significa che decide il robot)",
+  "ui_floor_active": "il robot è qui"
 }

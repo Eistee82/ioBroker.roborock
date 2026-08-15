@@ -193,6 +193,19 @@ model-dependent window is deliberately not copied, because binding a range to a 
 exactly the criterion this adapter has been removing. A robot that refuses a value outside its own
 comfort window says so, and the command check reports it.
 
+On a robot with more than one map, **the floor selector now marks the floor the robot is actually
+on**. Those two things come apart the moment you look at the cellar while the robot cleans the
+ground floor, and until now nothing said which was which. Beside it, under **map inventory**, the
+adapter publishes which slot is loaded and what **backups** the robot says it keeps - one per map on
+the test device, listed with the date they were taken and with the floor each belongs to.
+
+The backups come with an honest caveat, and it is a state of its own: `mapInventory.restoreSupported`.
+The robot is asked whether it can restore at all, and **the test device says no** - it lists two
+backups and rejects the command the Roborock app itself uses to fetch the restore list. So those
+backups are not usable, not by this adapter and not by the app. Saying so is the difference between
+"this adapter has no button" and "this robot cannot do it". Nothing here deletes, restores or renames
+a map; those are destructive and belong behind a confirmation, not on a button.
+
 Under **device info** the robot's **serial number** and its **region block** appear, both read-only
 and both only on a robot that answers for them: the voice package it runs, Roborock's `bom` string,
 the region, the language of its voice and the time zone it keeps its clock in. Two things are
