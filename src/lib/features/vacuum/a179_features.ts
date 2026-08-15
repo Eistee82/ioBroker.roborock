@@ -3512,19 +3512,52 @@ export class A179Features extends V1VacuumFeatures {
 		}, value === 1);
 	}
 
-	private deriveBackWashMode(smartWashValue: number, washIntervalMinutes: number, backWashNewSmartSupported: boolean): number {
+	/**
+	 * Turns the reported pair into the mode the panel shows.
+	 *
+	 * A robot without `isBackWashNewSmartSupported` gets **Custom**, whatever its interval is. That
+	 * used to be `washIntervalMinutes % 5 === 0 ? 1 : 2`, and the 2 was wrong twice over.
+	 *
+	 * The rule is the a65 control plugin's
+	 * (`_appanalysis/plugins/a65_control_v5208/index.android.bundle.decompiled.js` Z. 437620-437626),
+	 * where it separates `BackWashModeCustom` (1) from `BackWashModeLevel` (2). Here 2 is
+	 * {@link Z70_BACK_WASH_MODE_STATES}`[2]` = "New Smart" - a different meaning in the same number.
+	 * So a robot that by definition has no New Smart was shown exactly that, and writing the value
+	 * back hit `assertBackWashModeSupported`, which refuses it. Display and write path contradicted
+	 * each other, and the state was reachable: 21 minutes is the marker the app itself sends for
+	 * Level (Z. 437343).
+	 *
+	 * Dropping it rather than giving Level its own value restores what the source rule does. Even
+	 * in the a65 plugin `Level` has no selectable entry: `getWashIntervalModes()` (Z. 438210-438258)
+	 * builds two, keys 0 and 1, and filters by `visible`. It was a display state with no write
+	 * counterpart there too - harmless because nothing could be written back. Inventing a fourth
+	 * value here would name a distinction neither app makes.
+	 *
+	 * **Left alone on purpose:** `smart_wash: 2` in {@link buildSmartWashParams}. No caller in the
+	 * a65 plugin produces it - all four send 0 or 1 - but that is a statement about the a65, and
+	 * this class is the Saros Z70, whose control plugin we do not have. Whether a third back wash
+	 * mode exists behind bit 109 is **named** (`isBackWashNewSmartSupported`, `vacuumConstants.ts`)
+	 * but not proven, and whether it travels as `smart_wash: 2` is undecided in either direction.
+	 * Note that the table entry, this reader and that writer all arrived in one commit (`0a5e4c55`,
+	 * "Add Z70 support"), so they are one witness rather than three. Deleting the value is the
+	 * irreversible direction; it is gated behind a bit the reference robot does not have anyway.
+	 *
+	 * @param smartWashValue `smart_wash` as reported.
+	 * @param _washIntervalMinutes `wash_interval` in minutes. Deliberately no longer consulted; kept
+	 *        so the reason is visible at the one place that used to read it.
+	 * @param backWashNewSmartSupported Whether the robot announces firmware feature 109.
+	 * @returns The display mode: 0 Smart, 1 Custom, 2 New Smart.
+	 */
+	private deriveBackWashMode(smartWashValue: number, _washIntervalMinutes: number, backWashNewSmartSupported: boolean): number {
 		if (smartWashValue === 1) {
 			return 0;
 		}
 
-		if (backWashNewSmartSupported) {
-			if (smartWashValue === 2) {
-				return 2;
-			}
-			return 1;
+		if (backWashNewSmartSupported && smartWashValue === 2) {
+			return 2;
 		}
 
-		return washIntervalMinutes % 5 === 0 ? 1 : 2;
+		return 1;
 	}
 
 	private buildSmartWashParams(backWashMode: number, washIntervalMinutes: number): { smart_wash: number; wash_interval: number } {

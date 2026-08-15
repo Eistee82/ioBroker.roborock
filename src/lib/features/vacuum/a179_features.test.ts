@@ -1191,6 +1191,70 @@ describe("A179Features", () => {
 		});
 	});
 
+	/**
+	 * A robot without firmware feature 109 must never be shown "New Smart".
+	 *
+	 * The reader used to fall back to `washIntervalMinutes % 5 === 0 ? 1 : 2`, a rule taken from the
+	 * a65 control plugin, where 2 means `BackWashModeLevel`. Here 2 means "New Smart", so a robot
+	 * that by definition has no New Smart was shown exactly that - and `assertBackWashModeSupported`
+	 * refuses to write the value back, so the panel contradicted its own write path.
+	 *
+	 * 21 minutes is not an invented number: it is the marker the app itself sends for Level
+	 * (`a65_control_v5208` Z. 437343), so this is a value the robot really can report.
+	 */
+	it("shows Custom, not New Smart, when the robot lacks the New Smart feature", async () => {
+		requestsHandlerMock.sendRequest.mockImplementation(async (_duid: string, method: string) => {
+			if (method === "get_fw_features") {
+				// 107 yes, 109 deliberately absent.
+				return { data: [41, 107], version: "L01" };
+			}
+			return {};
+		});
+
+		const feature = new A179Features(depsMock, "duid1");
+
+		await feature.onCommandResult("get_smart_wash_params", "get_smart_wash_params", {
+			data: { smart_wash: 0, wash_interval: 1260 },
+			version: "L01"
+		}, {});
+
+		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.dockingStationStatus.smartWash.washIntervalMinutes", {
+			val: 21,
+			ack: true
+		});
+		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.dockingStationStatus.smartWash.backWashMode", {
+			val: 1,
+			ack: true
+		});
+		expect(adapterMock.setStateChanged).not.toHaveBeenCalledWith("Devices.duid1.dockingStationStatus.smartWash.backWashMode", {
+			val: 2,
+			ack: true
+		});
+	});
+
+	it("keeps New Smart for a robot that announces the feature and reports it", async () => {
+		// The other half of the same predicate: dropping the fallback must not cost the robots that
+		// really have the mode. `smart_wash: 2` is left in place - see `deriveBackWashMode`.
+		requestsHandlerMock.sendRequest.mockImplementation(async (_duid: string, method: string) => {
+			if (method === "get_fw_features") {
+				return { data: [41, 107, 109], version: "L01" };
+			}
+			return {};
+		});
+
+		const feature = new A179Features(depsMock, "duid1");
+
+		await feature.onCommandResult("get_smart_wash_params", "get_smart_wash_params", {
+			data: { smart_wash: 2, wash_interval: 1260 },
+			version: "L01"
+		}, {});
+
+		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.dockingStationStatus.smartWash.backWashMode", {
+			val: 2,
+			ack: true
+		});
+	});
+
 	it("stores tidy-up summary and tidy zones from map data", async () => {
 		requestsHandlerMock.sendRequest.mockImplementation(async (_duid: string, method: string) => {
 			if (method === "app_tidy_up_record_summary") {
