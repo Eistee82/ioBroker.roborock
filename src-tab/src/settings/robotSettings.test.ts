@@ -155,6 +155,12 @@ describe("the state ids the source has to read", () => {
 			`${ROOT}.settings.set_stretch_tag_status`,
 			`${ROOT}.settings.set_gap_deep_clean_status`,
 			`${ROOT}.settings.change_sound_volume`,
+			// Off-peak charging, same shape as the Do Not Disturb window above.
+			`${ROOT}.settings.set_valley_electricity_timer`,
+			`${ROOT}.settings.close_valley_electricity_timer`,
+			`${ROOT}.deviceStatus.valley_electricity_enabled`,
+			`${ROOT}.deviceStatus.valley_electricity_start`,
+			`${ROOT}.deviceStatus.valley_electricity_end`,
 		].sort());
 	});
 });

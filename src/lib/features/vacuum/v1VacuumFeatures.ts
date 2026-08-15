@@ -32,6 +32,7 @@ import type { StatusToggle } from "./v1ProbedCapabilities";
 import { CHANGE_SOUND_VOLUME, GET_SOUND_VOLUME, V1SoundVolumeService } from "./v1SoundVolume";
 import { APP_GET_LOCALE, GET_SERIAL_NUMBER, V1DeviceIdentityService } from "./v1DeviceIdentity";
 import { GET_MULTI_MAPS_LIST, RESTORE_PROBE, V1MapInventoryService } from "./v1MapInventory";
+import { CLOSE_VALLEY_TIMER, GET_VALLEY_TIMER, SET_VALLEY_TIMER, V1OffPeakChargingService } from "./v1OffPeakCharging";
 import {
 	APP_RC_END,
 	APP_RC_MOVE,
@@ -135,6 +136,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected soundVolumeService: V1SoundVolumeService;
 	protected deviceIdentityService: V1DeviceIdentityService;
 	protected mapInventoryService: V1MapInventoryService;
+	protected offPeakService: V1OffPeakChargingService;
 
 	/**
 	 * Asks the robot which commands it knows, once per adapter run.
@@ -191,6 +193,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.soundVolumeService = new V1SoundVolumeService(this.deps, this.duid);
 		this.deviceIdentityService = new V1DeviceIdentityService(this.deps, this.duid);
 		this.mapInventoryService = new V1MapInventoryService(this.deps, this.duid);
+		this.offPeakService = new V1OffPeakChargingService(this.deps, this.duid);
 		// Splitting or merging rooms renumbers the segments, so everything the adapter holds about
 		// them is stale the moment the robot confirms; the service asks for a refresh at that point.
 		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex(), async () => {
@@ -684,6 +687,13 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			await this.deviceIdentityService.applySerialNumberResponse(response);
 		} else if (finalMethod === APP_GET_LOCALE) {
 			await this.deviceIdentityService.applyLocaleResponse(response);
+		} else if (finalMethod === GET_VALLEY_TIMER) {
+			await this.offPeakService.applyResponse(response);
+		} else if (finalMethod === SET_VALLEY_TIMER || finalMethod === CLOSE_VALLEY_TIMER) {
+			// Read back for the same reason the Do Not Disturb window is: the robot may clamp or
+			// reorder what it was sent, `close_*` says nothing about which window it switched off,
+			// and none of it appears in the status packet.
+			void this.readProbedValue(GET_VALLEY_TIMER, [], (r) => this.offPeakService.applyResponse(r));
 		} else if (finalMethod === GET_MULTI_MAPS_LIST && this.hasFeature(Feature.MapInventory)) {
 			// Guarded on the feature because `V1MapService` asks for the same list on its own and
 			// its answer travels the same path; a robot that was never offered the inventory must
@@ -884,6 +894,10 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		if (this.deviceIdentityService.handles(method)) {
 			return this.deviceIdentityService.buildCommandParams(method);
+		}
+
+		if (this.offPeakService.handles(method)) {
+			return this.offPeakService.buildCommandParams(method, params);
 		}
 
 		if (method === "reset_consumable" && id) {
@@ -1724,6 +1738,20 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		await this.probeAndApply(GET_SOUND_VOLUME, [], Feature.SoundVolume, CHANGE_SOUND_VOLUME);
 		await this.probeAndApply(GET_SERIAL_NUMBER, [], Feature.DeviceIdentity, GET_SERIAL_NUMBER);
 		await this.probeAndApply(GET_MULTI_MAPS_LIST, [], Feature.MapInventory, GET_MULTI_MAPS_LIST);
+		await this.probeAndApply(GET_VALLEY_TIMER, [], Feature.OffPeakCharging, SET_VALLEY_TIMER);
+	}
+
+	/**
+	 * Publishes the off-peak charging window, its off button and its read button.
+	 *
+	 * Read once at start-up: the window is in no status packet, and a field left empty would look
+	 * like "no window set" on a robot that has one.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.OffPeakCharging)
+	public async initOffPeakCharging(): Promise<void> {
+		this.offPeakService.registerCommands((name, spec, group) => this.addCommand(name, spec, group));
+		await this.offPeakService.ensureStates();
+		void this.readProbedValue(GET_VALLEY_TIMER, [], (response) => this.offPeakService.applyResponse(response));
 	}
 
 	/**

@@ -154,6 +154,19 @@ const KNOWN_SETTINGS: ReadonlyArray<
 		startStatus: "dnd_start",
 		endStatus: "dnd_end",
 	},
+	// Off-peak charging is the same shape as Do Not Disturb - a window plus a separate off command,
+	// and no writable flag, because the protocol has none. That is checked, not assumed: see
+	// `src/lib/features/vacuum/v1OffPeakCharging.ts`. The rule that its window has to span at least
+	// six hours lives in the adapter alone; a shorter one is refused there and the refusal reaches
+	// this panel through the command feedback, so the rule is stated in one place rather than two.
+	{
+		kind: "timeWindow",
+		command: "set_valley_electricity_timer",
+		offCommand: "close_valley_electricity_timer",
+		enabledStatus: "valley_electricity_enabled",
+		startStatus: "valley_electricity_start",
+		endStatus: "valley_electricity_end",
+	},
 	{ kind: "switch", command: "set_child_lock_status" },
 	// Only exists for a robot that answered `get_collision_avoid_status` when the adapter asked
 	// it at start-up - see `src/lib/features/capabilityProbe.ts`. Nothing has to be done about

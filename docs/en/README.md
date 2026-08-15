@@ -184,6 +184,19 @@ direction only does anything once a floor direction has been set for each room**
 the Roborock app under *Edit Surface*. The switch here turns the behaviour on; it cannot set the
 directions, because the two values that command carries are not established.
 
+**Off-peak charging** is a second window of the day, beside Do Not Disturb and built the same way -
+writing a window switches it on, a separate button switches it off, and there is no flag in between,
+because the protocol has none. What it does is Roborock's own sentence: the robot fully charges only
+inside the window and keeps a minimum charge outside it. It is a delay, not a block - Roborock says
+so too: an unfinished clean and the minimum charge both still draw power at any hour.
+
+One rule is worth knowing before the robot refuses: **the window has to span at least six hours.**
+That is the app's own limit, and the app quietly stretches a shorter window to six. This adapter
+refuses it instead and says so, because stretching means moving one end of a window the user set,
+and unlike the app it has no way of knowing which end was meant. Whether the robot itself insists on
+the six hours is not established; the limit is followed because sending what the app would never
+send is how untested ground gets entered by accident.
+
 The **volume** of the robot's own voice is a slider in the same panel, and a button beside it in
 `commands` makes the robot speak once so the setting can be heard. Worth knowing where the range
 comes from: the Roborock app's slider is narrower than the command allows, and how narrow depends on

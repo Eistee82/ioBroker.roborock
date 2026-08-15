@@ -197,6 +197,20 @@ das geschieht in der Roborock-App unter *Bodenbelag bearbeiten*. Der Schalter hi
 Verhalten ein; die Richtungen kann er nicht setzen, weil die beiden Werte, die jener Befehl trägt,
 nicht belegt sind.
 
+**Laden außerhalb der Spitzenzeiten** ist ein zweites Tagesfenster neben Nicht-Stören und genauso
+gebaut: Ein Fenster zu schreiben schaltet es ein, ein eigener Knopf schaltet es aus, und dazwischen
+gibt es kein Kennzeichen, weil das Protokoll keines hat. Was es bewirkt, sagt Roborock selbst: Der
+Roboter lädt nur innerhalb des Fensters vollständig und hält außerhalb eine Mindestladung. Es ist
+eine Verzögerung, keine Sperre — auch das schreibt Roborock: eine unfertige Reinigung und die
+Mindestladung ziehen zu jeder Stunde Strom.
+
+Eine Regel sollte man kennen, bevor der Roboter ablehnt: **Das Fenster muss mindestens sechs Stunden
+umfassen.** Das ist die Grenze der App, und die App dehnt ein kürzeres Fenster stillschweigend auf
+sechs Stunden. Dieser Adapter lehnt stattdessen ab und sagt es — denn Dehnen heißt, ein Ende eines
+vom Nutzer gesetzten Fensters zu verschieben, und anders als die App weiß der Adapter nicht, welches
+Ende gemeint war. Ob der Roboter selbst auf den sechs Stunden besteht, ist nicht belegt; die Grenze
+wird eingehalten, weil etwas zu senden, was die App nie senden würde, der Weg ins Ungeprüfte ist.
+
 Die **Lautstärke** der Roboterstimme ist im selben Feld ein Schieberegler, und ein Knopf daneben im
 Ordner `commands` lässt den Roboter einmal sprechen, damit sich die Einstellung hören lässt.
 Erwähnenswert ist, woher der Bereich kommt: Der Regler der Roborock-App ist enger als der Befehl
