@@ -29,6 +29,8 @@ export enum Feature {
 	// `get_*`/`set_*` pair around a `status` field. Each is unlocked by its own getter; the feature
 	// is applied when at least one of them survived, and registers exactly those.
 	StatusToggles = "StatusToggles", // Adds the probed on/off settings
+	SoundVolume = "SoundVolume", // Adds the speaking volume and the sound test
+	DeviceIdentity = "DeviceIdentity", // Adds the serial number and the locale block, read-only
 	// Not a probe: the four `app_rc_*` calls are all actions, and a capability probe may only send a
 	// `get_*` (capabilityProbe.ts). The robot reports this one itself, as firmware feature 125 - the
 	// same number the app reads in `isRemoteSupported()`. See lib/features/vacuum/remoteControl.ts.

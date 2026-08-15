@@ -32,7 +32,7 @@ export const SETTINGS_FOLDER = "settings";
 export const STATUS_FOLDER = "deviceStatus";
 
 /** How a setting is operated. */
-export type SettingKind = "switch" | "timeWindow" | "choice";
+export type SettingKind = "switch" | "timeWindow" | "choice" | "number";
 
 interface SettingEntryBase {
 	/** State name, which is also the command name the adapter registered. */
@@ -89,7 +89,25 @@ export interface ChoiceSetting extends SettingEntryBase {
 	options: ChoiceOption[];
 }
 
-export type SettingEntry = SwitchSetting | TimeWindowSetting | ChoiceSetting;
+/**
+ * A setting that is a number over a continuous range, shown as a slider.
+ *
+ * The bounds are **not** listed in this file, for the same reason a choice's positions are not:
+ * they come from `common.min`/`common.max` of the object the adapter published, and the adapter is
+ * the side that proved which range the robot accepts. An object without both bounds gets no
+ * control, because a slider with no ends is a control that can send anything.
+ */
+export interface NumberSetting extends SettingEntryBase {
+	kind: "number";
+	/** Reported value, or null while the robot has not said. */
+	value: number | null;
+	min: number;
+	max: number;
+	/** Unit to show beside the value, or the empty string. */
+	unit: string;
+}
+
+export type SettingEntry = SwitchSetting | TimeWindowSetting | ChoiceSetting | NumberSetting;
 
 /** Everything the settings panel shows for one robot. */
 export interface RobotSettingsModel {
@@ -109,6 +127,9 @@ export interface SettingStateDefinition {
 		desc?: unknown;
 		type?: unknown;
 		states?: unknown;
+		min?: unknown;
+		max?: unknown;
+		unit?: unknown;
 	};
 }
 
@@ -122,6 +143,7 @@ export interface SettingStateDefinition {
 const KNOWN_SETTINGS: ReadonlyArray<
 	| { kind: "switch"; command: string }
 	| { kind: "choice"; command: string }
+	| { kind: "number"; command: string }
 	| { kind: "timeWindow"; command: string; offCommand: string; enabledStatus: string; startStatus: string; endStatus: string }
 > = [
 	{
@@ -150,11 +172,16 @@ const KNOWN_SETTINGS: ReadonlyArray<
 	// Measured on the test device, four of the five are answered with `unknown_method` and never get
 	// an object (`_appanalysis/geraetefaehigkeiten-1786790619395.json`). That is the intended
 	// outcome, not a gap: a robot that cannot do something shows nothing rather than a dead switch.
+	{ kind: "switch", command: "set_dust_collection_switch_status" },
 	{ kind: "switch", command: "set_clean_follow_ground_material_status" },
 	{ kind: "switch", command: "set_optimize_battery_status" },
 	{ kind: "switch", command: "set_right_brush_stretch_status" },
 	{ kind: "switch", command: "set_stretch_tag_status" },
 	{ kind: "switch", command: "set_gap_deep_clean_status" },
+	// The robot's speaking volume. Its bounds travel on the object like everything else here; the
+	// adapter offers the range the app validates before sending, which is wider than the app's own
+	// slider - see `src/lib/features/vacuum/v1SoundVolume.ts`.
+	{ kind: "number", command: "change_sound_volume" },
 ];
 
 /** Builds the object id of the settings folder of one device. */
@@ -301,6 +328,27 @@ export function buildRobotSettings(input: {
 			continue;
 		}
 
+		if (setting.kind === "number") {
+			const min = numericCommon(definition.common?.min);
+			const max = numericCommon(definition.common?.max);
+			// A slider needs both ends. Inventing one here would let the panel send a value the
+			// adapter never said the robot accepts, which is the whole thing this table avoids.
+			if (min === null || max === null || min >= max) continue;
+
+			entries.push({
+				kind: "number",
+				command: setting.command,
+				folder: SETTINGS_FOLDER,
+				label,
+				description,
+				value: numberValue(values[id]),
+				min,
+				max,
+				unit: typeof definition.common?.unit === "string" ? definition.common.unit : "",
+			});
+			continue;
+		}
+
 		// Both halves have to exist: without the off command the switch would be one-way.
 		if (!definitions.has(`${root}.${SETTINGS_FOLDER}.${setting.offCommand}`)) continue;
 
@@ -416,4 +464,32 @@ export function planSwitchWrite(setting: SwitchSetting, next: boolean): SettingW
 export function planChoiceWrite(setting: ChoiceSetting, next: number): SettingWrite | null {
 	if (!setting.options.some(option => option.value === next)) return null;
 	return { folder: setting.folder, command: setting.command, value: next };
+}
+
+/**
+ * The write that moves a number setting to a value.
+ *
+ * Rounds and clamps rather than refusing. A slider produces fractions and, at its very ends,
+ * values a pixel outside the range; refusing those would make the ends of the track unreachable.
+ * Anything that is not a number at all is refused, because that is a caller error rather than a
+ * rounding artefact.
+ *
+ * @param setting The number setting as published.
+ * @param next The value the user picked.
+ * @returns The write to perform, or null when `next` is not a number.
+ */
+export function planNumberWrite(setting: NumberSetting, next: number): SettingWrite | null {
+	if (!Number.isFinite(next)) return null;
+	const clamped = Math.min(setting.max, Math.max(setting.min, Math.round(next)));
+	return { folder: setting.folder, command: setting.command, value: clamped };
+}
+
+/** Reads a bound off `common`, which ioBroker allows to be a number or a numeric string. */
+function numericCommon(value: unknown): number | null {
+	if (typeof value === "number") return Number.isFinite(value) ? value : null;
+	if (typeof value === "string" && value.trim() !== "") {
+		const parsed = Number(value);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	return null;
 }

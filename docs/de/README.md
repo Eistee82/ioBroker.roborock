@@ -180,10 +180,11 @@ unter `deviceStatus.dryer_dry_time` und `deviceStatus.dryer_enabled`. Die 5-Stun
 der App nur auf einer von zwei Trocknungsseiten vor; ob jede Station sie annimmt, ist nicht belegt.
 Lehnt eine sie ab, meldet das die Kommandoprüfung im Log.
 
-Fünf weitere Einstellungen sind einfache Ein/Aus-Schalter, und auch hier entscheidet die Frage an
-den Roboter, welche davon er bekommt: **Entlang der Bodenrichtung reinigen**, **Angepasster
-Akkustand**, **FlexiArm-Design: erweiterte Reinigung** für die Seitenbürste, **FlexiArm-Design:
-erweitertes Wischen** für die Ecken und **FlexiArm-Design: erweiterte Reinigung von Ritzen**. Jeder
+Sechs weitere Einstellungen sind einfache Ein/Aus-Schalter, und auch hier entscheidet die Frage an
+den Roboter, welche davon er bekommt: **Automatische Entleerung**, **Entlang der Bodenrichtung
+reinigen**, **Angepasster Akkustand**, **FlexiArm-Design: erweiterte Reinigung** für die
+Seitenbürste, **FlexiArm-Design: erweitertes Wischen** für die Ecken und **FlexiArm-Design:
+erweiterte Reinigung von Ritzen**. Jeder
 hängt an seinem eigenen Lesebefehl — kennt ein Roboter einen davon nicht, gibt es dafür schlicht
 keinen Schalter; das Testgerät beantwortet gemessen genau einen der fünf. Jede Beschriftung und jede
 Erläuterung ist Roborocks eigener Wortlaut. Keiner der fünf steht im Status, den der Roboter von

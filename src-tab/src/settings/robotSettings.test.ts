@@ -5,12 +5,13 @@ import {
 	isValidTimeOfDay,
 	parseChoiceOptions,
 	planChoiceWrite,
+	planNumberWrite,
 	planSwitchWrite,
 	planTimeWindowWrite,
 	settingsRoot,
 	settingsStateIds,
 } from "./robotSettings";
-import type { ChoiceSetting, SettingStateDefinition, SettingStateValue, SwitchSetting, TimeWindowSetting } from "./robotSettings";
+import type { ChoiceSetting, NumberSetting, SettingStateDefinition, SettingStateValue, SwitchSetting, TimeWindowSetting } from "./robotSettings";
 
 /**
  * Which settings the panel offers, and what a change to one of them writes.
@@ -30,6 +31,10 @@ interface BranchEntry {
 	name?: unknown;
 	desc?: string;
 	states?: unknown;
+	/** Bounds and unit of a number setting; a slider is only drawn when both bounds are there. */
+	min?: unknown;
+	max?: unknown;
+	unit?: unknown;
 }
 
 /** Builds the two maps out of a flat description of the branch. */
@@ -41,7 +46,10 @@ function branch(entries: Record<string, BranchEntry>): {
 	const values: Record<string, SettingStateValue | null> = {};
 	for (const [key, entry] of Object.entries(entries)) {
 		const id = `${ROOT}.${key}`;
-		definitions.push({ id, common: { name: entry.name, desc: entry.desc, states: entry.states } });
+		definitions.push({
+			id,
+			common: { name: entry.name, desc: entry.desc, states: entry.states, min: entry.min, max: entry.max, unit: entry.unit },
+		});
 		if ("val" in entry) values[id] = { val: entry.val };
 	}
 	return { definitions, values };
@@ -139,12 +147,14 @@ describe("the state ids the source has to read", () => {
 			`${ROOT}.settings.set_dnd_timer`,
 			`${ROOT}.settings.set_dust_collection_mode`,
 			`${ROOT}.settings.app_set_dryer_setting`,
-			// The five on/off settings that share one shape on the wire; see `KNOWN_SETTINGS`.
+			// The on/off settings that share one shape on the wire; see `KNOWN_SETTINGS`.
+			`${ROOT}.settings.set_dust_collection_switch_status`,
 			`${ROOT}.settings.set_clean_follow_ground_material_status`,
 			`${ROOT}.settings.set_optimize_battery_status`,
 			`${ROOT}.settings.set_right_brush_stretch_status`,
 			`${ROOT}.settings.set_stretch_tag_status`,
 			`${ROOT}.settings.set_gap_deep_clean_status`,
+			`${ROOT}.settings.change_sound_volume`,
 		].sort());
 	});
 });
@@ -256,6 +266,41 @@ describe("settings that are a choice", () => {
 	it("leaves the position unknown while the robot has not reported one", () => {
 		const entries = { "settings.set_dust_collection_mode": { name: "Empty Mode", states: { 0: "Smart", 4: "Max" } } };
 		expect((build(entries).entries[0] as ChoiceSetting).value).toBeNull();
+	});
+
+	it("draws a slider only for an object that carries both bounds", () => {
+		// A slider without ends is a control that can send anything, which is the one thing this
+		// table exists to prevent. The adapter publishes `min` and `max` on the volume object; an
+		// object without them gets no control at all rather than an invented range.
+		const withBounds = build({
+			"settings.change_sound_volume": { val: 90, name: "Volume", min: 0, max: 100, unit: "%" },
+		}).entries[0] as NumberSetting;
+		expect(withBounds.kind).toBe("number");
+		expect([withBounds.min, withBounds.max, withBounds.value, withBounds.unit]).toEqual([0, 100, 90, "%"]);
+
+		expect(build({ "settings.change_sound_volume": { val: 90, name: "Volume" } }).entries).toEqual([]);
+		expect(build({ "settings.change_sound_volume": { val: 90, name: "Volume", min: 0 } }).entries).toEqual([]);
+		expect(build({ "settings.change_sound_volume": { val: 90, name: "Volume", min: 100, max: 0 } }).entries).toEqual([]);
+	});
+
+	it("leaves the volume unknown while the robot has not reported one", () => {
+		const entry = build({
+			"settings.change_sound_volume": { name: "Volume", min: 0, max: 100 },
+		}).entries[0] as NumberSetting;
+		expect(entry.value).toBeNull();
+	});
+
+	it("rounds and clamps what a slider produces, and refuses what is not a number", () => {
+		// A slider hands over fractions and, at its very ends, values a pixel outside the range;
+		// refusing those would make the ends of the track unreachable.
+		const setting = build({
+			"settings.change_sound_volume": { val: 90, name: "Volume", min: 0, max: 100 },
+		}).entries[0] as NumberSetting;
+
+		expect(planNumberWrite(setting, 71.4)?.value).toBe(71);
+		expect(planNumberWrite(setting, -3)?.value).toBe(0);
+		expect(planNumberWrite(setting, 140)?.value).toBe(100);
+		expect(planNumberWrite(setting, Number.NaN)).toBeNull();
 	});
 
 	it("reads the other two spellings ioBroker allows for states", () => {

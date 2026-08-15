@@ -136,6 +136,7 @@ export interface StatusToggle {
  * | Setting | Wrapper | Where `{status: 1|0}` is built | Read back from |
  * | --- | --- | --- | --- |
  * | Clean along floor direction | A65:230453-230464, builds `{status: a0}` | caller A65:858136-858145, `on ? 1 : 0` | A65:859820-859826, `result.status == 1` |
+ * | Auto emptying | A65:230411-230422, builds `{status: a0}` | **two** callers, A65:854949-854958 and A65:908317-908326, both `on ? 1 : 0` | switch state `dustCollectionSwitch` |
  * | Adjusted battery level | A65:230661-230672, builds `{status: a0}` | caller A65:847220-847229, `on ? 1 : 0` | A65:847519-847524, `result.status == 1` |
  * | Extended cleaning (side brush) | A65:230683-230692, **forwards `a0`** | caller A65:858511-858520, builds `{status: on ? 1 : 0}` | switch state `rightBrushStretch` |
  * | Extended mopping (corners) | A65:230217-230226, **forwards `a0`** | caller A65:858600-858609, builds `{status: on ? 1 : 0}` | switch state `cornerStrechSwitch` |
@@ -173,6 +174,15 @@ export const STATUS_TOGGLES: ReadonlyArray<StatusToggle> = [
 		descKey: "ground_material_clean_direction_detail",
 		descFallback: "The robot cleans along the direction of the floor to minimise scraping against the floor seams. The direction has to be set per room in the Roborock app; this adapter cannot set it.",
 		fundstelle: "A65:230453-230464, A65:858136-858145"
+	},
+	{
+		getter: "get_dust_collection_switch_status",
+		setter: "set_dust_collection_switch_status",
+		labelKey: "dust_collection_title",
+		labelFallback: "Auto Emptying",
+		descKey: "dust_collection_info",
+		descFallback: "The dock empties the dustbin automatically after a clean.",
+		fundstelle: "A65:230411-230422, A65:854949-854958"
 	},
 	{
 		getter: "get_optimize_battery_status",

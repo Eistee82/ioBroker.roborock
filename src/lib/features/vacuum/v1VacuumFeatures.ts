@@ -29,6 +29,8 @@ import {
 	V1ProbedCapabilityService
 } from "./v1ProbedCapabilities";
 import type { StatusToggle } from "./v1ProbedCapabilities";
+import { CHANGE_SOUND_VOLUME, GET_SOUND_VOLUME, V1SoundVolumeService } from "./v1SoundVolume";
+import { APP_GET_LOCALE, GET_SERIAL_NUMBER, V1DeviceIdentityService } from "./v1DeviceIdentity";
 import {
 	APP_RC_END,
 	APP_RC_MOVE,
@@ -129,6 +131,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected mapEditService: MapEditService;
 	protected settingsService: V1RobotSettingsService;
 	protected probedService: V1ProbedCapabilityService;
+	protected soundVolumeService: V1SoundVolumeService;
+	protected deviceIdentityService: V1DeviceIdentityService;
 
 	/**
 	 * Asks the robot which commands it knows, once per adapter run.
@@ -182,6 +186,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.mapService = new V1MapService(this.deps, this.duid);
 		this.settingsService = new V1RobotSettingsService(this.deps, this.duid);
 		this.probedService = new V1ProbedCapabilityService(this.deps, this.duid);
+		this.soundVolumeService = new V1SoundVolumeService(this.deps, this.duid);
+		this.deviceIdentityService = new V1DeviceIdentityService(this.deps, this.duid);
 		// Splitting or merging rooms renumbers the segments, so everything the adapter holds about
 		// them is stale the moment the robot confirms; the service asks for a refresh at that point.
 		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex(), async () => {
@@ -663,6 +669,20 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		await this.noteStatusToggleResult(finalMethod, response);
 
+		if (finalMethod === GET_SOUND_VOLUME) {
+			await this.soundVolumeService.applyVolumeResponse(response);
+		} else if (finalMethod === CHANGE_SOUND_VOLUME) {
+			// Read back for the same reason the two dock settings are: the volume is in no status
+			// packet, so the robot is the only authority on what it really took - and the app's own
+			// slider is narrower than the range this adapter allows, so a refusal is a real
+			// possibility rather than a theoretical one.
+			void this.readProbedValue(GET_SOUND_VOLUME, [], (r) => this.soundVolumeService.applyVolumeResponse(r));
+		} else if (finalMethod === GET_SERIAL_NUMBER) {
+			await this.deviceIdentityService.applySerialNumberResponse(response);
+		} else if (finalMethod === APP_GET_LOCALE) {
+			await this.deviceIdentityService.applyLocaleResponse(response);
+		}
+
 		this.noteRemoteControlResult(finalMethod);
 
 		this.noteCommandForVerification(finalMethod, response, params);
@@ -848,6 +868,14 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		if (this.remoteControl.handles(method)) {
 			return this.remoteControl.buildCommandParams(method, params);
+		}
+
+		if (this.soundVolumeService.handles(method)) {
+			return this.soundVolumeService.buildCommandParams(method, params);
+		}
+
+		if (this.deviceIdentityService.handles(method)) {
+			return this.deviceIdentityService.buildCommandParams(method);
 		}
 
 		if (method === "reset_consumable" && id) {
@@ -1685,6 +1713,35 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		await this.probeAndApply(GET_DRYER_SETTING, [], Feature.DryerSetting, SET_DRYER_SETTING);
 		await this.detectRemoteControl();
 		await this.detectStatusToggles();
+		await this.probeAndApply(GET_SOUND_VOLUME, [], Feature.SoundVolume, CHANGE_SOUND_VOLUME);
+		await this.probeAndApply(GET_SERIAL_NUMBER, [], Feature.DeviceIdentity, GET_SERIAL_NUMBER);
+	}
+
+	/**
+	 * Publishes the speaking volume, its sound test and its read button.
+	 *
+	 * Read once at start-up, because the volume is not in the status packet and a slider that shows
+	 * a default the robot never reported is the same lie as a dead switch.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.SoundVolume)
+	public async initSoundVolume(): Promise<void> {
+		this.soundVolumeService.registerCommands((name, spec, group) => this.addCommand(name, spec, group));
+		void this.readProbedValue(GET_SOUND_VOLUME, [], (response) => this.soundVolumeService.applyVolumeResponse(response));
+	}
+
+	/**
+	 * Publishes what the robot says about itself, read-only.
+	 *
+	 * Unlocked by `get_serial_number` alone although it reads two commands. The alternative would be
+	 * a second probe for `app_get_locale`, which costs a request to learn something the first one
+	 * already indicates - and if the locale read fails anyway, its states simply do not appear,
+	 * which is the same outcome with one request less.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.DeviceIdentity)
+	public async initDeviceIdentity(): Promise<void> {
+		this.deviceIdentityService.registerCommands((name, spec, group) => this.addCommand(name, spec, group));
+		void this.readProbedValue(GET_SERIAL_NUMBER, [], (response) => this.deviceIdentityService.applySerialNumberResponse(response));
+		void this.readProbedValue(APP_GET_LOCALE, [], (response) => this.deviceIdentityService.applyLocaleResponse(response));
 	}
 
 	/**

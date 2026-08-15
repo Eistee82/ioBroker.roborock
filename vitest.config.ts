@@ -16,7 +16,18 @@ export default defineConfig({
 			exclude: ["src/**/*.test.ts", "src/lib/mock/**", "src-tab/**", "**/*.d.ts"],
 			enabled: true,
 			include: ["src/**/*.ts"],
-			reportsDirectory: "./coverage"
+			/**
+			 * Overridable, so two runs in the same checkout do not fight over one directory.
+			 *
+			 * vitest writes its per-worker coverage into `<reportsDirectory>/.tmp` and deletes that
+			 * folder when it finishes. A second run starting meanwhile takes the first one's files
+			 * with it, and the first dies with "Something removed the coverage directory" - a failure
+			 * that says nothing about the code. That happens whenever someone runs a focused suite
+			 * while the full gate is going, which in this project is routine.
+			 *
+			 * The default is unchanged, so CI and a plain `npm test` behave exactly as before.
+			 */
+			reportsDirectory: process.env.VITEST_COVERAGE_DIR || "./coverage"
 		},
 		typecheck: {
 			enabled: true,

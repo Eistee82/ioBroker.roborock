@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { SettingsPanel } from "./SettingsPanel";
-import type { ChoiceSetting, RobotSettingsModel, SwitchSetting, TimeWindowSetting } from "../settings/robotSettings";
+import type { ChoiceSetting, NumberSetting, RobotSettingsModel, SwitchSetting, TimeWindowSetting } from "../settings/robotSettings";
 
 /**
  * The settings panel.
@@ -54,6 +54,21 @@ function choiceSetting(over: Partial<ChoiceSetting> = {}): ChoiceSetting {
 			{ value: 2, label: "Balanced" },
 			{ value: 4, label: "Max" },
 		],
+		...over,
+	};
+}
+
+function numberSetting(over: Partial<NumberSetting> = {}): NumberSetting {
+	return {
+		kind: "number",
+		command: "change_sound_volume",
+		folder: "settings",
+		label: "Volume",
+		description: "",
+		value: 90,
+		min: 0,
+		max: 100,
+		unit: "%",
 		...over,
 	};
 }
@@ -195,4 +210,35 @@ describe("SettingsPanel", () => {
 
 		expect(onWrite).toHaveBeenCalledWith({ folder: "settings", command: "set_dust_collection_mode", value: 4 });
 	});
+
+	it("shows the volume the robot reports, with its unit", () => {
+		renderPanel({ entries: [numberSetting()] });
+		expand();
+		expect(screen.getByText("90%")).toBeTruthy();
+	});
+
+	it("shows no number while the robot has not reported a volume", () => {
+		// Same rule as the empty picker: a position the robot never confirmed is not displayed.
+		renderPanel({ entries: [numberSetting({ value: null })] });
+		expand();
+		expect(screen.getByText("—")).toBeTruthy();
+	});
+
+	it("writes the volume that was committed, once", () => {
+		const { onWrite } = renderPanel({ entries: [numberSetting()] });
+		expand();
+
+		fireEvent.change(screen.getByRole("slider", { name: "Volume" }), { target: { value: 40 } });
+
+		expect(onWrite).toHaveBeenCalledTimes(1);
+		expect(onWrite).toHaveBeenCalledWith({ folder: "settings", command: "change_sound_volume", value: 40 });
+	});
+
+	/*
+	 * Not asserted here, and deliberately: that a *pointer* drag writes only on release. MUI decides
+	 * that, it needs real layout to simulate, and jsdom reports every element as zero-sized - a test
+	 * built on `mousedown`/`mousemove` here would pass or fail for reasons that have nothing to do
+	 * with this component. The handler split is in `NumberRow`: `onChange` keeps the draft,
+	 * `onChangeCommitted` is the only path that calls `onWrite`.
+	 */
 });

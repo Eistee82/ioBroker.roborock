@@ -388,5 +388,6 @@
   "ui_remote_forward_left": "Frente à esquerda",
   "ui_remote_forward_right": "Frente à direita",
   "ui_remote_back_left": "Trás à esquerda",
-  "ui_remote_back_right": "Trás à direita"
+  "ui_remote_back_right": "Trás à direita",
+  "clean_sequence": "Ordem de limpeza guardada no robô (IDs de segmento, vazio significa que o robô decide)"
 }

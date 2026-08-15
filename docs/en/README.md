@@ -170,10 +170,10 @@ duration and the on/off state are additionally readable as `deviceStatus.dryer_d
 screens; whether every dock accepts it is not proven. If one rejects it, the command check says so
 in the log.
 
-Five more settings are plain on/off switches, and which of them a robot gets is again decided by
-asking it: **Clean along floor direction**, **Adjusted Battery Level**, **FlexiArm Design Extended
-Cleaning** for the side brush, **FlexiArm Design Extended Mopping** for the corners, and **FlexiArm
-Design Extended Cleaning for Crevices**. Each is unlocked by its own read command, so a robot that
+Six more settings are plain on/off switches, and which of them a robot gets is again decided by
+asking it: **Auto Emptying**, **Clean along floor direction**, **Adjusted Battery Level**, **FlexiArm
+Design Extended Cleaning** for the side brush, **FlexiArm Design Extended Mopping** for the corners,
+and **FlexiArm Design Extended Cleaning for Crevices**. Each is unlocked by its own read command, so a robot that
 does not know one simply has no switch for it - the test device, measured, answers exactly one of
 the five. Every label and every explanation is Roborock's own wording. None of these five appears in
 the status the robot sends by itself, so the adapter reads each one once at start-up and again after
@@ -183,6 +183,23 @@ One of them is worth a caveat that comes from Roborock, not from this adapter: *
 direction only does anything once a floor direction has been set for each room**, and that is set in
 the Roborock app under *Edit Surface*. The switch here turns the behaviour on; it cannot set the
 directions, because the two values that command carries are not established.
+
+The **volume** of the robot's own voice is a slider in the same panel, and a button beside it in
+`commands` makes the robot speak once so the setting can be heard. Worth knowing where the range
+comes from: the Roborock app's slider is narrower than the command allows, and how narrow depends on
+the model - on the test device it runs 30 to 90 in steps of 5. The adapter offers **0 to 100**
+instead, which is the range the app itself validates before sending on its numeric-input path. The
+model-dependent window is deliberately not copied, because binding a range to a model name is
+exactly the criterion this adapter has been removing. A robot that refuses a value outside its own
+comfort window says so, and the command check reports it.
+
+Under **device info** the robot's **serial number** and its **region block** appear, both read-only
+and both only on a robot that answers for them: the voice package it runs, Roborock's `bom` string,
+the region, the language of its voice and the time zone it keeps its clock in. Two things are
+deliberate. The `bom` is published under that name and not as "firmware version", because the test
+device reports firmware `V02.26.80` **and** `bom: A.03.0309` - two different strings for one robot,
+and nothing establishes which one Roborock means by the version. And the serial number never appears
+in a log line, not even at debug level: it identifies one specific machine.
 
 Under **cleaning info** there is also the robot's **estimate** of the running clean: estimated total
 and remaining area, total and remaining time, progress in percent, the battery the remaining area is

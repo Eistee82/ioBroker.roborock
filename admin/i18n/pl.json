@@ -388,5 +388,6 @@
   "ui_remote_forward_left": "Do przodu w lewo",
   "ui_remote_forward_right": "Do przodu w prawo",
   "ui_remote_back_left": "Do tyłu w lewo",
-  "ui_remote_back_right": "Do tyłu w prawo"
+  "ui_remote_back_right": "Do tyłu w prawo",
+  "clean_sequence": "Kolejność sprzątania zapisana w robocie (identyfikatory segmentów, puste oznacza, że decyduje robot)"
 }

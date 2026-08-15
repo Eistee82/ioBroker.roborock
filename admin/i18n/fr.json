@@ -388,5 +388,6 @@
   "ui_remote_forward_left": "Avancer à gauche",
   "ui_remote_forward_right": "Avancer à droite",
   "ui_remote_back_left": "Reculer à gauche",
-  "ui_remote_back_right": "Reculer à droite"
+  "ui_remote_back_right": "Reculer à droite",
+  "clean_sequence": "Ordre de nettoyage enregistré dans le robot (ID de segments, vide = le robot décide)"
 }

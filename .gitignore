@@ -29,6 +29,9 @@ images/products/
 # Build artifacts
 build/
 coverage/
+# A second, parallel test run can be pointed elsewhere with VITEST_COVERAGE_DIR
+# so it does not delete the first run's files - see vitest.config.ts.
+coverage-*/
 junit.xml
 
 *.tsbuildinfo

@@ -388,5 +388,6 @@
   "ui_remote_forward_left": "左前",
   "ui_remote_forward_right": "右前",
   "ui_remote_back_left": "左后",
-  "ui_remote_back_right": "右后"
+  "ui_remote_back_right": "右后",
+  "clean_sequence": "扫地机保存的清扫顺序（房间 ID，为空表示由扫地机决定）"
 }

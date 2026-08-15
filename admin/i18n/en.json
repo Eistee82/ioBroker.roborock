@@ -388,5 +388,6 @@
   "ui_remote_forward_left": "Forward left",
   "ui_remote_forward_right": "Forward right",
   "ui_remote_back_left": "Back left",
-  "ui_remote_back_right": "Back right"
+  "ui_remote_back_right": "Back right",
+  "clean_sequence": "Cleaning order the robot holds (segment IDs, empty means the robot decides)"
 }

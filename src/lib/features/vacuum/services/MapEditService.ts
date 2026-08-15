@@ -425,6 +425,41 @@ export function parseCleanSequence(raw: unknown): number[] {
 	});
 }
 
+/**
+ * Reads the cleaning order out of a `get_clean_sequence` answer.
+ *
+ * Report section 1.9: the answer is the ordered array of segment ids, the same shape
+ * `set_clean_sequence` takes. The transport hands results back bare or wrapped in `{data}`, and a
+ * single-element array around the payload is the shape several other V1 answers arrive in, so both
+ * are unwrapped before the list is read.
+ *
+ * Anything that is not a clean list of segment ids answers `null` rather than an empty order: an
+ * empty order is a meaningful value here - it means "the robot decides" - and must never be
+ * invented out of an answer that was not understood.
+ * @param raw The robot's answer.
+ * @returns The ordered segment ids, or null when the answer carries none.
+ */
+export function parseCleanSequenceResponse(raw: unknown): number[] | null {
+	let body: unknown = raw;
+	if (body !== null && typeof body === "object" && !Array.isArray(body) && "data" in (body as Record<string, unknown>)) {
+		body = (body as Record<string, unknown>).data;
+	}
+	// `[[16,17]]` and `[16,17]` are both seen from this transport; unwrap only the nesting, never a
+	// list whose own first element is a segment id.
+	if (Array.isArray(body) && body.length === 1 && Array.isArray(body[0])) {
+		body = body[0];
+	}
+	if (!Array.isArray(body)) return null;
+
+	const sequence: number[] = [];
+	for (const entry of body) {
+		const id = typeof entry === "number" ? entry : Number(entry);
+		if (!Number.isInteger(id) || id < 0) return null;
+		sequence.push(id);
+	}
+	return sequence;
+}
+
 // ---------------------------------------------------------------------------
 // No-go zones, no-mop zones and invisible walls - `save_map`
 // (report sections 1.6 and 2.1)
@@ -1345,6 +1380,57 @@ export class MapEditService {
 	}
 
 	/**
+	 * Reads the cleaning order off the robot and publishes it.
+	 *
+	 * **`set_clean_sequence` replaces the whole order**, exactly as `save_map` replaces every zone:
+	 * the parameter is the complete ordered list of segment ids (report section 1.9). An interface
+	 * that let a user set one without showing the current one would therefore overwrite an order
+	 * they never saw. Nothing in the adapter fetched it until now - `get_clean_sequence` appeared
+	 * only in the mock robot - so there was nothing to show.
+	 *
+	 * Published as `mapEdit.cleanSequence`, beside `mapEdit.zones` and for the same reason: it is
+	 * the robot's own state, and the tab needs it before it may offer to change it.
+	 * @returns The order the robot reports, or null when it could not be read.
+	 */
+	public async refreshCleanSequence(): Promise<number[] | null> {
+		let raw: unknown;
+		try {
+			raw = await this.deps.adapter.requestsHandler.sendRequest(this.duid, "get_clean_sequence", []);
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined, `Could not read the cleaning order: ${this.deps.adapter.errorMessage(e)}`, "debug");
+			return null;
+		}
+
+		const sequence = parseCleanSequenceResponse(raw);
+		if (sequence === null) return null;
+
+		await this.publishCleanSequence(sequence);
+		return sequence;
+	}
+
+	/**
+	 * Writes the cleaning order into its state.
+	 * @param sequence The ordered segment ids.
+	 */
+	private async publishCleanSequence(sequence: number[]): Promise<void> {
+		const stateId = `Devices.${this.duid}.mapEdit.cleanSequence`;
+		try {
+			await this.deps.ensureFolder(`Devices.${this.duid}.mapEdit`);
+			await this.deps.ensureState(stateId, {
+				type: "string",
+				role: "json",
+				read: true,
+				write: false,
+				name: this.deps.adapter.translations["clean_sequence"] || "Cleaning order (segment IDs, empty means the robot decides)",
+				def: "[]",
+			});
+			await this.deps.adapter.setState(stateId, JSON.stringify(sequence), true);
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined, `Could not publish ${stateId}: ${this.deps.adapter.errorMessage(e)}`, "warn");
+		}
+	}
+
+	/**
 	 * Reads the complete set of walls and zones off the robot's own map.
 	 *
 	 * The robot is the only source that has all of them: `save_map` has no read counterpart, and the
@@ -1579,13 +1665,54 @@ export class MapEditService {
 			if (confirmed && written) await this.publishOverlays(written);
 		}
 
+		// The robot is the authority on its own order, and it may reject or reorder what was sent.
+		// Reading it back is one cheap request and keeps the published order from drifting.
+		if (confirmed && method === "set_clean_sequence") {
+			await this.refreshCleanSequence();
+		}
+
 		if (confirmed && MapEditService.SEGMENT_EDIT_COMMANDS.includes(method)) {
 			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined, `${method} finished; re-reading the rooms and the map because the segment IDs have changed.`, "info");
+			await this.discardCleanSequenceAfterSegmentEdit(method);
 			try {
 				await this.onSegmentsChanged();
 			} catch (e: unknown) {
 				this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined, `Could not re-read the rooms after ${method}: ${this.deps.adapter.errorMessage(e)}. The room states still carry the old segment IDs until the next update.`, "warn");
 			}
+		}
+	}
+
+	/**
+	 * Clears the cleaning order after a split or a merge.
+	 *
+	 * **A cleaning order made of old segment numbers is worse than none**, and that is the whole
+	 * reason this exists rather than a warning: the order survives the renumbering as a list of ids
+	 * that now mean different rooms, and it looks perfectly valid. The robot would keep cleaning in
+	 * an order the user never chose, in rooms they never named, with nothing on screen to suggest
+	 * anything is wrong.
+	 *
+	 * Clearing is the app's own way of saying "no order": `setCleanSequence([])` is exactly what its
+	 * reset button sends (report section 1.9, module 2657 Z. 797275-797279), and the robot then
+	 * picks its own order again - the state every robot is in before anybody sets one.
+	 *
+	 * Only cleared when there is something to clear, so a robot without an order is not written to
+	 * for nothing. A read that fails leaves the order alone: sending a clear on a guess would throw
+	 * away an order that may well still be valid.
+	 * @param method The segment edit that caused it, for the log.
+	 */
+	private async discardCleanSequenceAfterSegmentEdit(method: string): Promise<void> {
+		try {
+			const current = await this.refreshCleanSequence();
+			if (current === null || current.length === 0) return;
+
+			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined,
+				`Clearing the cleaning order (${current.join(", ")}) after ${method}: it names segment IDs that the renumbering has given to different rooms, and an order of stale IDs looks valid while cleaning the wrong rooms. The robot picks its own order again until a new one is set.`,
+				"info");
+
+			await this.deps.adapter.requestsHandler.sendRequest(this.duid, "set_clean_sequence", await this.wrap("set_clean_sequence", []));
+			await this.publishCleanSequence([]);
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined, `Could not clear the cleaning order after ${method}: ${this.deps.adapter.errorMessage(e)}. It may still name the old segment IDs - check it before the next run.`, "warn");
 		}
 	}
 

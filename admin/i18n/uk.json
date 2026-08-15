@@ -388,5 +388,6 @@
   "ui_remote_forward_left": "Уперед ліворуч",
   "ui_remote_forward_right": "Уперед праворуч",
   "ui_remote_back_left": "Назад ліворуч",
-  "ui_remote_back_right": "Назад праворуч"
+  "ui_remote_back_right": "Назад праворуч",
+  "clean_sequence": "Порядок прибирання в роботі (ID сегментів, порожньо — робот вирішує сам)"
 }

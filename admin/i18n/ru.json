@@ -388,5 +388,6 @@
   "ui_remote_forward_left": "Вперёд влево",
   "ui_remote_forward_right": "Вперёд вправо",
   "ui_remote_back_left": "Назад влево",
-  "ui_remote_back_right": "Назад вправо"
+  "ui_remote_back_right": "Назад вправо",
+  "clean_sequence": "Порядок уборки в роботе (ID сегментов, пусто — робот решает сам)"
 }

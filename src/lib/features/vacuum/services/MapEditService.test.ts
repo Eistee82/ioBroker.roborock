@@ -19,6 +19,7 @@ import {
 	parseCarpetCleanMode,
 	parseCarpetMode,
 	parseCleanSequence,
+	parseCleanSequenceResponse,
 	parseFurnitures,
 	parseMergeSegment,
 	parseRoomMapping,
@@ -991,6 +992,85 @@ describe("MapEditService", () => {
 			expect(() => parseZoneInput("no_go", [0, 0, "x", 500])).toThrow(/not a number/);
 			expect(() => parseZoneInput("wall", [1, 2, 3, 4, 5, 6, 7, 8])).toThrow(/four numbers/);
 			expect(() => parseZoneInput("wall", [5, 5, 5, 5])).toThrow(/two different end points/);
+		});
+
+		it("reads the cleaning order the robot reports, through both answer shapes", () => {
+			// The transport hands V1 answers back bare, wrapped in `{data}`, or nested once. All
+			// three have to yield the same order; the nesting must not swallow a real first element.
+			expect(parseCleanSequenceResponse([16, 17, 18])).toEqual([16, 17, 18]);
+			expect(parseCleanSequenceResponse({ data: [16, 17] })).toEqual([16, 17]);
+			expect(parseCleanSequenceResponse([[16, 17]])).toEqual([16, 17]);
+			expect(parseCleanSequenceResponse([16])).toEqual([16]);
+		});
+
+		it("reads an empty order as an empty order, because that is a real value", () => {
+			// Empty means "the robot picks its own order" - not "unknown".
+			expect(parseCleanSequenceResponse([])).toEqual([]);
+			expect(parseCleanSequenceResponse({ data: [] })).toEqual([]);
+		});
+
+		it("answers null for anything it did not understand, rather than inventing an empty order", () => {
+			// An invented empty order would read as "no order set" and could talk somebody into
+			// overwriting one that exists.
+			expect(parseCleanSequenceResponse(null)).toBeNull();
+			expect(parseCleanSequenceResponse("unknown_method")).toBeNull();
+			expect(parseCleanSequenceResponse({ result: "unknown_method" })).toBeNull();
+			expect(parseCleanSequenceResponse([16, "x"])).toBeNull();
+			expect(parseCleanSequenceResponse([16, -1])).toBeNull();
+		});
+
+		/**
+		 * The cleaning order after a split or a merge.
+		 *
+		 * An order made of old segment numbers is worse than none: the renumbering gives those ids
+		 * to different rooms, so the list stays perfectly well-formed while naming the wrong rooms,
+		 * and nothing on screen suggests anything is wrong. Clearing it puts the robot back into the
+		 * state it is in before anybody sets an order.
+		 */
+		it("clears the cleaning order after a merge, and publishes the empty one", async () => {
+			mockRobot.cleanSequence = [16, 17, 18];
+
+			await vacuum.getCommandParams("set_clean_sequence", [16, 17, 18]);
+			await (vacuum as any).mapEditService.resolveDeferredResult("merge_segment", ["ok"]);
+
+			expect(mockRobot.cleanSequence).toEqual([]);
+			const published = await mockAdapter.getStateAsync(`Devices.${mockRobot.duid}.mapEdit.cleanSequence`);
+			expect(JSON.parse(String(published?.val))).toEqual([]);
+		});
+
+		it("does not write an order the robot does not have", async () => {
+			// A robot without an order must not be sent a clear for nothing.
+			mockRobot.cleanSequence = [];
+			let cleared = 0;
+			const original = mockRobot.handleRequest.bind(mockRobot);
+			mockRobot.handleRequest = (method: string, params: unknown) => {
+				if (method === "set_clean_sequence") cleared++;
+				return original(method, params);
+			};
+
+			await (vacuum as any).mapEditService.resolveDeferredResult("split_segment", ["ok"]);
+			expect(cleared).toBe(0);
+		});
+
+		it("leaves the order alone when it cannot be read", async () => {
+			// Sending a clear on a guess would throw away an order that may well still be valid.
+			mockRobot.cleanSequence = [16, 17];
+			const original = mockRobot.handleRequest.bind(mockRobot);
+			mockRobot.handleRequest = (method: string, params: unknown) => {
+				if (method === "get_clean_sequence") return { result: "unknown_method" };
+				return original(method, params);
+			};
+
+			await (vacuum as any).mapEditService.resolveDeferredResult("merge_segment", ["ok"]);
+			expect(mockRobot.cleanSequence).toEqual([16, 17]);
+		});
+
+		it("re-reads the order the robot really holds after one was set", async () => {
+			// The robot is the authority: it may reject or reorder what was sent.
+			await runCommand("set_clean_sequence", [16, 17]);
+
+			const published = await mockAdapter.getStateAsync(`Devices.${mockRobot.duid}.mapEdit.cleanSequence`);
+			expect(JSON.parse(String(published?.val))).toEqual([16, 17]);
 		});
 
 		it("reads a removal request", () => {

@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { Box, Collapse, IconButton, MenuItem, Stack, Switch, TextField, Tooltip, Typography } from "@mui/material";
+import { Box, Collapse, IconButton, MenuItem, Slider, Stack, Switch, TextField, Tooltip, Typography } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import TuneIcon from "@mui/icons-material/Tune";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { FloatingSurface } from "./FloatingSurface";
-import { composeWindow, isValidTimeOfDay, planChoiceWrite, planSwitchWrite, planTimeWindowWrite } from "../settings/robotSettings";
-import type { ChoiceSetting, RobotSettingsModel, SettingWrite, SwitchSetting, TimeWindowSetting } from "../settings/robotSettings";
+import { composeWindow, isValidTimeOfDay, planChoiceWrite, planNumberWrite, planSwitchWrite, planTimeWindowWrite } from "../settings/robotSettings";
+import type { ChoiceSetting, NumberSetting, RobotSettingsModel, SettingWrite, SwitchSetting, TimeWindowSetting } from "../settings/robotSettings";
 
 interface SettingsPanelProps {
 	/** The model, or null while no device is selected or nothing has been read yet. */
@@ -85,6 +85,68 @@ function ChoiceRow({ setting, onWrite }: { setting: ChoiceSetting; onWrite: (wri
 				))}
 			</TextField>
 		</Stack>
+	);
+}
+
+/**
+ * One setting over a continuous range, shown as a slider.
+ *
+ * The value is sent when the slider is **released**, not while it is dragged. Every write turns
+ * into a request to the robot and a read-back afterwards, so sending on every pixel of a drag would
+ * be dozens of requests for one adjustment - and the robot's answer to the first would arrive while
+ * the finger was still moving. Dragging updates only the local position; `onChangeCommitted` is
+ * what reaches the device.
+ *
+ * While the robot has not reported a value the slider sits at its lower bound and shows no number,
+ * for the same reason a picker stays empty: a position the robot never confirmed is a claim nobody
+ * checked.
+ */
+function NumberRow({ setting, onWrite }: { setting: NumberSetting; onWrite: (write: SettingWrite) => void }): React.JSX.Element {
+	const [draft, setDraft] = useState<number | null>(setting.value);
+
+	// The robot is the authority: whenever it reports a value, the slider follows it.
+	useEffect(() => {
+		setDraft(setting.value);
+	}, [setting.value]);
+
+	const known = draft !== null;
+
+	return (
+		<Box>
+			<Stack
+				direction="row"
+				alignItems="center"
+				spacing={1}
+			>
+				<Tooltip title={setting.description}>
+					<Typography
+						variant="body2"
+						sx={{ flex: 1, overflowWrap: "anywhere" }}
+					>
+						{setting.label}
+					</Typography>
+				</Tooltip>
+				<Typography
+					variant="body2"
+					color="text.secondary"
+				>
+					{known ? `${draft}${setting.unit}` : "—"}
+				</Typography>
+			</Stack>
+			<Slider
+				size="small"
+				min={setting.min}
+				max={setting.max}
+				value={known ? draft : setting.min}
+				aria-label={setting.label}
+				onChange={(_event, next) => setDraft(typeof next === "number" ? next : next[0])}
+				onChangeCommitted={(_event, next) => {
+					const picked = typeof next === "number" ? next : next[0];
+					const write = planNumberWrite(setting, picked);
+					if (write) onWrite(write);
+				}}
+			/>
+		</Box>
 	);
 }
 
@@ -247,6 +309,15 @@ export function SettingsPanel({ settings, onWrite }: SettingsPanelProps): React.
 						if (entry.kind === "choice") {
 							return (
 								<ChoiceRow
+									key={entry.command}
+									setting={entry}
+									onWrite={onWrite}
+								/>
+							);
+						}
+						if (entry.kind === "number") {
+							return (
+								<NumberRow
 									key={entry.command}
 									setting={entry}
 									onWrite={onWrite}
