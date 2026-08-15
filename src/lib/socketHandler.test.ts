@@ -68,7 +68,9 @@ describe("socketHandler", () => {
 		it("forwards the selected room ids to the device handler", async () => {
 			const result = await send(adapter, "app_segment_clean", { duid: "duid1", segments: [16, "17"] });
 
-			expect(result).toEqual({ result: "ok" });
+			// "accepted", not "ok": at this point the robot has not been asked. What became of the
+			// command lands on the command state itself; see `lib/commandFeedback.ts`.
+			expect(result).toEqual({ result: "accepted" });
 			expect(adapter.requestsHandler.command).toHaveBeenCalledWith(expect.anything(), "duid1", "app_segment_clean", [16, 17], "1");
 		});
 
@@ -90,7 +92,7 @@ describe("socketHandler", () => {
 		it("switches to a map flag the adapter published", async () => {
 			const result = await send(adapter, "load_multi_map", { duid: "duid1", mapFlag: 1 });
 
-			expect(result).toEqual({ result: "ok" });
+			expect(result).toEqual({ result: "accepted" });
 			expect(adapter.handleFloorSwitch).toHaveBeenCalledWith("duid1", 1, "Devices.duid1.floors.1.load");
 		});
 
@@ -113,7 +115,9 @@ describe("socketHandler", () => {
 		it("writes a registered command unacknowledged", async () => {
 			const result = await send(adapter, "set_state", { duid: "duid1", folder: "commands", command: "set_custom_mode", value: "102" });
 
-			expect(result).toEqual({ result: "ok" });
+			// Nothing is added to the write: this very state is where the outcome will be marked, so
+			// there is nothing to correlate.
+			expect(result).toEqual({ result: "accepted" });
 			expect(adapter.setState).toHaveBeenCalledWith("Devices.duid1.commands.set_custom_mode", { val: 102, ack: false });
 		});
 
@@ -210,7 +214,7 @@ describe("socketHandler", () => {
 
 			const result = await send(resetAdapter, "reset_consumable", { duid: "duid1", consumable: "reset_main_brush" });
 
-			expect(result).toEqual({ result: "ok" });
+			expect(result).toEqual({ result: "accepted" });
 			expect(resetAdapter.setState).toHaveBeenCalledWith("Devices.duid1.resetConsumables.reset_main_brush", { val: true, ack: false });
 		});
 

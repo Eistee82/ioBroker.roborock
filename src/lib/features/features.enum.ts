@@ -18,6 +18,13 @@ export enum Feature {
 	// Not detected from the status but by asking the robot: `get_collision_avoid_status` either
 	// answers or comes back `unknown_method`. See lib/features/capabilityProbe.ts.
 	CollisionAvoid = "CollisionAvoid", // Adds the obstacle avoidance switch
+	// The same probe, for the four functions of v1ProbedCapabilities.ts. Each is unlocked by its own
+	// getter, never by a model class - the measurement showed the test device answers all four while
+	// the adapter offered them to a different model class only.
+	DustCollectionMode = "DustCollectionMode", // Adds the dock's empty mode selector
+	DryerSetting = "DryerSetting", // Adds the drying selector
+	RobotTimezone = "RobotTimezone", // Adds the robot time zone state and its read button
+	CleanEstimate = "CleanEstimate", // Adds the estimate of the running clean
 
 	// --- Actions primarily creating States (non-command) ---
 	LiveVideo = "LiveVideo", // Creates camera stream URL states

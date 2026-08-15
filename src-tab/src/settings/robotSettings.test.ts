@@ -3,12 +3,14 @@ import {
 	buildRobotSettings,
 	composeWindow,
 	isValidTimeOfDay,
+	parseChoiceOptions,
+	planChoiceWrite,
 	planSwitchWrite,
 	planTimeWindowWrite,
 	settingsRoot,
 	settingsStateIds,
 } from "./robotSettings";
-import type { SettingStateDefinition, SettingStateValue, SwitchSetting, TimeWindowSetting } from "./robotSettings";
+import type { ChoiceSetting, SettingStateDefinition, SettingStateValue, SwitchSetting, TimeWindowSetting } from "./robotSettings";
 
 /**
  * Which settings the panel offers, and what a change to one of them writes.
@@ -22,8 +24,16 @@ import type { SettingStateDefinition, SettingStateValue, SwitchSetting, TimeWind
 
 const ROOT = settingsRoot("roborock.0", "duid1");
 
+/** One state as this file describes it: its value, and the parts of `common` the model reads. */
+interface BranchEntry {
+	val?: unknown;
+	name?: unknown;
+	desc?: string;
+	states?: unknown;
+}
+
 /** Builds the two maps out of a flat description of the branch. */
-function branch(entries: Record<string, { val?: unknown; name?: unknown; desc?: string }>): {
+function branch(entries: Record<string, BranchEntry>): {
 	definitions: SettingStateDefinition[];
 	values: Record<string, SettingStateValue | null>;
 } {
@@ -31,13 +41,13 @@ function branch(entries: Record<string, { val?: unknown; name?: unknown; desc?: 
 	const values: Record<string, SettingStateValue | null> = {};
 	for (const [key, entry] of Object.entries(entries)) {
 		const id = `${ROOT}.${key}`;
-		definitions.push({ id, common: { name: entry.name, desc: entry.desc } });
+		definitions.push({ id, common: { name: entry.name, desc: entry.desc, states: entry.states } });
 		if ("val" in entry) values[id] = { val: entry.val };
 	}
 	return { definitions, values };
 }
 
-function build(entries: Record<string, { val?: unknown; name?: unknown; desc?: string }>, language = "en") {
+function build(entries: Record<string, BranchEntry>, language = "en") {
 	return buildRobotSettings({ root: ROOT, language, ...branch(entries) });
 }
 
@@ -127,6 +137,8 @@ describe("the state ids the source has to read", () => {
 			`${ROOT}.settings.set_child_lock_status`,
 			`${ROOT}.settings.set_collision_avoid_status`,
 			`${ROOT}.settings.set_dnd_timer`,
+			`${ROOT}.settings.set_dust_collection_mode`,
+			`${ROOT}.settings.app_set_dryer_setting`,
 		].sort());
 	});
 });
@@ -202,5 +214,72 @@ describe("what a change writes", () => {
 		const lock = build(FULL).entries[1] as SwitchSetting;
 		expect(planSwitchWrite(lock, false)).toEqual({ folder: "settings", command: "set_child_lock_status", value: false });
 		expect(planSwitchWrite(lock, true)).toEqual({ folder: "settings", command: "set_child_lock_status", value: true });
+	});
+});
+
+/**
+ * The two dock settings that are a choice rather than a switch.
+ *
+ * Their positions come from `common.states` of the published object, which is where the adapter put
+ * the values it proved against the app - see `src/lib/features/vacuum/v1ProbedCapabilities.ts`. The
+ * rule this branch has to keep is that nothing is invented here: no position the object did not
+ * carry, and no control at all for an object that carries none.
+ */
+describe("settings that are a choice", () => {
+	const EMPTY_MODE = {
+		"settings.set_dust_collection_mode": {
+			val: 2,
+			name: "Empty Mode",
+			states: { 0: "Smart", 1: "Light", 2: "Balanced", 4: "Max" },
+		},
+	};
+
+	it("offers exactly the positions the object carries", () => {
+		const entry = build(EMPTY_MODE).entries[0] as ChoiceSetting;
+		expect(entry.kind).toBe("choice");
+		expect(entry.options.map(option => option.value)).toEqual([0, 1, 2, 4]);
+		expect(entry.options.map(option => option.label)).toEqual(["Smart", "Light", "Balanced", "Max"]);
+		expect(entry.value).toBe(2);
+	});
+
+	it("offers no control for an object without usable positions", () => {
+		expect(build({ "settings.set_dust_collection_mode": { val: 0, name: "Empty Mode" } }).entries).toEqual([]);
+		expect(build({ "settings.set_dust_collection_mode": { val: 0, name: "Empty Mode", states: {} } }).entries).toEqual([]);
+	});
+
+	it("leaves the position unknown while the robot has not reported one", () => {
+		const entries = { "settings.set_dust_collection_mode": { name: "Empty Mode", states: { 0: "Smart", 4: "Max" } } };
+		expect((build(entries).entries[0] as ChoiceSetting).value).toBeNull();
+	});
+
+	it("reads the other two spellings ioBroker allows for states", () => {
+		expect(parseChoiceOptions("0:Smart;1:Light")).toEqual([
+			{ value: 0, label: "Smart" },
+			{ value: 1, label: "Light" },
+		]);
+		expect(parseChoiceOptions(["off", "on"])).toEqual([
+			{ value: 0, label: "off" },
+			{ value: 1, label: "on" },
+		]);
+	});
+
+	it("drops a position whose key is not a number, because the key is what gets written", () => {
+		expect(parseChoiceOptions({ smart: "Smart", 4: "Max" })).toEqual([{ value: 4, label: "Max" }]);
+	});
+
+	it("writes the picked position", () => {
+		const entry = build(EMPTY_MODE).entries[0] as ChoiceSetting;
+		expect(planChoiceWrite(entry, 4)).toEqual({ folder: "settings", command: "set_dust_collection_mode", value: 4 });
+	});
+
+	it("refuses a position the object does not offer", () => {
+		// 3 is the value Roborock's debug table names and no picker of the app ever writes.
+		const entry = build(EMPTY_MODE).entries[0] as ChoiceSetting;
+		expect(planChoiceWrite(entry, 3)).toBeNull();
+	});
+
+	it("asks for the drying object as well", () => {
+		expect(settingsStateIds(ROOT)).toContain(`${ROOT}.settings.app_set_dryer_setting`);
+		expect(settingsStateIds(ROOT)).toContain(`${ROOT}.settings.set_dust_collection_mode`);
 	});
 });

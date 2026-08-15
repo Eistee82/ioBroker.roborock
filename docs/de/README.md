@@ -274,6 +274,65 @@ Alle Geräteobjekte liegen unter `roborock.<instanz>.Devices.<duid>`:
 | `deviceInfo`, `networkInfo`, `connection` | Modell- und Firmware-Informationen, Netzwerkdaten und der Zustand der lokalen bzw. Cloud-Kanäle. |
 | `dockingStationStatus` | Stationszustände, nur bei Modellen mit einer Station, die sie meldet. |
 
+#### Was aus einem Befehl geworden ist
+
+Ein Befehlsobjekt zu beschreiben ist eine Bitte, kein Ergebnis. Der Roboter wird erst danach
+gefragt, und er kann ablehnen, gar nicht antworten oder mit `["ok"]` antworten und weitermachen wie
+bisher. Bisher stand das nur im Adapterlog, ein Bedienelement konnte also Erfolg melden für etwas,
+das nie passiert ist.
+
+Der Befehls-State sagt es jetzt selbst. Es gibt keinen zusätzlichen State zum Nachsehen — das
+Zustandsmodell von ioBroker trägt es bereits:
+
+| Der Befehls-State | Was das heißt |
+| --- | --- |
+| `ack: false`, Qualität `0` | Jemand will das. Bekannt ist noch nichts. |
+| `ack: true`, Qualität `0` | Der Roboter hat es übernommen. |
+| Qualität **nicht** `0`, Kommentar gesetzt | Es wurde versucht und hat nicht geklappt. Der Kommentar sagt, warum. |
+
+Die Qualität ist das, was von einem Fehlschlag in der Objektansicht zu sehen ist, und sie benennt
+den Verursacher so genau, wie es ehrlich geht:
+
+| Qualität | Bedeutung hier |
+| --- | --- |
+| `0x42` Gerät nicht verbunden | Weder der lokale noch der Cloud-Kanal stand. Es wurde nichts gesendet — sicher. |
+| `0x11` allgemeines Instanzproblem | Der Adapter konnte die Anfrage nicht einmal bauen. Es wurde nichts gesendet — sicher. |
+| `0x44` Gerät meldet Fehler | Der Roboter hat etwas anderes als `["ok"]` geantwortet. Er hat abgelehnt. |
+| `0x41` allgemeines Geräteproblem | Der Roboter hat quittiert und meldet weiterhin etwas anderes. Der Wert ist nicht wirksam geworden. |
+| `0x01` schlecht | Entweder kam gar nichts zurück, oder unterwegs ist etwas kaputtgegangen. **Ob der Roboter den Befehl ausgeführt hat, ist unbekannt.** |
+
+Die letzte Zeile ist Absicht. Ein Timeout ist keine Ablehnung, und von außen kann dieser Adapter die
+beiden nicht unterscheiden — eine Qualität, die einen Verursacher benennt, würde mehr behaupten,
+als irgendjemand weiß. Welcher der beiden Fälle es war, steht im Kommentar.
+
+Der Kommentar enthält den Grund als JSON, damit er auf zwei Arten zugleich lesbar ist: `m` ist ein
+englischer Satz für alle, die direkt auf den State schauen, `k` und `a` sind ein
+Übersetzungsschlüssel samt Argumenten — daraus baut der Admin-Tab den Text in Ihrer Sprache.
+
+Drei Dinge folgen daraus, die man wissen sollte:
+
+* **Der Wert bleibt stehen.** Ein fehlgeschlagener Befehl lässt den State unbestätigt zurück, mit
+  dem gewünschten Wert darin. Der nächste Versuch räumt die Qualität von selbst ab, und ein
+  Befehl, der funktioniert, räumt sie ebenfalls ab.
+* **Eine Taste springt in jedem Fall zurück.** Eine Sekunde nach dem Druck steht sie wieder auf
+  `false` mit `ack: true` — sie ist ja wirklich nicht mehr gedrückt —, behält aber Qualität und
+  Kommentar des Versuchs.
+* **Raumreinigung, Zonenreinigung und Punktfahrt** schickt der Tab direkt, ohne einen State zu
+  schreiben. Ihr Ergebnis erscheint trotzdem an ihren Befehlsobjekten `commands.app_segment_clean`,
+  `commands.app_zoned_clean` und `commands.app_goto_target`. Der Etagenwechsel meldet an der
+  gedrückten Taste `floors.<karte>.load`.
+
+Eine Einschränkung, weil man leicht darüber stolpert: **`ioBroker.javascript` verwirft
+Zustandsänderungen, deren Qualität nicht `0` ist**, solange ein Trigger nichts anderes sagt. Ein
+Skript, das auf einen Befehls-State hört, wird von einem Fehlschlag also nicht geweckt. Vorher wurde
+dort im Fehlerfall überhaupt nichts geschrieben — es heißt aber: Die Qualität ist ein Merkmal zum
+Nachsehen, keine Benachrichtigung.
+
+Der Admin-Tab zeigt die Fehlschläge an: rot bei einem benannten, gelb bei den beiden, die die Frage
+offenlassen. Ein Befehl, der einfach funktioniert hat, wird nicht gemeldet: Dort wartet nichts auf
+eine Bestätigung, und eine Meldung pro erfolgreichem Befehl würde einen daran gewöhnen, genau den
+Kanal zu übersehen, der gelesen werden muss, wenn etwas kaputtgeht.
+
 Neben den Tank- und Staubbeutelzuständen enthält `dockingStationStatus`, was die Station
 gerade mit dem Mopp macht. Der Roboter meldet das als rohe Zahlen in `deviceStatus`
 (`wash_status`, `wash_phase`, `wash_ready`, `dry_status`, `rdt`); diese sechs States sind

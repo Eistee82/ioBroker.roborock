@@ -46,6 +46,7 @@ import { readFeatureStr } from "../../featureStr";
 import { floorFolderId, groupSelectedRoomsByMapFlag, normalizeMapFlag, sortRoomIds } from "../../map/roomKey";
 import { CommandVerifier, VERIFIABLE_SET_COMMANDS } from "./commandVerification";
 import type { CommandVerificationResult } from "./commandVerification";
+import type { CommandOutcome } from "../../commandFeedback";
 
 // --- Shared Constants ---
 // These are the *selectable* levels: what a model profile offers in its pickers. The markers the
@@ -642,6 +643,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		for (const result of results) {
 			if (result.kind === "confirmed") {
 				await this.acknowledgeCommandState(result);
+				await this.publishVerificationResult(result, "confirmed");
 				continue;
 			}
 
@@ -656,6 +658,39 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 				.join(", ");
 			this.deps.adapter.rLog("Requests", this.duid, "Warn", this.protocolVersion || undefined, undefined,
 				`[Command check] ${result.command} was answered with ["ok"], but ${Math.round(result.elapsedMs / 1000)}s later the robot still reports ${detail}. The requested value is not in effect - the robot may not support it in its current configuration, or it changed the setting again on its own.`, "warn");
+			await this.publishVerificationResult(result, "ineffective", detail);
+		}
+	}
+
+	/**
+	 * Marks the command state with the verdict of the status check.
+	 *
+	 * This is the second stage of one and the same statement: the first said the robot answered
+	 * `["ok"]`, this one says whether that meant anything. Both land on the same state, so no
+	 * correlation is needed - the state the user wrote is the state that now carries the verdict.
+	 *
+	 * `confirmed` deliberately writes as well, and not only to say so: it is what clears a failure
+	 * mark from an earlier attempt. `processStatus` mirrors the status with `setStateChanged`, which
+	 * writes nothing when the value did not change, so a mark left there would otherwise stand for
+	 * ever.
+	 *
+	 * @param result  The verdict.
+	 * @param outcome `confirmed` or `ineffective`.
+	 * @param detail  What the robot reports instead, for the `ineffective` wording.
+	 */
+	private async publishVerificationResult(result: CommandVerificationResult, outcome: CommandOutcome, detail?: string): Promise<void> {
+		// Guarded for the same reason the funnel is: this runs inside `processStatus`, and a status
+		// pass must not be lost because a mark could not be written. The warning is already in the
+		// log by the time we get here, so nothing is silently dropped.
+		try {
+			await this.deps.adapter.markCommandOutcome?.(this.duid, {
+				command: result.command,
+				outcome,
+				folder: this.folderOfCommand(result.command),
+				extraArgs: outcome === "ineffective" ? [`${Math.round(result.elapsedMs / 1000)}s`, detail ?? ""] : undefined
+			});
+		} catch {
+			// Nothing to add: whatever this was about has already been said in the log above.
 		}
 	}
 

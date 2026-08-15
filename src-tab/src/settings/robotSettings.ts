@@ -32,7 +32,7 @@ export const SETTINGS_FOLDER = "settings";
 export const STATUS_FOLDER = "deviceStatus";
 
 /** How a setting is operated. */
-export type SettingKind = "switch" | "timeWindow";
+export type SettingKind = "switch" | "timeWindow" | "choice";
 
 interface SettingEntryBase {
 	/** State name, which is also the command name the adapter registered. */
@@ -66,7 +66,30 @@ export interface TimeWindowSetting extends SettingEntryBase {
 	offCommand: string;
 }
 
-export type SettingEntry = SwitchSetting | TimeWindowSetting;
+/** One position of a {@link ChoiceSetting}. */
+export interface ChoiceOption {
+	/** The number that is written to the robot. */
+	value: number;
+	/** Its label, as the adapter resolved it. */
+	label: string;
+}
+
+/**
+ * A setting with a small, fixed set of positions.
+ *
+ * The options are **not** listed in this file. They come from `common.states` of the object the
+ * adapter published, for the same reason the labels do: the adapter is the side that proved which
+ * values the robot accepts, and a second list here could disagree with it. A robot whose object
+ * carries no usable `states` gets no control, because a picker without positions is a dead control.
+ */
+export interface ChoiceSetting extends SettingEntryBase {
+	kind: "choice";
+	/** Reported position, or null while the robot has not said. */
+	value: number | null;
+	options: ChoiceOption[];
+}
+
+export type SettingEntry = SwitchSetting | TimeWindowSetting | ChoiceSetting;
 
 /** Everything the settings panel shows for one robot. */
 export interface RobotSettingsModel {
@@ -85,6 +108,7 @@ export interface SettingStateDefinition {
 		name?: unknown;
 		desc?: unknown;
 		type?: unknown;
+		states?: unknown;
 	};
 }
 
@@ -97,6 +121,7 @@ export interface SettingStateDefinition {
  */
 const KNOWN_SETTINGS: ReadonlyArray<
 	| { kind: "switch"; command: string }
+	| { kind: "choice"; command: string }
 	| { kind: "timeWindow"; command: string; offCommand: string; enabledStatus: string; startStatus: string; endStatus: string }
 > = [
 	{
@@ -112,6 +137,11 @@ const KNOWN_SETTINGS: ReadonlyArray<
 	// it at start-up - see `src/lib/features/capabilityProbe.ts`. Nothing has to be done about
 	// that here: an absent object means no entry, which is the same rule every setting follows.
 	{ kind: "switch", command: "set_collision_avoid_status" },
+	// The two dock settings, each unlocked by its own getter rather than by a model class - see
+	// `src/lib/features/vacuum/v1ProbedCapabilities.ts` for the proof of their payloads. Their
+	// positions travel in `common.states`, so nothing about them is decided here.
+	{ kind: "choice", command: "set_dust_collection_mode" },
+	{ kind: "choice", command: "app_set_dryer_setting" },
 ];
 
 /** Builds the object id of the settings folder of one device. */
@@ -138,6 +168,48 @@ function booleanValue(state: SettingStateValue | null | undefined): boolean | nu
 	if (state.val === "true" || state.val === "1") return true;
 	if (state.val === "false" || state.val === "0") return false;
 	return null;
+}
+
+/** Reads a state value as a number; the robot reports these as numbers, scripts may write strings. */
+function numberValue(state: SettingStateValue | null | undefined): number | null {
+	if (!state || state.val === null || state.val === undefined || state.val === "") return null;
+	const parsed = Number(state.val);
+	return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Reads the positions out of `common.states`.
+ *
+ * ioBroker allows three spellings and the adapter uses the first, but a state object can be edited
+ * by hand in the admin, so all three are read. Anything whose key is not a number is dropped: this
+ * picker writes the key, and a key that is not a number cannot be what the robot expects.
+ *
+ * @param states Raw `common.states`.
+ */
+export function parseChoiceOptions(states: unknown): ChoiceOption[] {
+	const collected: ChoiceOption[] = [];
+
+	const add = (rawValue: unknown, rawLabel: unknown): void => {
+		const value = Number(rawValue);
+		if (!Number.isFinite(value)) return;
+		const label = typeof rawLabel === "string" && rawLabel.trim() ? rawLabel : String(value);
+		collected.push({ value, label });
+	};
+
+	if (typeof states === "string") {
+		// "0:Smart;1:Light"
+		for (const pair of states.split(";")) {
+			const separator = pair.indexOf(":");
+			if (separator === -1) continue;
+			add(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim());
+		}
+	} else if (Array.isArray(states)) {
+		states.forEach((label, index) => add(index, label));
+	} else if (states && typeof states === "object") {
+		for (const [key, label] of Object.entries(states as Record<string, unknown>)) add(key, label);
+	}
+
+	return collected;
 }
 
 /** Reads a state value as a non-empty string. */
@@ -195,6 +267,23 @@ export function buildRobotSettings(input: {
 				label,
 				description,
 				value: booleanValue(values[id]),
+			});
+			continue;
+		}
+
+		if (setting.kind === "choice") {
+			const options = parseChoiceOptions(definition.common?.states);
+			// A picker with nothing to pick is a dead control, which is the one thing this panel
+			// exists to avoid. An object without usable positions is treated as no object.
+			if (!options.length) continue;
+			entries.push({
+				kind: "choice",
+				command: setting.command,
+				folder: SETTINGS_FOLDER,
+				label,
+				description,
+				value: numberValue(values[id]),
+				options,
 			});
 			continue;
 		}
@@ -297,5 +386,21 @@ export function planTimeWindowWrite(
 
 /** The write that flips a switch setting. */
 export function planSwitchWrite(setting: SwitchSetting, next: boolean): SettingWrite {
+	return { folder: setting.folder, command: setting.command, value: next };
+}
+
+/**
+ * The write that moves a choice setting to one of its positions.
+ *
+ * Refuses a value that is not one of the published positions. The adapter refuses it a second time
+ * and would be the one to catch it anyway - this is the earlier check, and it keeps a stale picker
+ * from sending a number that no longer exists after a firmware change.
+ *
+ * @param setting The choice as published.
+ * @param next The position the user picked.
+ * @returns The write to perform, or null when that position is not offered.
+ */
+export function planChoiceWrite(setting: ChoiceSetting, next: number): SettingWrite | null {
+	if (!setting.options.some(option => option.value === next)) return null;
 	return { folder: setting.folder, command: setting.command, value: next };
 }

@@ -10,6 +10,8 @@ import { commitInfo } from "./lib/commitInfo";
 // --- API & Helper Imports ---
 import { AppPluginManager } from "./lib/AppPluginManager";
 import { B01Variant, getB01VariantFromModel } from "./lib/b01Variant";
+import { OUTCOME_QUALITY, buildCommandComment, classifyRequestFailure, isProblemOutcome, isShutdownFailure, outcomeArgs } from "./lib/commandFeedback";
+import type { CommandOrigin, CommandOutcome, CommandOutcomeReport } from "./lib/commandFeedback";
 import { ConnectionStatusManager } from "./lib/connectionStatus";
 import { DeviceManager } from "./lib/deviceManager";
 import { LOCAL_ONLY_LIMITATIONS, isLocalOnlyMode, parseManualDevices } from "./lib/manualDevices";
@@ -23,6 +25,7 @@ import { MapManager } from "./lib/map/MapManager";
 import { isReportableMapTheme, resolveMapColorScheme } from "./lib/map/mapColorScheme";
 import { NON_ROOM_STATE_NAMES, normalizeRoomId } from "./lib/map/roomKey";
 import { mqtt_api } from "./lib/mqttApi";
+import { isChannelUnavailableError } from "./lib/requestPolicy";
 import { PendingMapEntry, RequestPriority, RoborockRequest, requestsHandler } from "./lib/requestsHandler";
 import { socketHandler } from "./lib/socketHandler";
 import { TranslationManager } from "./lib/translationManager";
@@ -152,6 +155,8 @@ export class Roborock extends utils.Adapter {
 	private commandTimeouts: Map<string, ioBroker.Timeout> = new Map();
 	private activeSceneQueueProcessors: Set<string> = new Set();
 	private ensuredSceneQueueStates: Set<string> = new Set();
+	/** Set by `onUnload`; stops command outcomes from being written during the tear-down. */
+	private shuttingDown = false;
 	private mqttReconnectInterval: ioBroker.Interval | undefined = undefined;
 	public instance: number = 0;
 	private go2rtcProcess: ChildProcess | null = null;
@@ -1560,6 +1565,11 @@ export class Roborock extends utils.Adapter {
 	 */
 	onUnload(callback: () => void) {
 		try {
+			// Nothing is reported about a command any more once the adapter is on its way out: a
+			// request cancelled by the shutdown says nothing about the robot, and the states are
+			// being torn down anyway.
+			this.shuttingDown = true;
+
 			if (this.mqttReconnectInterval) {
 				this.clearInterval(this.mqttReconnectInterval);
 			}
@@ -1625,6 +1635,15 @@ export class Roborock extends utils.Adapter {
 			}
 			return;
 		}
+
+		// An unacknowledged write that already carries a quality is this adapter noting down that a
+		// command failed (see `markCommandOutcome`), not somebody asking for it again. Without this
+		// the note would be read back as a new command and sent forever.
+		//
+		// Nothing genuine can be caught here: the states database resets `q` to 0 on every write that
+		// does not name one (`@iobroker/db-states-redis/.../statesInRedisClient.js:513-517`), so a
+		// command from a script, from vis or from the object view always arrives with `q = 0`.
+		if (state.q) return;
 
 		// Check for root loginCode (roborock.0.loginCode)
 		if (idParts[2] === "loginCode" && state.val && String(state.val).length === 6) {
@@ -1696,7 +1715,9 @@ export class Roborock extends utils.Adapter {
 	 */
 	private async handleCommand(duid: string, folder: string, command: string, state: ioBroker.State, handler: BaseDeviceFeatures, id: string) {
 		if (folder === "resetConsumables" && state.val === true) {
-			await this.requestsHandler.command(handler, duid, "reset_consumable", command, id);
+			// The state id is passed on rather than folder plus command: the reset buttons sit one
+			// level deeper than a command object, so nothing could reconstruct this path.
+			await this.requestsHandler.command(handler, duid, "reset_consumable", command, id, { stateId: id, folder });
 			// Reset button
 			this.setResetTimeout(id);
 		} else if (folder === "programs" && command === "startProgram") {
@@ -1715,7 +1736,7 @@ export class Roborock extends utils.Adapter {
 				if (this.shouldClearSceneQueueForCommand(command, state.val)) {
 					await this.clearSceneQueueForManualCancel(duid, command);
 				}
-				await this.executeCommand(handler, duid, command, state, cmdDef);
+				await this.executeCommand(handler, duid, command, state, cmdDef, { stateId: id, folder });
 			} finally {
 				// Reset boolean command state ONLY if it is defined as boolean - and only when it
 				// really is a button. A switch has to keep the position it was put in; resetting it
@@ -1753,13 +1774,13 @@ export class Roborock extends utils.Adapter {
 		return role === "switch" || role.startsWith("switch.");
 	}
 
-	private async executeCommand(handler: BaseDeviceFeatures, duid: string, command: string, state: ioBroker.State, cmdDef: CommandSpec) {
+	private async executeCommand(handler: BaseDeviceFeatures, duid: string, command: string, state: ioBroker.State, cmdDef: CommandSpec, origin?: CommandOrigin) {
 		const val = state.val;
 
 		// A switch sends both of its positions; see isSwitchCommand for what that repairs.
 		if (cmdDef.type === "boolean" && Roborock.isSwitchCommand(cmdDef)) {
 			this.rLog("Requests", duid, "Info", handler.protocolVersion || undefined, undefined, `[executeCommand] Setting switch ${command} to ${String(val)}`, "info");
-			await this.requestsHandler.command(handler, duid, command, this.isTruthy(val));
+			await this.requestsHandler.command(handler, duid, command, this.isTruthy(val), undefined, origin);
 			return;
 		}
 
@@ -1769,7 +1790,7 @@ export class Roborock extends utils.Adapter {
 		if (isButton) {
 			if (this.isTruthy(val)) {
 				this.rLog("Requests", duid, "Info", handler.protocolVersion || undefined, undefined, `[executeCommand] Triggering button command ${command}`, "info");
-				await this.requestsHandler.command(handler, duid, command);
+				await this.requestsHandler.command(handler, duid, command, undefined, undefined, origin);
 			} else {
 				this.rLog("Requests", duid, "Debug", handler.protocolVersion || undefined, undefined, `[executeCommand] Ignoring button command ${command} (val=${val})`, "debug");
 			}
@@ -1783,9 +1804,9 @@ export class Roborock extends utils.Adapter {
 		// We pass the raw value. getCommandParams in feature handlers will do the packaging (e.g. [val]).
 		if (typeof val === "string") {
 			const parsed = this.tryParseJson(val);
-			await this.requestsHandler.command(handler, duid, command, parsed !== undefined ? parsed : val);
+			await this.requestsHandler.command(handler, duid, command, parsed !== undefined ? parsed : val, undefined, origin);
 		} else {
-			await this.requestsHandler.command(handler, duid, command, val);
+			await this.requestsHandler.command(handler, duid, command, val, undefined, origin);
 		}
 	}
 
@@ -1794,8 +1815,21 @@ export class Roborock extends utils.Adapter {
 	}
 
 	/**
-	 * Sets a timeout to reset a state to false after 1 second.
-	 * Helps avoid race conditions by managing timeouts in a map.
+	 * Lets a button spring back a second after it was pressed, without claiming more than that.
+	 *
+	 * The button **has** to spring back - one that stays down is worse than one that lies - but until
+	 * now it sprang back with `ack: true` and nothing else, out of a `finally` that runs whether the
+	 * command worked or threw. That was the one place in the adapter that asserted a confirmation
+	 * which did not exist.
+	 *
+	 * It now keeps whatever `markCommandOutcome` has meanwhile written onto the same state. `ack: true`
+	 * stays, and rightly so: the value being acknowledged is `false`, and the button really is not
+	 * pressed any more. The quality and the comment carry what became of the press.
+	 *
+	 * A failure that arrives later than this - a request may time out after 30 seconds - is written by
+	 * `markCommandOutcome` afterwards and simply stands on its own.
+	 *
+	 * @param id State id of the button.
 	 */
 	private setResetTimeout(id: string): void {
 		const timeoutKey = `${id}_reset`;
@@ -1803,11 +1837,115 @@ export class Roborock extends utils.Adapter {
 			this.clearTimeout(this.commandTimeouts.get(timeoutKey)!);
 		}
 		const timeout = this.setTimeout(() => {
-			this.rLog("Requests", null, "Debug", undefined, undefined, `[setResetTimeout] Resetting ${id} to false`, "debug");
-			this.setState(id, false, true);
 			this.commandTimeouts.delete(timeoutKey);
+			void this.resetCommandButton(id);
 		}, 1000);
 		if (timeout) this.commandTimeouts.set(timeoutKey, timeout);
+	}
+
+	/**
+	 * Writes a button back to `false`, carrying any failure mark along.
+	 * @param id State id of the button.
+	 */
+	private async resetCommandButton(id: string): Promise<void> {
+		try {
+			this.rLog("Requests", null, "Debug", undefined, undefined, `[setResetTimeout] Resetting ${id} to false`, "debug");
+
+			// Read rather than remember: the mark may have been written by any of the four points the
+			// funnel reports from, on a different turn of the event loop.
+			const current = await this.getStateAsync(id);
+			if (current?.q) {
+				await this.setState(id, { val: false, ack: true, q: current.q, c: typeof current.c === "string" ? current.c : "" });
+				return;
+			}
+
+			await this.setState(id, { val: false, ack: true });
+		} catch (error: unknown) {
+			this.catchError(error, "resetCommandButton");
+		}
+	}
+
+	/**
+	 * Writes down on the command state itself what became of the command.
+	 *
+	 * This is the one place the admin tab, a script and the object tree learn that a command did not
+	 * do what it looked like it did. It never throws: a command must not fail because its outcome
+	 * could not be noted, and it must not fail twice over.
+	 *
+	 * Both directions are written on purpose. A failure leaves a quality and a reason; a success
+	 * **clears** them again, and that has to be said explicitly, because the usual way a command state
+	 * is brought up to date is `setStateChanged` from `processStatus` - which writes nothing at all
+	 * when the value did not change, and would leave yesterday's failure standing for ever.
+	 *
+	 * @param duid   Device the command was sent to.
+	 * @param report What is known about the command; see `commandFeedback.ts`.
+	 */
+	public async markCommandOutcome(duid: string, report: CommandOutcomeReport): Promise<void> {
+		try {
+			// Nothing is noted once the adapter is on its way out: a request cancelled by the shutdown
+			// says nothing about the robot, and the states are being torn down anyway.
+			if (this.shuttingDown) return;
+
+			const stateId = this.commandStateId(duid, report);
+			if (!stateId) return;
+
+			const current = await this.getStateAsync(stateId);
+			// No state, nothing to mark. This is the normal case for a command that has no state of its
+			// own, and writing one here would create an object nobody declared.
+			if (!current) return;
+
+			if (!isProblemOutcome(report.outcome)) {
+				// Nothing to clear is the common case, and reading is cheaper than writing.
+				if (!current.q) return;
+				await this.setState(stateId, { val: current.val, ack: current.ack, q: 0x00, c: "" });
+				return;
+			}
+
+			// Neither the value nor `ack` is touched - the mark only adds why. That keeps both readings
+			// honest at once: a command still waiting stays unacknowledged, which is exactly what
+			// "somebody wanted this and it did not happen" means; a button that has meanwhile sprung
+			// back to `false` keeps its `ack: true`, because `false` really is where it stands.
+			// Claiming `ack: true` for a value the robot never took would be the very lie this change
+			// removes. See `commandFeedback.ts` for the guard in `onStateChange` that keeps this write
+			// from being read back as a new command.
+			await this.setState(stateId, {
+				val: current.val,
+				ack: current.ack,
+				q: OUTCOME_QUALITY[report.outcome],
+				c: buildCommandComment(report.outcome, outcomeArgs(report))
+			});
+		} catch (error: unknown) {
+			this.rLog("Requests", duid, "Debug", undefined, undefined, `[commandOutcome] Could not mark ${report.command}: ${this.errorMessage(error)}`, "debug");
+		}
+	}
+
+	/**
+	 * Finds the state a command outcome belongs on.
+	 *
+	 * A command that arrived through `onStateChange` brings its own state id, which is the only thing
+	 * that works for the two nested cases (`floors.<mapFlag>.load`, `resetConsumables.<part>`).
+	 * A command sent straight down a socket message never touched a state, so its command object is
+	 * looked up in the folder that declares it - `app_goto_target`, `app_zoned_clean` and
+	 * `app_segment_clean` all have one, they are simply not what the tab writes to.
+	 *
+	 * @param duid   Device id.
+	 * @param report The report.
+	 * @returns The state id relative to the namespace, or null when the command has no state.
+	 */
+	private commandStateId(duid: string, report: CommandOutcomeReport): string | null {
+		if (report.stateId) return report.stateId;
+
+		const handler = this.deviceFeatureHandlers.get(duid);
+		if (!handler) return null;
+
+		if (report.folder && handler.getCommandSpec(report.folder, report.command)) {
+			return `Devices.${duid}.${report.folder}.${report.command}`;
+		}
+
+		for (const folder of handler.getCommandFolders()) {
+			if (handler.getCommandSpec(folder, report.command)) return `Devices.${duid}.${folder}.${report.command}`;
+		}
+		return null;
 	}
 
 	/** How long room switch writes are collected before the map is drawn again. */
@@ -2587,6 +2725,19 @@ export class Roborock extends utils.Adapter {
 		const handler = this.deviceFeatureHandlers.get(duid);
 		if (!handler) return;
 
+		// The outcome goes onto the very button that was pressed. That is also the only place it could
+		// go: `floors.<mapFlag>.load` is one level deeper than a command object, so no folder rule
+		// would find it.
+		const reportFloorSwitch = (outcome: CommandOutcome, detail?: string, extraArgs?: string[]): Promise<void> =>
+			this.markCommandOutcome(duid, {
+				command: "load_multi_map",
+				outcome,
+				stateId,
+				folder: "floors",
+				detail,
+				extraArgs
+			});
+
 		try {
 			this.rLog("Requests", duid, "Info", handler.protocolVersion || undefined, undefined, `[floorSwitch] Loading map ${mapFlag}`, "info");
 			// 1. Send load command and wait for robot ACK
@@ -2620,12 +2771,28 @@ export class Roborock extends utils.Adapter {
 				this.rLog("Requests", duid, "Warn", handler.protocolVersion || undefined, undefined, `[floorSwitch] Map index did not sync to ${mapFlag} after retries; proceeding`, "warn");
 			}
 
+			// The floor switch is the one command that was always acknowledged towards the tab before
+			// it had happened, because it takes longer than a socket answer may wait
+			// (`socketHandler.handleLoadMultiMap`). It now says so afterwards on the button itself:
+			// the robot accepted the load, but its own map index never became the requested one -
+			// which is precisely the "acknowledged and yet not in effect" case.
+			await reportFloorSwitch(
+				verified ? "confirmed" : "ineffective",
+				undefined,
+				verified ? undefined : [`${Math.round((Date.now() - startTime) / 1000)}s`, `map ${handler.getCurrentMapIndex()}`]
+			);
+
 			await handler.updateMultiMapsList();
 			await handler.updateRoomMapping();
 			await handler.updateMap();
 
 			this.rLog("Requests", duid, "Info", handler.protocolVersion || undefined, undefined, `[floorSwitch] Completed switch to map ${mapFlag}`, "info");
 		} catch (e: unknown) {
+			const message = this.errorMessage(e);
+			if (!isShutdownFailure(message)) {
+				const outcome = classifyRequestFailure(message, isChannelUnavailableError(e));
+				await reportFloorSwitch(outcome, outcome === "error" ? message : undefined);
+			}
 			this.catchError(e, "floorSwitch", duid);
 		} finally {
 			// Reset button

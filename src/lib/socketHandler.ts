@@ -26,6 +26,18 @@ const SAFE_PATH_SEGMENT = /^[A-Za-z0-9_-]+$/;
  */
 const RESET_CONSUMABLES_FOLDER = "resetConsumables";
 
+/**
+ * What the tab gets back the moment a command has been taken on.
+ *
+ * It deliberately no longer says `ok`. The only thing this side can know at that point is that the
+ * command was *accepted* - the robot has not been asked yet, and on the `set_state` route the write
+ * has not even reached `onStateChange`. What became of it appears afterwards on the command state
+ * itself, as its quality and comment; see `lib/commandFeedback.ts`.
+ */
+interface CommandAcknowledgement {
+	result: "accepted";
+}
+
 export class socketHandler {
 	private adapter: Roborock;
 
@@ -306,7 +318,7 @@ export class socketHandler {
 	/**
 	 * Handles simple commands.
 	 */
-	private async handleSimpleCommand(duid: string, command: string, id?: string | number): Promise<{ result: string }> {
+	private async handleSimpleCommand(duid: string, command: string, id?: string | number): Promise<CommandAcknowledgement> {
 		if (!duid) throw new Error(`Invalid message: '${command}' requires a 'duid'.`);
 		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received '${command}' (ID: ${id})`, "info");
 
@@ -314,13 +326,13 @@ export class socketHandler {
 		if (!handler) throw new Error(`No handler for DUID ${duid}`);
 
 		await this.adapter.requestsHandler.command(handler, duid, command, undefined, id ? String(id) : undefined);
-		return { result: "ok" };
+		return { result: "accepted" };
 	}
 
 	/**
 	 * Handles 'app_goto_target'.
 	 */
-	private async handleGotoTarget(message: { duid: string; points: [number, number] }, id?: string | number): Promise<{ result: string }> {
+	private async handleGotoTarget(message: { duid: string; points: [number, number] }, id?: string | number): Promise<CommandAcknowledgement> {
 		const { duid, points } = message;
 		if (!duid || !points || !Array.isArray(points) || points.length !== 2) {
 			throw new Error("Invalid 'app_goto_target' message: requires 'duid' and 'points' array [x, y]");
@@ -331,14 +343,16 @@ export class socketHandler {
 		const handler = this.adapter.deviceFeatureHandlers.get(duid);
 		if (!handler) throw new Error(`No handler for DUID ${duid}`);
 
+		// No state is written on this route, so the outcome is marked on the `app_goto_target`
+		// command object that the device handler registered anyway. Same for the two below.
 		await this.adapter.requestsHandler.command(handler, duid, "app_goto_target", points, id ? String(id) : undefined);
-		return { result: "ok" };
+		return { result: "accepted" };
 	}
 
 	/**
 	 * Handles 'app_zoned_clean'.
 	 */
-	private async handleZonedClean(message: { duid: string; zones: any[] }, id?: string | number): Promise<{ result: string }> {
+	private async handleZonedClean(message: { duid: string; zones: any[] }, id?: string | number): Promise<CommandAcknowledgement> {
 		const { duid, zones } = message;
 		if (!duid || !zones || !Array.isArray(zones)) {
 			throw new Error("Invalid 'app_zoned_clean' message: requires 'duid' and 'zones' array");
@@ -350,14 +364,14 @@ export class socketHandler {
 		if (!handler) throw new Error(`No handler for DUID ${duid}`);
 
 		await this.adapter.requestsHandler.command(handler, duid, "app_zoned_clean", zones, id ? String(id) : undefined);
-		return { result: "ok" };
+		return { result: "accepted" };
 	}
 
 	/**
 	 * Handles 'app_segment_clean'. The web UI sends the explicitly selected room ids,
 	 * so the device handler does not have to collect the room states itself.
 	 */
-	private async handleSegmentClean(message: { duid: string; segments: unknown }, id?: string | number): Promise<{ result: string }> {
+	private async handleSegmentClean(message: { duid: string; segments: unknown }, id?: string | number): Promise<CommandAcknowledgement> {
 		const duid = message?.duid;
 		const rawSegments = message?.segments;
 		const segments = Array.isArray(rawSegments) ? rawSegments.map((segment) => Number(segment)).filter((segment) => Number.isInteger(segment) && segment > 0) : [];
@@ -372,14 +386,14 @@ export class socketHandler {
 		if (!handler) throw new Error(`No handler for DUID ${duid}`);
 
 		await this.adapter.requestsHandler.command(handler, duid, "app_segment_clean", segments, id ? String(id) : undefined);
-		return { result: "ok" };
+		return { result: "accepted" };
 	}
 
 	/**
 	 * Handles 'load_multi_map' (floor switch). Only map flags the adapter itself published
 	 * on the 'load_multi_map' command object are accepted.
 	 */
-	private async handleLoadMultiMap(message: { duid: string; mapFlag: unknown }): Promise<{ result: string }> {
+	private async handleLoadMultiMap(message: { duid: string; mapFlag: unknown }): Promise<CommandAcknowledgement> {
 		const duid = message?.duid;
 		const mapFlag = Number(message?.mapFlag);
 
@@ -399,17 +413,19 @@ export class socketHandler {
 		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'load_multi_map' for map flag ${mapFlag}`, "info");
 
 		// The floor switch verifies the map index and reloads rooms/map afterwards; that easily
-		// takes more than a minute, so the web UI is acknowledged immediately.
-		void this.adapter.handleFloorSwitch(duid, mapFlag, `Devices.${duid}.floors.${mapFlag}.load`).catch((error: unknown) => this.adapter.catchError(error, "handleLoadMultiMap", duid));
+		// takes more than a minute, so the tab is acknowledged immediately. What actually became of
+		// it appears afterwards on the button itself, as its quality and comment.
+		void this.adapter.handleFloorSwitch(duid, mapFlag, `Devices.${duid}.floors.${mapFlag}.load`)
+			.catch((error: unknown) => this.adapter.catchError(error, "handleLoadMultiMap", duid));
 
-		return { result: "ok" };
+		return { result: "accepted" };
 	}
 
 	/**
 	 * Generic writer for command states. This is a security boundary: the web UI may only write
 	 * to command folders that the device handler registered (same check as main.ts handleCommand).
 	 */
-	private async handleSetState(message: { duid: string; folder: string; command: string; value: unknown }): Promise<{ result: string }> {
+	private async handleSetState(message: { duid: string; folder: string; command: string; value: unknown }): Promise<CommandAcknowledgement> {
 		const duid = message?.duid;
 		const folder = message?.folder;
 		const command = message?.command;
@@ -439,8 +455,10 @@ export class socketHandler {
 		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'set_state' for ${folder}.${command} = ${String(value)}`, "info");
 
 		// Written unacknowledged on purpose: this is the same path a script or the admin UI takes.
+		// Nothing is added to the write - the state that is being written here is the very state the
+		// outcome will be marked on, so there is nothing to correlate.
 		await this.adapter.setState(stateId, { val: value, ack: false });
-		return { result: "ok" };
+		return { result: "accepted" };
 	}
 
 	/**
@@ -448,7 +466,7 @@ export class socketHandler {
 	 * the adapter itself published inside the reset folder as a writable boolean button may be
 	 * triggered, and the value is always `true` - the web UI cannot choose it.
 	 */
-	private async handleResetConsumable(message: { duid: string; consumable: string }): Promise<{ result: string }> {
+	private async handleResetConsumable(message: { duid: string; consumable: string }): Promise<CommandAcknowledgement> {
 		const duid = message?.duid;
 		const consumable = message?.consumable;
 
@@ -474,7 +492,7 @@ export class socketHandler {
 
 		// Unacknowledged on purpose: main.ts turns this write into the reset_consumable request.
 		await this.adapter.setState(stateId, { val: true, ack: false });
-		return { result: "ok" };
+		return { result: "accepted" };
 	}
 
 	/**

@@ -260,6 +260,64 @@ All device objects live below `roborock.<instance>.Devices.<duid>`:
 | `deviceInfo`, `networkInfo`, `connection` | Model and firmware information, network data and the state of the local/cloud channels. |
 | `dockingStationStatus` | Dock states, only on models with a dock that reports them. |
 
+#### What became of a command
+
+Writing a command object is a request, not a result. The robot is asked afterwards, and it may
+refuse, answer nothing at all, or answer `["ok"]` and keep doing what it did before. Until now that
+only showed up in the adapter log, so a control could report success for something that never
+happened.
+
+The command state now says so itself. There is no extra state to look at - ioBroker's own state
+model already carries it:
+
+| The command state | What it means |
+| --- | --- |
+| `ack: false`, quality `0` | Somebody wants this. Nothing is known yet. |
+| `ack: true`, quality `0` | The robot took it. |
+| quality **not** `0`, comment set | It was tried and did not work. The comment says why. |
+
+The quality is what a failure looks like from the object view, and it names the culprit as precisely
+as it honestly can:
+
+| Quality | Meaning here |
+| --- | --- |
+| `0x42` device not connected | Neither the local nor the cloud channel was up. Nothing was sent - certain. |
+| `0x11` general instance problem | The adapter could not even build the request. Nothing was sent - certain. |
+| `0x44` device error report | The robot answered something other than `["ok"]`. It refused. |
+| `0x41` general device problem | The robot acknowledged and keeps reporting something else. The value did not take effect. |
+| `0x01` bad | Either nothing came back at all, or something broke on the way. **Whether the robot carried the command out is unknown.** |
+
+The last row is deliberate. A timeout is not a refusal, and this adapter cannot tell the difference
+from outside - a quality that named a culprit would claim more than anybody knows. Which of the two
+it was is in the comment.
+
+The comment holds the reason as JSON, so it can be read in two ways at once: `m` is an English
+sentence for anyone looking straight at the state, `k` and `a` are a translation key and its
+arguments, which is what the admin tab shows in your own language.
+
+Three things follow that are worth knowing:
+
+* **The value stays where it was.** A failed command leaves the state unacknowledged, holding the
+  value that was asked for. The next attempt clears the quality by itself, and a command that works
+  clears it as well.
+* **A button springs back either way.** One second after a press the button returns to `false` with
+  `ack: true` - it really is not pressed any more - but it keeps the quality and the comment of the
+  attempt.
+* **Room cleaning, zone cleaning and driving to a point** are sent straight from the tab without a
+  state being written. Their outcome still appears on their command objects,
+  `commands.app_segment_clean`, `commands.app_zoned_clean` and `commands.app_goto_target`. The floor
+  switch reports on the button that was pressed, `floors.<map>.load`.
+
+One limitation, because it is easy to trip over: **`ioBroker.javascript` ignores state changes whose
+quality is not `0`** unless a trigger says otherwise. A script listening to a command state is
+therefore not woken by a failure. Nothing was written there before this change either, but it means
+the quality is something to look at, not something that notifies.
+
+The admin tab shows the failures, as a red message for a named one and an amber one for the two that
+leave the question open. A command that simply worked is not announced: nothing there waits for a
+confirmation, and a message per successful command would train you to look away from the very
+channel that has to be read when something breaks.
+
 Besides the tank and dust bag states, `dockingStationStatus` carries what the station is
 doing with the mop. The robot reports that as raw numbers in `deviceStatus`
 (`wash_status`, `wash_phase`, `wash_ready`, `dry_status`, `rdt`), and these six states are

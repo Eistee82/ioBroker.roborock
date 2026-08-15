@@ -36,6 +36,9 @@ import { SettingsPanel } from "./SettingsPanel";
 import { RobotSettingsSource } from "../settings/robotSettingsSource";
 import type { RobotSettingsModel, SettingWrite } from "../settings/robotSettings";
 import type { MapColorScheme } from "../engine/mapOverlayColors";
+import { CommandFeedbackSource } from "../feedback/commandFeedbackSource";
+import { formatFeedbackMessage } from "../feedback/commandFeedback";
+import type { CommandFeedbackSeverity } from "../feedback/commandFeedback";
 
 interface MapViewProps {
 	socket: AdminConnection;
@@ -132,6 +135,14 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [hasLiveTrack, setHasLiveTrack] = useState(false);
 	const [goToActive, setGoToActive] = useState(false);
 	const [error, setError] = useState<string>("");
+	/**
+	 * How the message in the snackbar is meant.
+	 *
+	 * Two kinds arrive there now. Something the tab itself could not do is an error. A command whose
+	 * fate the adapter cannot determine - the robot did not answer - is a warning, because "no
+	 * answer" is not "did not happen", and colouring it red would say more than anybody knows.
+	 */
+	const [noticeSeverity, setNoticeSeverity] = useState<CommandFeedbackSeverity>("error");
 	const [photo, setPhoto] = useState<ObstaclePhotoModel | null>(null);
 	const [history, setHistory] = useState<CleaningHistoryModel | null>(null);
 	const [historyRun, setHistoryRun] = useState<CleaningRunModel | null>(null);
@@ -144,6 +155,13 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const connection = useMemo(() => createEngineConnection(socket), [socket]);
 	const historySourceRef = useRef<CleaningHistorySource | null>(null);
 	const settingsSourceRef = useRef<RobotSettingsSource | null>(null);
+	const feedbackSourceRef = useRef<CommandFeedbackSource | null>(null);
+
+	/** Everything the tab itself could not do; always an error, never an open question. */
+	const showError = useCallback((message: string) => {
+		setNoticeSeverity("error");
+		setError(message);
+	}, []);
 
 	useEffect(() => {
 		const host = hostRef.current;
@@ -183,7 +201,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			onMapPresence: setHasMap,
 			onLiveTrack: setHasLiveTrack,
 			onGoToMode: setGoToActive,
-			onError: setError,
+			onError: showError,
 			onObstaclePhoto: setPhoto
 		});
 		engine.setLanguage(language);
@@ -194,7 +212,9 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			engine.destroy();
 			engineRef.current = null;
 		};
-	}, [connection, instanceId, language]);
+		// `showError` is stable (useCallback with no dependencies), so listing it does not rebuild
+		// the engine - it only keeps the rule honest.
+	}, [connection, instanceId, language, showError]);
 
 	/*
 	 * The history reads its own branch of the object tree and is deliberately not part of the map
@@ -234,7 +254,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	useEffect(() => {
 		const source = new RobotSettingsSource(connection, {
 			onSettings: setRobotSettings,
-			onError: setError
+			onError: showError
 		});
 		settingsSourceRef.current = source;
 
@@ -242,11 +262,38 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			source.destroy();
 			settingsSourceRef.current = null;
 		};
-	}, [connection]);
+	}, [connection, showError]);
 
 	useEffect(() => {
 		settingsSourceRef.current?.setDevice(instanceId, selectedRobot, language);
 	}, [connection, instanceId, selectedRobot, language]);
+
+	/*
+	 * What became of the commands this page sends.
+	 *
+	 * The adapter used to confirm a command the moment it had written the state - before the robot
+	 * had been asked, and with every later failure going to the log only. It now marks the command
+	 * state itself with a quality and a reason, and this is where the page picks that up. Successes
+	 * are deliberately silent; see `feedback/commandFeedback.ts`.
+	 */
+	useEffect(() => {
+		const source = new CommandFeedbackSource(connection, {
+			onNotice: notice => {
+				setNoticeSeverity(notice.severity);
+				setError(formatFeedbackMessage(notice, key => I18n.t(key)));
+			}
+		});
+		feedbackSourceRef.current = source;
+
+		return () => {
+			source.destroy();
+			feedbackSourceRef.current = null;
+		};
+	}, [connection]);
+
+	useEffect(() => {
+		feedbackSourceRef.current?.setDevice(instanceId, selectedRobot);
+	}, [connection, instanceId, selectedRobot]);
 
 	const writeSetting = useCallback((write: SettingWrite) => {
 		void settingsSourceRef.current?.apply(write);
@@ -495,7 +542,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				anchorOrigin={{ vertical: "top", horizontal: "center" }}
 			>
 				<Alert
-					severity="error"
+					severity={noticeSeverity}
 					onClose={() => setError("")}
 					variant="filled"
 				>

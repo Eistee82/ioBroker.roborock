@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { Box, Collapse, IconButton, Stack, Switch, TextField, Tooltip, Typography } from "@mui/material";
+import { Box, Collapse, IconButton, MenuItem, Stack, Switch, TextField, Tooltip, Typography } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import TuneIcon from "@mui/icons-material/Tune";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { FloatingSurface } from "./FloatingSurface";
-import { composeWindow, isValidTimeOfDay, planSwitchWrite, planTimeWindowWrite } from "../settings/robotSettings";
-import type { RobotSettingsModel, SettingWrite, SwitchSetting, TimeWindowSetting } from "../settings/robotSettings";
+import { composeWindow, isValidTimeOfDay, planChoiceWrite, planSwitchWrite, planTimeWindowWrite } from "../settings/robotSettings";
+import type { ChoiceSetting, RobotSettingsModel, SettingWrite, SwitchSetting, TimeWindowSetting } from "../settings/robotSettings";
 
 interface SettingsPanelProps {
 	/** The model, or null while no device is selected or nothing has been read yet. */
@@ -35,6 +35,55 @@ function SwitchRow({ setting, onWrite }: { setting: SwitchSetting; onWrite: (wri
 				inputProps={{ "aria-label": setting.label }}
 				onChange={event => onWrite(planSwitchWrite(setting, event.target.checked))}
 			/>
+		</Stack>
+	);
+}
+
+/**
+ * One setting with a small set of positions, shown as a drop-down.
+ *
+ * The positions are whatever the adapter put in `common.states` - this component neither knows nor
+ * decides which values exist. While the robot has not reported a position the field stays empty
+ * rather than showing the first one, because a picker that displays a value the robot never
+ * confirmed is the same kind of lie as a dead switch.
+ */
+function ChoiceRow({ setting, onWrite }: { setting: ChoiceSetting; onWrite: (write: SettingWrite) => void }): React.JSX.Element {
+	const known = setting.value !== null && setting.options.some(option => option.value === setting.value);
+
+	return (
+		<Stack
+			direction="row"
+			alignItems="center"
+			spacing={1}
+		>
+			<Tooltip title={setting.description}>
+				<Typography
+					variant="body2"
+					sx={{ flex: 1, overflowWrap: "anywhere" }}
+				>
+					{setting.label}
+				</Typography>
+			</Tooltip>
+			<TextField
+				select
+				size="small"
+				value={known ? String(setting.value) : ""}
+				inputProps={{ "aria-label": setting.label }}
+				onChange={event => {
+					const write = planChoiceWrite(setting, Number(event.target.value));
+					if (write) onWrite(write);
+				}}
+				sx={{ minWidth: 132, flexShrink: 0 }}
+			>
+				{setting.options.map(option => (
+					<MenuItem
+						key={option.value}
+						value={String(option.value)}
+					>
+						{option.label}
+					</MenuItem>
+				))}
+			</TextField>
 		</Stack>
 	);
 }
@@ -185,21 +234,33 @@ export function SettingsPanel({ settings, onWrite }: SettingsPanelProps): React.
 					spacing={1.5}
 					sx={{ px: 1.5, pb: 1.5, maxHeight: "44vh", overflowY: "auto" }}
 				>
-					{settings.entries.map(entry =>
-						entry.kind === "switch" ? (
-							<SwitchRow
-								key={entry.command}
-								setting={entry}
-								onWrite={onWrite}
-							/>
-						) : (
+					{settings.entries.map(entry => {
+						if (entry.kind === "switch") {
+							return (
+								<SwitchRow
+									key={entry.command}
+									setting={entry}
+									onWrite={onWrite}
+								/>
+							);
+						}
+						if (entry.kind === "choice") {
+							return (
+								<ChoiceRow
+									key={entry.command}
+									setting={entry}
+									onWrite={onWrite}
+								/>
+							);
+						}
+						return (
 							<TimeWindowRow
 								key={entry.command}
 								setting={entry}
 								onWrite={onWrite}
 							/>
-						),
-					)}
+						);
+					})}
 				</Stack>
 			</Collapse>
 		</FloatingSurface>

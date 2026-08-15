@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { SettingsPanel } from "./SettingsPanel";
-import type { RobotSettingsModel, SwitchSetting, TimeWindowSetting } from "../settings/robotSettings";
+import type { ChoiceSetting, RobotSettingsModel, SwitchSetting, TimeWindowSetting } from "../settings/robotSettings";
 
 /**
  * The settings panel.
@@ -36,6 +36,24 @@ function windowSetting(over: Partial<TimeWindowSetting> = {}): TimeWindowSetting
 		enabled: true,
 		start: "22:00",
 		end: "07:00",
+		...over,
+	};
+}
+
+function choiceSetting(over: Partial<ChoiceSetting> = {}): ChoiceSetting {
+	return {
+		kind: "choice",
+		command: "set_dust_collection_mode",
+		folder: "settings",
+		label: "Empty Mode",
+		description: "",
+		value: 2,
+		options: [
+			{ value: 0, label: "Smart" },
+			{ value: 1, label: "Light" },
+			{ value: 2, label: "Balanced" },
+			{ value: 4, label: "Max" },
+		],
 		...over,
 	};
 }
@@ -152,5 +170,29 @@ describe("SettingsPanel", () => {
 
 		fireEvent.change(screen.getByLabelText(I18n.t("ui_settings_from")), { target: { value: "23:15" } });
 		expect(onWrite).not.toHaveBeenCalled();
+	});
+
+	it("shows a choice with the positions the adapter published", () => {
+		renderPanel({ entries: [choiceSetting()] });
+		expand();
+		expect(screen.getByText("Balanced")).toBeTruthy();
+	});
+
+	it("leaves a choice empty while the robot has not reported its position", () => {
+		renderPanel({ entries: [choiceSetting({ value: null })] });
+		expand();
+		// Nothing invented: no position is displayed, rather than the first one.
+		expect(screen.queryByText("Smart")).toBeNull();
+		expect(screen.queryByText("Balanced")).toBeNull();
+	});
+
+	it("writes the position that was picked", () => {
+		const { onWrite } = renderPanel({ entries: [choiceSetting()] });
+		expand();
+
+		fireEvent.mouseDown(screen.getByRole("combobox", { name: "Empty Mode" }));
+		fireEvent.click(screen.getByRole("option", { name: "Max" }));
+
+		expect(onWrite).toHaveBeenCalledWith({ folder: "settings", command: "set_dust_collection_mode", value: 4 });
 	});
 });

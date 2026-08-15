@@ -1,6 +1,8 @@
 import PQueue from "p-queue";
 import type { Roborock } from "../main";
 import { Q10CommandHandler } from "./b01/q10/Q10CommandHandler";
+import { classifyRequestFailure, classifyRobotAnswer, isShutdownFailure } from "./commandFeedback";
+import type { CommandOrigin, CommandOutcome } from "./commandFeedback";
 import { isConnectivityLikeError } from "./errorUtils";
 import type { BaseDeviceFeatures } from "./features/baseDeviceFeatures";
 import { messageParser } from "./messageParser";
@@ -698,10 +700,83 @@ export class requestsHandler {
 		this.adapter.rLog("MQTT", duid, "->", "B01", 101, `Q10 DP publish: ${JSON.stringify(dps)}`, "debug");
 	}
 
-	async command(_handler: BaseDeviceFeatures, duid: string, method: string, params?: unknown, id?: string) {
+	/**
+	 * Files what became of a command, without ever letting that reporting break the command.
+	 *
+	 * @param duid    Device the command went to.
+	 * @param command Command as it was requested, i.e. what the user pressed.
+	 * @param origin  Where the command came from; names the state it arrived on, when it arrived on one.
+	 * @param outcome What is known about it.
+	 * @param detail  Extra text for the two outcomes whose wording asks for one.
+	 * @returns The write, so a caller that wants deterministic ordering can await it.
+	 */
+	private reportCommandOutcome(
+		duid: string,
+		command: string,
+		origin: CommandOrigin | undefined,
+		outcome: CommandOutcome,
+		detail?: string
+	): Promise<void> {
+		// Swallowing everything is the point. This runs on the failure paths of a command, and a
+		// reporting error that escaped here would replace the real error with itself - the user would
+		// then be told about the messenger instead of about the command.
+		try {
+			const marked = this.adapter.markCommandOutcome?.(duid, {
+				command,
+				outcome,
+				stateId: origin?.stateId ?? null,
+				folder: origin?.folder ?? null,
+				detail
+			});
+			return Promise.resolve(marked).then(() => undefined, () => undefined);
+		} catch {
+			return Promise.resolve();
+		}
+	}
+
+	/**
+	 * The message of an error, without ever failing over an error about the error.
+	 * @param error The caught value.
+	 * @returns Something printable.
+	 */
+	private safeErrorMessage(error: unknown): string {
+		try {
+			return this.adapter.errorMessage(error);
+		} catch {
+			return error instanceof Error ? error.message : String(error);
+		}
+	}
+
+	/**
+	 * Sends one command and writes down what became of it.
+	 *
+	 * The reporting sits here rather than in `socketHandler` because this is the only path all five
+	 * senders share - the admin tab, a script, vis, the object view and the adapter's own scene queue.
+	 * Only the first of those has a socket answer to receive; the command state marked here is what
+	 * all five can read. See `commandFeedback.ts` for the vocabulary and why it says "unknown" where
+	 * the adapter cannot tell.
+	 *
+	 * @param _handler Feature handler of the device.
+	 * @param duid     Device id.
+	 * @param method   Command as it was requested.
+	 * @param params   Parameters, before the handler has had its say.
+	 * @param id       State id of the command, where the handler needs it to read its own object.
+	 * @param origin   Where the command came from; optional, because a command sent straight down a
+	 *                 socket message never touched a state and is looked up by name instead.
+	 */
+	async command(_handler: BaseDeviceFeatures, duid: string, method: string, params?: unknown, id?: string, origin?: CommandOrigin) {
 		const b01Variant = await this.adapter.getB01Variant?.(duid);
 		if (b01Variant === "Q10") {
-			await this.getQ10CommandHandler().handleCommand(_handler, duid, method, params);
+			try {
+				await this.getQ10CommandHandler().handleCommand(_handler, duid, method, params);
+			} catch (error: unknown) {
+				await this.reportCommandOutcome(duid, method, origin, "not_sent", this.safeErrorMessage(error));
+				throw error;
+			}
+			// The Q10 control path publishes data points and is never answered
+			// (`b01/q10/Q10CommandHandler.ts:104-125`). Calling that "accepted" would claim a
+			// confirmation this device never gives.
+			await this.reportCommandOutcome(duid, method, origin, "sent");
 			return;
 		}
 
@@ -709,7 +784,17 @@ export class requestsHandler {
 		let finalMethod = method;
 
 		if (_handler) {
-			const intercepted = await _handler.getCommandParams(method, params, id);
+			let intercepted: unknown;
+			try {
+				intercepted = await _handler.getCommandParams(method, params, id);
+			} catch (error: unknown) {
+				// Nothing has been sent at this point - `buildRequest` refuses a request it cannot
+				// build. On the direct socket routes the throw also reaches the tab as the answer to
+				// its message, so it is re-thrown unchanged.
+				await this.reportCommandOutcome(duid, method, origin, "not_sent", this.safeErrorMessage(error));
+				throw error;
+			}
+
 			if (typeof intercepted === "object" && intercepted !== null && "method" in intercepted && "params" in intercepted) {
 				finalMethod = (intercepted as any).method;
 				finalParams = (intercepted as any).params;
@@ -720,8 +805,20 @@ export class requestsHandler {
 		// Timeout comes from the declarative table in requestPolicy.ts (see METHOD_TIMEOUTS_MS).
 		const requestPromise = this.sendRequest(duid, finalMethod, finalParams, { priority: 1 });
 
+		// The same promise `_processResult` watches, with the failure written down on the way past.
+		// Wrapping it rather than changing `_processResult` keeps that method - which the polling
+		// path uses as well - exactly as it was, logging included.
+		const watchedPromise = requestPromise.catch((error: unknown) => {
+			const message = this.safeErrorMessage(error);
+			if (!isShutdownFailure(message)) {
+				const outcome = classifyRequestFailure(message, isChannelUnavailableError(error));
+				void this.reportCommandOutcome(duid, method, origin, outcome, outcome === "error" ? message : undefined);
+			}
+			throw error;
+		});
+
 		this._processResult(
-			requestPromise,
+			watchedPromise,
 			async (res: any) => {
 				// Command success validation for set_ commands
 				if (method.startsWith("set_")) {
@@ -733,6 +830,11 @@ export class requestsHandler {
 					}
 				}
 
+				// Reported before the handler is told, so a handler that throws cannot swallow the
+				// answer the user is waiting for.
+				const outcome = classifyRobotAnswer(method, res);
+				await this.reportCommandOutcome(duid, method, origin, outcome, outcome === "rejected" ? this.describeAnswer(res) : undefined);
+
 				await _handler?.onCommandResult?.(method, finalMethod, res, finalParams);
 
 				// Status refresh after command is done in resolvePendingRequest.
@@ -740,6 +842,22 @@ export class requestsHandler {
 			`command-${method}-${duid}`,
 			duid
 		);
+	}
+
+	/**
+	 * Turns a robot answer into something a sentence can quote.
+	 * @param result The answer.
+	 * @returns A short text; never throws on a value that cannot be serialised.
+	 */
+	private describeAnswer(result: unknown): string {
+		const data = result && typeof result === "object" && "data" in result
+			? (result as Record<string, unknown>).data
+			: result;
+		try {
+			return JSON.stringify(data) ?? String(data);
+		} catch {
+			return String(data);
+		}
 	}
 
 	public resolvePendingRequest(messageID: number, result: unknown, protocol?: unknown, duid?: string, connectionType: string = "Unknown", version?: string): void {
