@@ -2,6 +2,7 @@
 
 import { Roborock } from "../main"; // Import main adapter type
 import { isReportableMapTheme } from "./map/mapColorScheme";
+import { NON_ROOM_STATE_NAMES, floorFolderId, isRoomSwitchOn, normalizeMapFlag, normalizeRoomId } from "./map/roomKey";
 
 // Robot object definition
 interface Robot {
@@ -51,6 +52,7 @@ export class socketHandler {
 		this.commandHandlers.set("reset_consumable", (msg) => this.handleResetConsumable(msg));
 		this.commandHandlers.set("get_translations", () => this.handleGetTranslations());
 		this.commandHandlers.set("set_map_theme", (msg) => this.handleSetMapTheme(msg));
+		this.commandHandlers.set("set_room_selection", (msg) => this.handleSetRoomSelection(msg));
 	}
 
 	/**
@@ -473,6 +475,84 @@ export class socketHandler {
 		// Unacknowledged on purpose: main.ts turns this write into the reset_consumable request.
 		await this.adapter.setState(stateId, { val: true, ack: false });
 		return { result: "ok" };
+	}
+
+	/**
+	 * Takes over the rooms the user picked in the map.
+	 *
+	 * The picked rooms are not a message the robot ever sees - they are the room switches
+	 * `Devices.<duid>.floors.<mapFlag>.<roomId>` the adapter publishes anyway. Writing them from
+	 * the tab makes the picture and the cleaning agree: the renderer fades everything that is not
+	 * switched on, and `app_segment_clean` without explicit segments cleans exactly the same set.
+	 *
+	 * This is a security boundary of the same kind as `reset_consumable`, and it is drawn tightly
+	 * on purpose - a message that could write arbitrary states would reach far past the tab:
+	 *
+	 * - the floor must be a known one, i.e. a folder the adapter itself created for this device;
+	 * - only ids that already exist as states inside that folder are touched, so an invented room
+	 *   number creates nothing;
+	 * - each state is verified to be a writable boolean the adapter published, and metadata names
+	 *   below the same folder (`load`, `name`, ...) are never candidates;
+	 * - the value is derived from the message, never taken from it, and is always a boolean.
+	 *
+	 * Rooms of other floors are left untouched: room ids repeat across the maps of one robot, so
+	 * clearing them here would silently drop a selection the user made on another floor.
+	 * @param message Payload with `duid`, the `mapFlag` the selection belongs to and the picked `rooms`.
+	 * @returns The floor and the ids that are switched on now.
+	 */
+	private async handleSetRoomSelection(message: { duid: string; mapFlag: unknown; rooms: unknown }): Promise<{ result: string; mapFlag: number; selected: number[] }> {
+		const duid = message?.duid;
+		if (!duid || !SAFE_PATH_SEGMENT.test(String(duid))) {
+			throw new Error("Invalid 'set_room_selection' message: requires a valid 'duid'");
+		}
+		if (!this.adapter.deviceFeatureHandlers.get(duid)) throw new Error(`No handler for DUID ${duid}`);
+
+		const mapFlag = normalizeMapFlag(message?.mapFlag);
+		if (mapFlag === null) {
+			throw new Error("Invalid 'set_room_selection' message: requires a numeric 'mapFlag'");
+		}
+
+		const wanted = new Set<number>();
+		if (Array.isArray(message?.rooms)) {
+			for (const raw of message.rooms) {
+				const roomId = normalizeRoomId(raw);
+				if (roomId !== null) wanted.add(roomId);
+			}
+		}
+
+		const folder = floorFolderId(String(duid), mapFlag);
+		const states = await this.adapter.getStatesAsync(`${this.adapter.namespace}.${folder}.*`);
+		if (!states || Object.keys(states).length === 0) {
+			throw new Error(`Unknown map flag ${mapFlag} for DUID ${duid}`);
+		}
+
+		const selected: number[] = [];
+		let written = 0;
+		for (const [stateId, state] of Object.entries(states)) {
+			const name = stateId.split(".").pop();
+			if (!name || NON_ROOM_STATE_NAMES.has(name)) continue;
+			const roomId = normalizeRoomId(name);
+			if (roomId === null) continue;
+
+			const shouldBeOn = wanted.has(roomId);
+			if (shouldBeOn) selected.push(roomId);
+			if (isRoomSwitchOn(state?.val) === shouldBeOn) continue;
+
+			const object = await this.adapter.getObjectAsync(`${folder}.${roomId}`);
+			const common = (object as { common?: Partial<ioBroker.StateCommon> } | null | undefined)?.common;
+			if (!object || (object as ioBroker.Object).type !== "state" || common?.type !== "boolean" || common?.write !== true) {
+				continue;
+			}
+
+			// Unacknowledged on purpose: this is the path a script or the object tree takes, and it
+			// is what makes the adapter draw the map again.
+			await this.adapter.setState(`${folder}.${roomId}`, { val: shouldBeOn, ack: false });
+			written++;
+		}
+
+		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'set_room_selection' for floor ${mapFlag}: ${selected.length ? selected.join(", ") : "nothing"} (${written} switch(es) changed)`, "info");
+
+		return { result: "ok", mapFlag, selected: selected.sort((left, right) => left - right) };
 	}
 
 	/**

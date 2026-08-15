@@ -210,12 +210,13 @@ Ein Gerät, das keines der rohen Felder meldet, bekommt auch keinen dieser State
 `wash_phase` behält seine eigene Werteliste in `deviceStatus` und bekommt keinen
 abgeleiteten State, weil nur zwei seiner Werte überhaupt irgendwo belegt sind.
 
-Zwei Objekte liegen nicht unter einem Gerät, sondern direkt in der Instanz:
+Drei Objekte liegen nicht unter einem Gerät, sondern direkt in der Instanz:
 
 | State | Inhalt |
 | --- | --- |
 | `loginCode` | Hier wird der sechsstellige Code aus der Login-Mail eingetragen. |
 | `mapTheme` | `light` oder `dark`: das Theme, das der Roborock-Admin-Tab zuletzt gemeldet hat. Wird nur ausgewertet, solange **Kartenfarbschema** auf *Dem Admin-Theme folgen* steht; von Hand geschrieben (aus einem Skript oder einer Visualisierung) wirkt es genauso wie die Meldung des Tabs. |
+| `mapColorScheme` | `light` oder `dark`: der Farbsatz, mit dem die Karte tatsächlich gezeichnet wird — also **Kartenfarbschema**, aufgelöst gegen `mapTheme`. Nur lesbar. Der Admin-Tab liest ihn, um Reinigungszonen und Raummarkierung in den Farben der darunterliegenden Karte zu zeichnen; das ist nicht dieselbe Entscheidung wie das Hell/Dunkel-Theme des Admins. |
 
 Objektnamen und Wertelisten übersetzt der Adapter zur Laufzeit, soweit die
 Roboter-Firmware Übersetzungen liefert. Die folgenden Tabellen zeigen die englischen

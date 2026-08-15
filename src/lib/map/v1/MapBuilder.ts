@@ -7,11 +7,21 @@ import { Roborock } from "../../../main";
 import { assignRoborockRoomColorsToHex } from "../../roomColoring";
 import { ROBOROCK_PALETTE } from "../MapHelper";
 import { LEGACY_COLORS } from "../../../common/mapDrawing/constants";
+import { fadeHexTowards, fadeSurfaceColors, getSelectionFadeFactor } from "../../../common/mapDrawing/roomSelectionFade";
+import { floorFolderId, groupSelectedRoomsByMapFlag, normalizeMapFlag, sortRoomIds } from "../roomKey";
 // Do not use "import { X, type Y }" — ioBroker runtime (esbuild-register) does not support inline type in named imports
 import { CanvasMapRenderer } from "./CanvasMapRenderer";
 
 const OFFSET = 60;
 const MAX_BLOCK_NUM = 32;
+
+/** How far the unselected part of the map is mixed into the ground, and which ground that is. */
+interface SegmentFade {
+	/** Share of the original colour that survives: the app's 0.3 (light) or 0.7 (dark). */
+	keep: number;
+	/** The colour everything fades towards - the map's own floor. */
+	ground: string;
+}
 
 const ORG_COLORS = ROBOROCK_PALETTE;
 
@@ -58,7 +68,7 @@ export class MapBuilder {
 	// Segment color (for drawMapV1 getSegmentColor callback)
 	// --------------------
 
-	private buildGetSegmentColor(mapdata: any, currentlyCleanedBlocks: number[]): (segmentId: number) => string | undefined {
+	private buildGetSegmentColor(mapdata: any, highlightedBlocks: number[], fade: SegmentFade | null): (segmentId: number) => string | undefined {
 		const image = mapdata.IMAGE;
 		if (!image.pixels?.segments?.length) return () => undefined;
 		const segmentsData: Record<number, { count: number }> = {};
@@ -92,14 +102,18 @@ export class MapBuilder {
 				if (this.colors.newmap) {
 					let theme = this.adapter.config.map_theme;
 					if (theme !== "light") theme = "dark";
-					const isCleanMode = currentlyCleanedBlocks?.length > 0;
-					const isCurrentlyCleaned = isCleanMode && currentlyCleanedBlocks?.includes(i);
-					const paletteType: "light_normal" | "light_highlight" | "dark_normal" | "dark_highlight" = isCleanMode
-						? (isCurrentlyCleaned ? (theme === "dark" ? "dark_highlight" : "light_highlight") : theme === "dark" ? "dark_normal" : "light_normal")
+					const isSelectionMode = highlightedBlocks?.length > 0;
+					const isHighlighted = isSelectionMode && highlightedBlocks?.includes(i);
+					const paletteType: "light_normal" | "light_highlight" | "dark_normal" | "dark_highlight" = isSelectionMode
+						? (isHighlighted ? (theme === "dark" ? "dark_highlight" : "light_highlight") : theme === "dark" ? "dark_normal" : "light_normal")
 						: theme === "dark" ? "dark_highlight" : "light_highlight";
-					segColorHex[i] = coloring.getColor(i, paletteType);
+					const hex = coloring.getColor(i, paletteType);
+					// The second half of the app's effect: the muted palette alone is not what makes
+					// the unselected rooms recede - they also fade into the ground (see
+					// src/common/mapDrawing/roomSelectionFade.ts).
+					segColorHex[i] = fade && !isHighlighted ? fadeHexTowards(hex, fade.ground, fade.keep) : hex;
 				} else {
-					if (currentlyCleanedBlocks?.includes(i)) {
+					if (highlightedBlocks?.includes(i)) {
 						segColorHex[i] = i >= 0 && i < ORG_COLORS.length ? (ORG_COLORS[i] || "#CCCCCC") : "#CCCCCC";
 					}
 				}
@@ -184,7 +198,16 @@ export class MapBuilder {
 		ctx.imageSmoothingEnabled = false;
 		if ("antialias" in ctx) ctx.antialias = "none";
 
-		const getSegmentColor = this.buildGetSegmentColor(mapdata, mapdata.CURRENTLY_CLEANED_BLOCKS || []);
+		const scheme = this.resolveColorScheme();
+		const surfaceColors = getMapSurfaceColors(scheme);
+		const highlightedBlocks = await this.resolveHighlightedBlocks(mapdata, params.duid);
+		// No selection means no fade at all: the picture stays byte for byte the one the adapter
+		// draws today. The app does the same - its opacity stays at the 1 it was initialised with.
+		const fade: SegmentFade | null = highlightedBlocks.length
+			? { keep: getSelectionFadeFactor(scheme), ground: surfaceColors.floor }
+			: null;
+
+		const getSegmentColor = this.buildGetSegmentColor(mapdata, highlightedBlocks, fade);
 		const roomNames = await this.buildRoomNamesMap(mappedRooms, params.duid);
 
 		const renderer = new CanvasMapRenderer({
@@ -203,7 +226,11 @@ export class MapBuilder {
 			dimensionsAreScaled: false,
 			getSegmentColor,
 			roomNames,
-			colors: getMapSurfaceColors(this.resolveColorScheme()),
+			// Walls fade with the rooms, the path does not - fadeSurfaceColors draws that line.
+			// Everything drawn after the segments (carpet, path, zones, obstacle icons, robot,
+			// charger, labels) keeps its own colours and therefore stays fully opaque, which is the
+			// layer separation the app gets for free by dimming only its background image.
+			colors: fade ? fadeSurfaceColors(surfaceColors, fade.keep) : surfaceColors,
 		});
 		const t1 = Date.now();
 
@@ -220,6 +247,43 @@ export class MapBuilder {
 		}
 
 		return [cleanMapUncroppedBase64, fullMapUncroppedBase64, croppedMapBase64];
+	}
+
+	/**
+	 * The segments that must keep their full colour while everything else fades.
+	 *
+	 * Two sources, exactly as in the app, which uses one and the same presentation for both
+	 * (`_appanalysis/17-raumauswahl.md` section 2, `hasSelBlock` at A65:492632-492700):
+	 *
+	 * 1. **A run in progress** - the robot names the segments it is cleaning, and they win. While
+	 *    the robot is working, what it is working on is what the picture has to show; a selection
+	 *    left over in the room switches must not overpaint that.
+	 * 2. **The room switches** `Devices.<duid>.floors.<mapFlag>.<roomId>` - the same states
+	 *    `app_segment_clean` reads to decide what to clean, so the map shows what a start would do.
+	 *
+	 * Only the switches of the floor this very map belongs to are read. Room ids repeat across the
+	 * maps of one robot, so the switches of another floor would highlight arbitrary rooms here (see
+	 * src/lib/map/roomKey.ts). A map that does not know its floor therefore gets no selection at
+	 * all rather than a guessed one - and history maps, which are drawn without a duid, never do.
+	 * @param mapdata Parsed V1 map; `CURRENTLY_CLEANED_BLOCKS` and `mapFlag` are read from it.
+	 * @param duid Device the map belongs to, when known.
+	 * @returns Segment ids to keep vivid; empty when nothing is selected or running.
+	 */
+	private async resolveHighlightedBlocks(mapdata: any, duid?: string): Promise<number[]> {
+		const cleaned = mapdata?.CURRENTLY_CLEANED_BLOCKS;
+		if (Array.isArray(cleaned) && cleaned.length) return cleaned;
+
+		const mapFlag = normalizeMapFlag(mapdata?.mapFlag);
+		if (!duid || mapFlag === null || typeof this.adapter?.getStatesAsync !== "function") return [];
+
+		try {
+			const states = await this.adapter.getStatesAsync(`${this.adapter.namespace}.${floorFolderId(duid, mapFlag)}.*`);
+			return sortRoomIds(groupSelectedRoomsByMapFlag(states).get(mapFlag));
+		} catch (e: unknown) {
+			// A map that cannot be drawn is worse than a map drawn without the highlight.
+			this.adapter.rLog("MapManager", duid, "Warn", "Map", undefined, `Could not read the room selection for the highlight: ${this.adapter.errorMessage(e)}`, "debug");
+			return [];
+		}
 	}
 
 	/**

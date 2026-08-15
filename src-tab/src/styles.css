@@ -55,32 +55,23 @@ body,
 /* --- Interactive SVG elements ------------------------------------------------------- */
 
 /*
- * The zone has to read as a zone at a glance, against a map that is itself blue and busy.
- * It used to be a 28% wash with a 1.5px edge, which on a light floor was barely a tint.
- */
-/*
  * Cleaning zone, in the app's own colours.
  *
- * The app keeps two sets and picks by the ground it draws on (control plugin A65:303524 for
- * light, A65:313366 for dark):
+ * Not a colour in sight below: every one of them comes from `engine/mapOverlayColors.ts`, which
+ * holds the app's two sets and the reasoning, and which `MapEngine` publishes onto the map
+ * surface as custom properties whenever the map changes between light and dark. The zone lies on
+ * the map, so it follows the **map's** scheme (adapter state `mapColorScheme`), not the admin
+ * theme - the two are allowed to disagree.
  *
- *     light   cleanRectColor #007AFF33   cleanRectBorderColor #007AFF
- *     dark    cleanRectColor #FFFFFF4D   cleanRectBorderColor #ffffff
+ * The values used to sit here as literals for the dark set alone, which was right while the map
+ * was always dark and white-on-white as soon as it was not.
  *
- * The adapter paints its map floor `#23465e` whatever the admin theme is, so the dark set is
- * the right one here regardless of light or dark admin.
- *
- * Worth noting what the app does NOT do: it uses *less* opacity than the turquoise wash that
- * sat here before (30% against 55%) and still reads better, because the colour is white against
- * a dark blue floor rather than a tint of the floor's own family. Piling on opacity had only
- * made it milky.
- *
- * The edge is NOT set here: `MapEngine` writes `stroke-width` as an inline style, divided by the
- * zoom, and an inline style beats this rule. Its weight lives in `ZONE_STROKE_BASE`.
+ * The edge *weight* is still not set here: `MapEngine` writes `stroke-width` as an inline style,
+ * divided by the zoom, and an inline style beats this rule. It lives in `ZONE_STROKE_BASE`.
  */
 .zone-rect {
-	fill: rgba(255, 255, 255, 0.30);
-	stroke: #ffffff;
+	fill: var(--rr-zone-fill);
+	stroke: var(--rr-zone-stroke);
 	cursor: move;
 }
 
@@ -105,19 +96,37 @@ body,
 }
 
 .zone-handle-disc {
-	fill: rgba(0, 0, 0, 0.55);
-	stroke: #ffffff;
+	fill: var(--rr-zone-handle-backing);
+	stroke: var(--rr-zone-handle-ink);
 	stroke-width: 1;
 }
 
 .zone-handle-glyph {
-	fill: #ffffff;
+	fill: var(--rr-zone-handle-ink);
 	/* The hit circle underneath is the target; the glyph must not shrink it to its own outline. */
 	pointer-events: none;
 }
 
 .zone-handle-delete {
 	cursor: pointer;
+}
+
+/*
+ * Delete is the one handle that does not share the neutral disc: the app draws it red, and it is
+ * the only one of the three whose gesture cannot be taken back by repeating it.
+ *
+ * A rule beside the shared one rather than a recolouring of it, and without a class of its own -
+ * the handle group already carries its kind (`zone-handle-delete`), so the two colours are simply
+ * scoped to it. The red is the app's own no-go-zone edge, per map scheme; see
+ * `engine/mapOverlayColors.ts`.
+ */
+.zone-handle-delete .zone-handle-disc {
+	fill: var(--rr-zone-delete-backing);
+	stroke: var(--rr-zone-delete-ink);
+}
+
+.zone-handle-delete .zone-handle-glyph {
+	fill: var(--rr-zone-delete-ink);
 }
 
 .zone-handle-scale {
@@ -130,14 +139,13 @@ body,
 
 /*
  * The dashed frame the handles sit on the corners of, and the leash the move handle hangs on.
- * Both are the app's (`focusViewColor`, a 20 % wash of the opposite of the ground, and a 2 px
- * line in the same colour), and both are decoration: they must never swallow a press meant for
- * the zone below them.
+ * Both are the app's `focusViewColor` - a 20 % wash of the opposite of the ground, per map scheme
+ * - and both are decoration: they must never swallow a press meant for the zone below them.
  */
 .zone-focus-frame,
 .zone-leash {
 	fill: none;
-	stroke: rgba(255, 255, 255, 0.45);
+	stroke: var(--rr-zone-focus);
 	pointer-events: none;
 }
 
@@ -156,6 +164,24 @@ body,
 
 .room-label.selectable {
 	cursor: pointer;
+}
+
+/*
+ * The pill behind the name of a picked room.
+ *
+ * Ours, not the app's: the app marks a room by laying a transparent PNG of that one room over the
+ * map, which needs the room geometry the tab has no access to (report §7). So the name carries
+ * the whole signal, and the pill follows the map's scheme like everything else on the map -
+ * see `engine/mapOverlayColors.ts` for the colours and the rule behind them.
+ *
+ * `SVGMapRenderer` writes only geometry and `display` here; it used to write the two colours as
+ * inline styles as well, where no stylesheet could reach them.
+ */
+.room-label-selection {
+	fill: var(--rr-room-selection-fill);
+	stroke: var(--rr-room-selection-ink);
+	stroke-width: 2.5px;
+	vector-effect: non-scaling-stroke;
 }
 
 .go-to-pin {

@@ -15,6 +15,8 @@ import type {
 	PathLayer,
 } from "@adapter/common/mapDrawing/types";
 import { VISUAL_BLOCK_SIZE } from "@adapter/common/mapDrawing/constants";
+import { getMapOverlayColors } from "./mapOverlayColors";
+import type { MapOverlayColors } from "./mapOverlayColors";
 import {
 	LIVE_ROBOT_COLORS,
 	LIVE_ROBOT_SIZE,
@@ -159,6 +161,18 @@ export interface SVGMapRendererOptions {
 	onRoomLabelClick?: (segmentId: number, event: MouseEvent) => void;
 	/** Segment ids that are currently selected; drawn with a highlight box. */
 	selectedSegmentIds?: ReadonlySet<number>;
+	/**
+	 * Colours of everything drawn over the map bitmap, for the scheme the bitmap itself uses.
+	 *
+	 * Only the room name needs them here - the pill behind it is styled from `styles.css` through
+	 * the same custom properties, but the name's own colour cannot be: the caller writes a fill
+	 * per label (`textFill`) as an inline style, and an inline style beats every rule. So the
+	 * renderer picks between the two, from the same source the stylesheet reads.
+	 *
+	 * Optional so a caller that draws no room labels keeps working; the light set is the fallback,
+	 * exactly as in {@link getMapOverlayColors}.
+	 */
+	overlayColors?: MapOverlayColors;
 	/** Image hrefs for robot, charger, go-to pin. */
 	robotImageHref: string;
 	chargerImageHref: string;
@@ -427,6 +441,7 @@ export class SVGMapRenderer implements IMapRenderer {
 		if (!labels.length) return;
 		const onRoomLabelClick = this.opts.onRoomLabelClick;
 		const selectedSegmentIds = this.opts.selectedSegmentIds;
+		const overlayColors = this.opts.overlayColors ?? getMapOverlayColors(null);
 		const sel = g.selectAll("g.room-label").data(labels);
 		sel.exit().remove();
 		const enter = sel.enter()
@@ -462,10 +477,15 @@ export class SVGMapRenderer implements IMapRenderer {
 			.attr("data-x", (d) => String(d.x))
 			.attr("data-y", (d) => String(d.y))
 			.attr("data-segment-id", (d) => String(d.segmentId))
+			// The colour the name carries while the room is *not* picked. Kept on the element
+			// because picking a room does not redraw the labels - `MapEngine.applyRoomSelectionStyling()`
+			// only restyles them, and it has no way back to the input that produced this one.
+			.attr("data-text-fill", (d) => d.textFill || "#000")
 			.attr("transform", (d) => `translate(${d.x}, ${d.y})`);
 
 		merged.each(function (d: DrawRoomLabelInput) {
 			const label = d3.select(this);
+			const isSelected = !!selectedSegmentIds?.has(d.segmentId);
 			const hasBubble = !!d.iconHref || !!d.bubbleFill || !!d.badgeText;
 			const bubbleRadius = d.bubbleRadius ?? 6;
 			const iconSize = d.iconSize ?? 7;
@@ -499,8 +519,11 @@ export class SVGMapRenderer implements IMapRenderer {
 				.attr("y", 0)
 				.attr("text-anchor", hasBubble ? "start" : "middle")
 				.attr("dominant-baseline", "middle")
-				.style("fill", d.textFill || "#000")
-				.style("stroke", "white");
+				// On the pill the name needs the pill's contrast, off it the colour the caller
+				// chose; the halo behind the glyphs takes whatever they sit on, so it thickens the
+				// letters instead of ringing them.
+				.style("fill", isSelected ? overlayColors.roomSelectionInk : d.textFill || "#000")
+				.style("stroke", isSelected ? overlayColors.roomSelectionFill : "white");
 
 			label.select<SVGCircleElement>("circle.room-label-badge")
 				.style("display", badgeText ? "" : "none")
@@ -529,27 +552,19 @@ export class SVGMapRenderer implements IMapRenderer {
 			const left = hasBubble ? bubbleCenterX - bubbleRadius : -textWidth / 2;
 			const right = hasBubble ? textX + textWidth : textWidth / 2;
 			// A picked room is marked at its name, not across its floor: the floor is a bitmap the
-			// adapter renders, and this layer has no polygon to fill. So the badge carries the whole
+			// adapter renders, and this layer has no polygon to fill. So the pill carries the whole
 			// signal.
 			//
-			// White on the map's dark floor, following what the app does for its own overlays: on a
-			// dark ground it switches to white rather than deepening a blue (control plugin
-			// A65:313366, `cleanRectBorderColor #ffffff`). A blue badge on a blue floor is a
-			// different blue, which is exactly how the earlier version read.
-			//
-			// The text inside is dark for the same reason - white on white would vanish - and the
-			// caller sets it, see below.
+			// Its colours are in `styles.css`, from the custom properties `mapOverlayColors.ts`
+			// publishes - they have to follow the map between light and dark, and a stylesheet
+			// cannot correct an inline style. Geometry and visibility stay here.
 			label.select<SVGRectElement>("rect.room-label-selection")
-				.style("display", selectedSegmentIds?.has(d.segmentId) ? "" : "none")
+				.style("display", isSelected ? "" : "none")
 				.attr("x", left - 7)
 				.attr("y", -12)
 				.attr("width", Math.max(right - left, 0) + 14)
 				.attr("height", 24)
-				.attr("rx", 8)
-				.style("fill", "rgba(255, 255, 255, 0.95)")
-				.style("stroke", "#0a84ff")
-				.style("stroke-width", "2.5px")
-				.style("vector-effect", "non-scaling-stroke");
+				.attr("rx", 8);
 		});
 	}
 

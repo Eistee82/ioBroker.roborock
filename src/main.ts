@@ -21,6 +21,7 @@ import { Device, http_api } from "./lib/httpApi";
 import { local_api } from "./lib/localApi";
 import { MapManager } from "./lib/map/MapManager";
 import { isReportableMapTheme, resolveMapColorScheme } from "./lib/map/mapColorScheme";
+import { NON_ROOM_STATE_NAMES, normalizeRoomId } from "./lib/map/roomKey";
 import { mqtt_api } from "./lib/mqttApi";
 import { PendingMapEntry, RequestPriority, RoborockRequest, requestsHandler } from "./lib/requestsHandler";
 import { socketHandler } from "./lib/socketHandler";
@@ -423,6 +424,20 @@ export class Roborock extends utils.Adapter {
 	private static readonly MAP_THEME_STATE = "mapTheme";
 
 	/**
+	 * State id (relative to the instance) carrying the colour set the map is actually painted with.
+	 *
+	 * The answer, where {@link MAP_THEME_STATE} is only one of the two questions: with the option
+	 * `map_color_scheme` pinned to `light` or `dark` the reported theme never reaches the picture
+	 * at all. Anything that draws **on** the map - the zones and the room marker in the admin tab -
+	 * needs this value and cannot compute it, because it knows neither the option nor what other
+	 * browsers reported.
+	 *
+	 * Read only on purpose. `mapTheme` stays writable so a script can steer the map without a
+	 * browser; writing the resolved scheme by hand would only be overwritten by the next report.
+	 */
+	private static readonly MAP_COLOR_SCHEME_STATE = "mapColorScheme";
+
+	/**
 	 * The colour set the map bitmap is currently painted with.
 	 *
 	 * Called by the V1 renderer on every map it draws. See `src/lib/map/mapColorScheme.ts` for why
@@ -434,10 +449,17 @@ export class Roborock extends utils.Adapter {
 	}
 
 	/**
-	 * Creates the `mapTheme` state and adopts whatever it already holds.
+	 * Creates the `mapTheme` state, adopts whatever it already holds, and publishes the scheme that
+	 * follows from it.
 	 *
-	 * Without this the first map after a restart would be drawn light even though the admin is
-	 * dark, until a browser happens to reconnect and report again.
+	 * Without the first part the first map after a restart would be drawn light even though the
+	 * admin is dark, until a browser happens to reconnect and report again.
+	 *
+	 * The second part has to happen **here**, not on the first report: the option may have been
+	 * changed while the adapter was stopped, in which case no report is coming and the published
+	 * scheme would describe the previous run. This runs early in `onReady`, before any device is
+	 * set up, so the value is in place before the first bitmap exists - a tab that opens later can
+	 * never read a scheme older than the map it is looking at.
 	 */
 	private async initMapThemeState(): Promise<void> {
 		await this.ensureState(Roborock.MAP_THEME_STATE, {
@@ -453,7 +475,29 @@ export class Roborock extends utils.Adapter {
 		if (isReportableMapTheme(stored?.val)) {
 			this.reportedMapTheme = stored.val;
 		}
+
+		await this.ensureState(Roborock.MAP_COLOR_SCHEME_STATE, {
+			name: "Colour set the map is painted with",
+			type: "string",
+			role: "state",
+			read: true,
+			write: false,
+			states: { light: "Light", dark: "Dark" },
+		});
+		await this.publishMapColorScheme();
+
 		this.rLog("System", null, "Info", undefined, undefined, `Map colour scheme: ${this.getMapColorScheme()} (setting '${this.config.map_color_scheme ?? "light"}', reported theme '${this.reportedMapTheme ?? "none"}')`, "debug");
+	}
+
+	/**
+	 * Writes the currently resolved colour scheme to {@link MAP_COLOR_SCHEME_STATE}.
+	 *
+	 * Everything that draws on the map reads this, so it must never trail the bitmap: called once
+	 * at startup and again whenever the resolved scheme changes, in both cases **before** the maps
+	 * are painted with it.
+	 */
+	private async publishMapColorScheme(): Promise<void> {
+		await this.setState(Roborock.MAP_COLOR_SCHEME_STATE, { val: this.getMapColorScheme(), ack: true });
 	}
 
 	/**
@@ -479,6 +523,12 @@ export class Roborock extends utils.Adapter {
 		if (before === after) return;
 
 		this.rLog("System", null, "Info", undefined, undefined, `Map colour scheme changed to '${after}'; repainting the stored maps.`, "info");
+		// Announced before the repaint, not after: the tab draws its zones and its room marker in
+		// these colours, and repainting every stored map takes long enough that the other order
+		// would leave the overlays on the old set while the picture under them is already the new
+		// one. The reverse gap is the harmless one - the overlays are redrawn on the map that
+		// arrives moments later anyway.
+		await this.publishMapColorScheme();
 		await this.mapManager.repaintStoredMaps();
 	}
 
@@ -1612,7 +1662,11 @@ export class Roborock extends utils.Adapter {
 			}
 
 			// Anything else below floors is a room switch or floor metadata. Room switches are read
-			// on demand when a segment cleaning starts, so a write needs no request of its own.
+			// on demand when a segment cleaning starts, so a write needs no request of its own -
+			// but the rendered map shows the selection, so it has to be drawn again.
+			if (!NON_ROOM_STATE_NAMES.has(target) && normalizeRoomId(target) !== null) {
+				this.scheduleMapRepaint(duid);
+			}
 			return;
 		}
 
@@ -1724,6 +1778,35 @@ export class Roborock extends utils.Adapter {
 			this.setState(id, false, true);
 			this.commandTimeouts.delete(timeoutKey);
 		}, 1000);
+		if (timeout) this.commandTimeouts.set(timeoutKey, timeout);
+	}
+
+	/** How long room switch writes are collected before the map is drawn again. */
+	private static readonly MAP_REPAINT_DEBOUNCE_MS = 400;
+
+	/**
+	 * Draws the stored map of one device again, once the user has stopped clicking.
+	 *
+	 * Picking rooms means a burst of single writes - one per room, plus one per room again when the
+	 * selection is cleared, and the tab sends the whole set on every click, which turns one tap into
+	 * two writes. Each of them changes the picture, but only the last one is worth drawing: the
+	 * canvas pass is the part of the map pipeline the adapter already warns about when it exceeds a
+	 * second. So this is not a delay that can be dropped - four rooms tapped in a row give one
+	 * redraw, not four, and `floor_switch_button.test.ts` pins that. The timeout lives in the same
+	 * map every other adapter timeout does, so `onUnload` clears it with the rest.
+	 * @param duid Device Unique ID.
+	 */
+	private scheduleMapRepaint(duid: string): void {
+		const timeoutKey = `${duid}_map_repaint`;
+		if (this.commandTimeouts.has(timeoutKey)) {
+			this.clearTimeout(this.commandTimeouts.get(timeoutKey)!);
+		}
+		const timeout = this.setTimeout(() => {
+			this.commandTimeouts.delete(timeoutKey);
+			this.mapManager
+				.repaintStoredMap(duid)
+				.catch((e: unknown) => this.catchError(e, "scheduleMapRepaint", duid));
+		}, Roborock.MAP_REPAINT_DEBOUNCE_MS);
 		if (timeout) this.commandTimeouts.set(timeoutKey, timeout);
 	}
 

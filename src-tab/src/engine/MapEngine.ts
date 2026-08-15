@@ -17,6 +17,13 @@ import {
 	type LiveSnapshot,
 } from "./liveTrack";
 import { furnitureAssetFileName, furnitureGraphic, furnitureRect } from "./furniture";
+import {
+	MAP_COLOR_SCHEME_STATE,
+	getMapOverlayColors,
+	isMapColorScheme,
+	mapOverlayCssVariables,
+} from "./mapOverlayColors";
+import type { MapColorScheme } from "./mapOverlayColors";
 import { layoutZoneHandles, renderZoneHandles } from "./zoneHandles";
 import type { Furniture } from "@adapter/lib/map/v1/types";
 
@@ -547,6 +554,29 @@ export class MapEngine {
 		if (this.onStateChange) this.onStateChange(id, state);
 	};
 
+	/**
+	 * Which colour set the map bitmap under the overlays is painted with.
+	 *
+	 * `light` until the adapter has said otherwise, which is the same fallback the adapter itself
+	 * makes: an installation whose state is missing or unreadable gets a light map, so the zones
+	 * over it have to start light as well.
+	 */
+	private mapColorScheme: MapColorScheme = "light";
+
+	/**
+	 * Handler of the `mapColorScheme` state, kept apart from {@link stateHandler} on purpose.
+	 *
+	 * `stateHandler` forwards to `onStateChange`, which is rebuilt for every device the user
+	 * selects. The colour scheme belongs to the instance, not to a device, so routing it through
+	 * that would tie an instance-wide subscription to a per-device lifetime.
+	 */
+	private readonly mapColorSchemeHandler = (_id: string, state: any): void => {
+		this.setMapColorScheme(state?.val);
+	};
+
+	/** Id of the subscribed `mapColorScheme` state, or null before {@link init}. */
+	private mapColorSchemeStateId: string | null = null;
+
 	constructor(connection: EngineConnection, host: MapEngineHost) {
 		this.connection = connection;
 		this.host = host;
@@ -589,7 +619,54 @@ export class MapEngine {
 
 		this.buildDom();
 		this.setupD3();
+		this.watchMapColorScheme();
 		this.fetchRobotList();
+	}
+
+	/**
+	 * Follows the colour set the adapter paints the map bitmap with.
+	 *
+	 * Subscribed once for the whole instance, not per device: one bitmap scheme serves every map
+	 * the adapter renders. The current value is fetched as well as subscribed, because a
+	 * subscription only reports what happens *next* and the tab is usually opened long after the
+	 * adapter settled on its scheme.
+	 *
+	 * Both are fire-and-forget: a scheme that never arrives leaves the overlays on the light set,
+	 * which is what the map is when the adapter cannot decide either.
+	 */
+	private watchMapColorScheme(): void {
+		const id = `${this.instanceId}.${MAP_COLOR_SCHEME_STATE}`;
+		this.mapColorSchemeStateId = id;
+		this.applyMapOverlayColors();
+
+		void this.connection.subscribeState(id, this.mapColorSchemeHandler);
+		void this.connection.getStates([id]).then((states: Record<string, any | null | undefined>) => {
+			if (this.destroyed) return;
+			this.setMapColorScheme(states[id]?.val);
+		});
+	}
+
+	/**
+	 * Takes the scheme the adapter published and repaints the overlays in its colours.
+	 * @param value Raw state value; anything that is not `light` or `dark` is ignored.
+	 */
+	private setMapColorScheme(value: unknown): void {
+		if (!isMapColorScheme(value) || value === this.mapColorScheme) return;
+		this.mapColorScheme = value;
+		this.applyMapOverlayColors();
+		// Zone body, frame, leash and handles are styled from the custom properties and follow on
+		// their own. The room name does not: its colour is an inline style, because the caller
+		// writes one per label and an inline style cannot be overruled from a stylesheet.
+		this.applyRoomSelectionStyling();
+	}
+
+	/** Publishes the overlay colours of the current scheme onto the map surface. */
+	private applyMapOverlayColors(): void {
+		const surface = this.svgContainer.node() as HTMLElement | null;
+		if (!surface) return;
+		for (const [name, value] of Object.entries(mapOverlayCssVariables(this.mapColorScheme))) {
+			surface.style.setProperty(name, value);
+		}
 	}
 
 	/**
@@ -605,6 +682,10 @@ export class MapEngine {
 		this.destroyed = true;
 		for (const id of this.currentMapSubscriptions) this.connection.unsubscribeState(id, this.stateHandler);
 		for (const id of this.panelSubscriptions) this.connection.unsubscribeState(id, this.stateHandler);
+		if (this.mapColorSchemeStateId) {
+			this.connection.unsubscribeState(this.mapColorSchemeStateId, this.mapColorSchemeHandler);
+			this.mapColorSchemeStateId = null;
+		}
 		this.currentMapSubscriptions = [];
 		this.panelSubscriptions = [];
 		this.onStateChange = null;
@@ -1895,6 +1976,7 @@ export class MapEngine {
 				this.toggleRoomSelection(segmentId);
 			},
 			selectedSegmentIds: this.selectedRoomIds,
+			overlayColors: getMapOverlayColors(this.mapColorScheme),
 			robotImageHref: IMG_ROBOT_ORIGINAL,
 			chargerImageHref: IMG_CHARGER,
 			goToPinImageHref: IMG_GO_TO_PIN,
@@ -2334,6 +2416,7 @@ export class MapEngine {
 
 		this.applyRoomSelectionStyling();
 		this.renderRoomSelection();
+		this.pushRoomSelection();
 	}
 
 	private clearRoomSelection(): void {
@@ -2341,17 +2424,54 @@ export class MapEngine {
 		this.selectedRoomIds.clear();
 		this.applyRoomSelectionStyling();
 		this.renderRoomSelection();
+		this.pushRoomSelection();
 	}
 
-	/** Shows/hides the highlight box of each drawn room label without a full redraw. */
+	/**
+	 * Tells the adapter which rooms are picked, so its rendered map can show it.
+	 *
+	 * The picture is a PNG the adapter paints - the tab has the room outlines only as a bitmap and
+	 * cannot dim the rooms that are not picked. The adapter can, and it takes the selection from
+	 * its own room switches, which is also what a segment run without explicit rooms cleans. The
+	 * label highlight above stays local and immediate; this is what makes the map itself follow,
+	 * one redraw later.
+	 *
+	 * Sent with the floor the drawn map belongs to, never without: room ids repeat across the maps
+	 * of one robot, so a selection without its floor would light up arbitrary rooms of another one.
+	 */
+	private pushRoomSelection(): void {
+		const mapFlag = normalizeMapFlag((this.map as { mapFlag?: unknown } | undefined)?.mapFlag);
+		if (!this.currentRobotDuid || mapFlag === null) return;
+
+		void this.sendCommand("set_room_selection", {
+			duid: this.currentRobotDuid,
+			mapFlag,
+			rooms: Array.from(this.selectedRoomIds),
+		});
+	}
+
+	/**
+	 * Shows/hides the highlight box of each drawn room label without a full redraw.
+	 *
+	 * The box takes its colours from the stylesheet, so only its visibility is written here. The
+	 * name inside cannot: `SVGMapRenderer` writes a fill per label as an inline style, so the
+	 * colour it takes while the room is picked has to be written the same way - and put back to
+	 * the label's own colour, which the renderer parked on the element for exactly this.
+	 */
 	private applyRoomSelectionStyling(): void {
 		const selected = this.selectedRoomIds;
+		const colors = getMapOverlayColors(this.mapColorScheme);
 		this.roomNameGroup.selectAll<SVGGElement, unknown>("g.room-label").each(function () {
 			const label = d3.select(this);
 			const segmentId = normalizeRoomId(label.attr("data-segment-id"));
-			const box = label.select("rect.room-label-selection");
-			if (segmentId !== null && selected.has(segmentId)) box.style("display", null);
-			else box.style("display", "none");
+			const isSelected = segmentId !== null && selected.has(segmentId);
+			// Empty rather than `null`, the same way the renderer writes it: both drop the inline
+			// declaration, and only one of the two satisfies d3's overloads.
+			label.select("rect.room-label-selection").style("display", isSelected ? "" : "none");
+			label
+				.select("text.room-name")
+				.style("fill", isSelected ? colors.roomSelectionInk : label.attr("data-text-fill") || "#000")
+				.style("stroke", isSelected ? colors.roomSelectionFill : "white");
 		});
 	}
 

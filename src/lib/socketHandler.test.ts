@@ -309,6 +309,151 @@ describe("socketHandler", () => {
 		});
 	});
 
+	describe("set_room_selection", () => {
+		/**
+		 * A device with two floors. Floor 0 holds three rooms plus the metadata states the adapter
+		 * publishes beside them; floor 1 holds a room with the very same id, which is the case the
+		 * scoping has to survive.
+		 */
+		function createSelectionAdapter(overrides: Record<string, unknown> = {}) {
+			const values: Record<string, { val: unknown }> = {
+				"roborock.0.Devices.duid1.floors.0.16": { val: false },
+				"roborock.0.Devices.duid1.floors.0.17": { val: true },
+				"roborock.0.Devices.duid1.floors.0.18": { val: false },
+				"roborock.0.Devices.duid1.floors.0.load": { val: false },
+				"roborock.0.Devices.duid1.floors.0.name": { val: "Ground floor" },
+				"roborock.0.Devices.duid1.floors.1.16": { val: false }
+			};
+			const roomSwitch = { type: "state", common: { type: "boolean", role: "switch", write: true } };
+
+			return createAdapter({
+				getStatesAsync: vi.fn(async (pattern: string) => {
+					const prefix = pattern.replace(/\*$/, "");
+					return Object.fromEntries(Object.entries(values).filter(([id]) => id.startsWith(prefix)));
+				}),
+				getObjectAsync: vi.fn(async () => roomSwitch),
+				...overrides
+			});
+		}
+
+		/** Ids the handler actually wrote, as `roomId -> value`. */
+		function writes(adapter: ReturnType<typeof createAdapter>): Record<string, unknown> {
+			return Object.fromEntries(adapter.setState.mock.calls.map((call: any[]) => [call[0], call[1].val]));
+		}
+
+		it("switches the picked rooms on and the rest of that floor off", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			const result = await send(selectionAdapter, "set_room_selection", { duid: "duid1", mapFlag: 0, rooms: [16, "18"] });
+
+			expect(result).toEqual({ result: "ok", mapFlag: 0, selected: [16, 18] });
+			// 17 was on and is not picked any more; 16 and 18 change the other way. Unchanged
+			// switches are not written at all, so a repaint is not triggered for nothing.
+			expect(writes(selectionAdapter)).toEqual({
+				"Devices.duid1.floors.0.16": true,
+				"Devices.duid1.floors.0.17": false,
+				"Devices.duid1.floors.0.18": true
+			});
+		});
+
+		it("writes unacknowledged, which is what makes the adapter draw the map again", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			await send(selectionAdapter, "set_room_selection", { duid: "duid1", mapFlag: 0, rooms: [16] });
+
+			for (const call of selectionAdapter.setState.mock.calls) {
+				expect(call[1]).toMatchObject({ ack: false });
+			}
+		});
+
+		it("clears the floor when nothing is picked", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			const result = await send(selectionAdapter, "set_room_selection", { duid: "duid1", mapFlag: 0, rooms: [] });
+
+			expect(result).toEqual({ result: "ok", mapFlag: 0, selected: [] });
+			expect(writes(selectionAdapter)).toEqual({ "Devices.duid1.floors.0.17": false });
+		});
+
+		it("never touches the metadata states below the same folder", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			await send(selectionAdapter, "set_room_selection", { duid: "duid1", mapFlag: 0, rooms: [] });
+
+			for (const call of selectionAdapter.setState.mock.calls) {
+				expect(String(call[0])).not.toMatch(/\.(load|name|mapFlag|map_id|add_time)$/);
+			}
+		});
+
+		it("leaves the rooms of other floors alone", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			await send(selectionAdapter, "set_room_selection", { duid: "duid1", mapFlag: 0, rooms: [16] });
+
+			for (const call of selectionAdapter.setState.mock.calls) {
+				expect(String(call[0])).toContain("floors.0.");
+			}
+		});
+
+		it("ignores a room id that does not exist on that floor", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			const result = await send(selectionAdapter, "set_room_selection", { duid: "duid1", mapFlag: 0, rooms: [16, 99] });
+
+			// The answer names the rooms that are really switched on, so an invented id is visibly
+			// missing from it rather than silently confirmed.
+			expect(result.selected).toEqual([16]);
+			expect(writes(selectionAdapter)["Devices.duid1.floors.0.99"]).toBeUndefined();
+		});
+
+		it("refuses to write a state that is not a writable boolean the adapter published", async () => {
+			const selectionAdapter = createSelectionAdapter({
+				getObjectAsync: vi.fn(async () => ({ type: "state", common: { type: "string", write: true } }))
+			});
+
+			await send(selectionAdapter, "set_room_selection", { duid: "duid1", mapFlag: 0, rooms: [16] });
+
+			expect(selectionAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("rejects an unknown floor instead of creating one", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			const result = await send(selectionAdapter, "set_room_selection", { duid: "duid1", mapFlag: 7, rooms: [16] });
+
+			expect(result.error).toMatch(/Unknown map flag 7/);
+			expect(selectionAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("rejects a missing or non numeric floor", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			for (const mapFlag of [undefined, null, "", "bogus", -1, 1.5]) {
+				const result = await send(selectionAdapter, "set_room_selection", { duid: "duid1", mapFlag, rooms: [16] });
+				expect(result.error, String(mapFlag)).toMatch(/numeric 'mapFlag'/);
+			}
+			expect(selectionAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("rejects a duid that tries to escape the object path", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			const result = await send(selectionAdapter, "set_room_selection", { duid: "../../system.adapter.admin.0", mapFlag: 0, rooms: [16] });
+
+			expect(result.error).toMatch(/valid 'duid'/);
+			expect(selectionAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("rejects a device the adapter does not manage", async () => {
+			const selectionAdapter = createSelectionAdapter();
+
+			const result = await send(selectionAdapter, "set_room_selection", { duid: "unknown", mapFlag: 0, rooms: [16] });
+
+			expect(result.error).toMatch(/No handler for DUID unknown/);
+			expect(selectionAdapter.setState).not.toHaveBeenCalled();
+		});
+	});
+
 	it("still rejects unknown commands", async () => {
 		const result = await send(adapter, "definitely_unknown", {});
 

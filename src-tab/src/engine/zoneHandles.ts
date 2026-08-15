@@ -129,8 +129,15 @@ export const ZONE_FRAME_DASH_PX: readonly [number, number] = [6, 4];
  * that redraws an icon fails a test instead of leaving the map behind.
  */
 export const ZONE_HANDLE_GLYPHS: Record<ZoneHandleKind, string> = {
-	/** `Delete` - the waste basket. */
-	delete: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z",
+	/**
+	 * `Close` - the X the app puts on this handle, on a red disc (`styles.css`).
+	 *
+	 * A waste basket sat here first, which is the icon for deleting a row in a list. On the map
+	 * the handle is a corner badge two dozen pixels wide, and at that size the app's own answer is
+	 * the better one: an X plus a colour reads as "remove this" without being recognised as a
+	 * picture at all.
+	 */
+	delete: "M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z",
 	/** `OpenInFull` - the diagonal corner arrows, drawn along the bottom-right corner it sits on. */
 	scale: "M21 11V3h-8l3.29 3.29-10 10L3 13v8h8l-3.29-3.29 10-10z",
 	/** `OpenWith` - the four-direction arrow the user described as "ein kreuz mit pfeilen". */

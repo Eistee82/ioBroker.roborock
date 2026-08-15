@@ -80,6 +80,74 @@ export function floorScopeKey(duid: string, mapFlag: number): string {
 }
 
 /**
+ * State names below `floors.<mapFlag>` that carry metadata instead of a room switch.
+ *
+ * Everything else in that folder is a room, keyed by its id. Kept here rather than next to one of
+ * the readers because two of them exist - the segment cleaning collects the switches to decide
+ * what to clean, the map renderer collects them to decide what to highlight - and a name that is
+ * a room for one of them but metadata for the other would be a silent bug in both.
+ */
+export const NON_ROOM_STATE_NAMES: ReadonlySet<string> = new Set(["add_time", "load", "mapFlag", "map_id", "name"]);
+
+/**
+ * Whether a room switch state counts as "on".
+ *
+ * Deliberately tolerant: the switches are written by the admin tab, by vis widgets and by scripts,
+ * and a script that writes `1` or `"true"` means the same thing a checkbox does.
+ * @param value Raw state value.
+ * @returns True when the room is selected.
+ */
+export function isRoomSwitchOn(value: unknown): boolean {
+	return value === true || value === "true" || value === 1;
+}
+
+/**
+ * Sorts room ids ascending and removes duplicates.
+ * @param roomIds Ids in any order.
+ * @returns A new ascending array.
+ */
+export function sortRoomIds(roomIds: Iterable<number> | undefined | null): number[] {
+	return roomIds ? [...new Set(roomIds)].sort((left, right) => left - right) : [];
+}
+
+/**
+ * Groups the room switches that are on by the floor they belong to.
+ *
+ * Grouping instead of flattening is the whole point: room ids repeat across the maps of one robot
+ * (see the module header), so a caller has to say which floor it means before the ids mean
+ * anything. Callers that know the active map pick their entry; callers that do not can at least
+ * see that the answer is ambiguous instead of mixing floors.
+ * @param states States below `Devices.<duid>.floors.*`, as returned by `getStatesAsync`.
+ * @returns Map flag to the set of selected room ids on that floor; floors without a selection are absent.
+ */
+export function groupSelectedRoomsByMapFlag(
+	states: Record<string, { val?: unknown } | null | undefined> | null | undefined
+): Map<number, Set<number>> {
+	const selectedByMapFlag = new Map<number, Set<number>>();
+	if (!states) return selectedByMapFlag;
+
+	for (const [stateId, state] of Object.entries(states)) {
+		if (!state || !isRoomSwitchOn(state.val)) continue;
+
+		const parts = stateId.split(".");
+		const lastSegment = parts[parts.length - 1];
+		if (!lastSegment || NON_ROOM_STATE_NAMES.has(lastSegment)) continue;
+
+		const roomId = normalizeRoomId(lastSegment);
+		const mapFlag = normalizeMapFlag(parts[parts.length - 2]);
+		if (roomId === null || mapFlag === null) continue;
+
+		let rooms = selectedByMapFlag.get(mapFlag);
+		if (!rooms) {
+			rooms = new Set<number>();
+			selectedByMapFlag.set(mapFlag, rooms);
+		}
+		rooms.add(roomId);
+	}
+	return selectedByMapFlag;
+}
+
+/**
  * Converts an ioBroker `common.name` (string or translation object) into a display name.
  * @param value Raw `common.name` value.
  * @returns Trimmed display name, or an empty string when nothing usable is present.

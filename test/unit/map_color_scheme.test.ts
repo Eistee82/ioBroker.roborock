@@ -179,13 +179,13 @@ describe("the way the theme reaches the adapter", () => {
 		const { Roborock } = await import("../../src/main");
 		const adapter = Object.create(Roborock.prototype);
 		const repaint = vi.fn().mockResolvedValue(undefined);
-		const written: unknown[] = [];
+		const written: { id: string; value: unknown }[] = [];
 
 		adapter.config = { map_color_scheme: "auto" };
 		adapter.reportedMapTheme = null;
 		adapter.mapManager = { repaintStoredMaps: repaint };
-		adapter.setState = async (_id: string, value: unknown) => {
-			written.push(value);
+		adapter.setState = async (id: string, value: unknown) => {
+			written.push({ id, value });
 		};
 		adapter.rLog = () => undefined;
 
@@ -195,10 +195,62 @@ describe("the way the theme reaches the adapter", () => {
 		// Same theme again: nothing to store, nothing to repaint.
 		await adapter.setReportedMapTheme("dark");
 		expect(repaint).toHaveBeenCalledTimes(1);
-		expect(written).toHaveLength(1);
+		expect(written.filter((entry) => entry.id === "mapTheme")).toHaveLength(1);
 
 		await adapter.setReportedMapTheme("light");
 		expect(repaint).toHaveBeenCalledTimes(2);
+	});
+
+	it("publishes the resolved scheme before it repaints, so overlays never trail the picture", async () => {
+		// The admin tab draws its cleaning zones and its room marker on top of the bitmap and takes
+		// their colours from this state. Announcing it after the repaint would leave the overlays on
+		// the previous set for as long as every stored map takes to draw.
+		const { Roborock } = await import("../../src/main");
+		const adapter = Object.create(Roborock.prototype);
+		const order: string[] = [];
+
+		adapter.config = { map_color_scheme: "auto" };
+		adapter.reportedMapTheme = null;
+		adapter.mapManager = {
+			repaintStoredMaps: async () => {
+				order.push("repaint");
+			}
+		};
+		adapter.setState = async (id: string, value: { val?: unknown }) => {
+			order.push(`${id}=${String(value?.val)}`);
+		};
+		adapter.rLog = () => undefined;
+
+		await adapter.setReportedMapTheme("dark");
+
+		expect(order).toEqual(["mapTheme=dark", "mapColorScheme=dark", "repaint"]);
+	});
+
+	it("creates the scheme state at startup, before any map exists", async () => {
+		// The option may have been changed while the adapter was stopped, in which case no browser
+		// is going to report anything - the value has to be written from the config on its own.
+		const { Roborock } = await import("../../src/main");
+		const adapter = Object.create(Roborock.prototype);
+		const ensured: Record<string, Partial<ioBroker.StateCommon>> = {};
+		const written: Record<string, unknown> = {};
+
+		adapter.config = { map_color_scheme: "dark" };
+		adapter.reportedMapTheme = null;
+		adapter.ensureState = async (path: string, common: Partial<ioBroker.StateCommon>) => {
+			ensured[path] = common;
+		};
+		adapter.getStateAsync = async () => null;
+		adapter.setState = async (id: string, value: { val?: unknown }) => {
+			written[id] = value?.val;
+		};
+		adapter.rLog = () => undefined;
+
+		await adapter.initMapThemeState();
+
+		expect(written.mapColorScheme).toBe("dark");
+		// Read only: `mapTheme` is the knob a script turns, this one is the answer to it.
+		expect(ensured.mapColorScheme?.write).toBe(false);
+		expect(ensured.mapTheme?.write).toBe(true);
 	});
 
 	it("remembers a report but does not repaint while a fixed scheme is configured", async () => {

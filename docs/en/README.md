@@ -204,12 +204,13 @@ A device that reports none of the raw fields gets none of these states. `wash_ph
 its own value list in `deviceStatus` and gets no derived state, because only two of its
 values are documented anywhere.
 
-Two objects live at the instance root rather than under a device:
+Three objects live at the instance root rather than under a device:
 
 | State | Content |
 | --- | --- |
 | `loginCode` | Where the six digit code from the login e-mail is entered. |
 | `mapTheme` | `light` or `dark`: the theme the Roborock admin tab last reported. Only consulted while **Map Colour Scheme** is set to *Follow the admin theme*; writing it by hand (from a script or a visualisation) works just as well as letting the tab do it. |
+| `mapColorScheme` | `light` or `dark`: the colour set the map is actually painted with, i.e. **Map Colour Scheme** resolved against `mapTheme`. Read only. The admin tab reads it to draw its cleaning zones and its room marker in the colours of the map underneath, which is not the same decision as the admin's own light/dark theme. |
 
 Object names and value lists are localised by the adapter at run time where the robot
 firmware provides translations. The tables below show the English defaults from the

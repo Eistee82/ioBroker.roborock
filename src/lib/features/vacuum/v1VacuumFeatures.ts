@@ -27,7 +27,7 @@ import {
 	supportsPureCleanMop
 } from "./cleaningModes";
 import type { CleaningModeCapabilities } from "./cleaningModes";
-import { floorFolderId, normalizeMapFlag, normalizeRoomId } from "../../map/roomKey";
+import { floorFolderId, groupSelectedRoomsByMapFlag, normalizeMapFlag, sortRoomIds } from "../../map/roomKey";
 
 // --- Shared Constants ---
 // These are the *selectable* levels: what a model profile offers in its pickers. The markers the
@@ -78,9 +78,6 @@ export const DEFAULT_PROFILE: VacuumProfile = {
 
 export class V1VacuumFeatures extends BaseDeviceFeatures {
 	private static readonly autoEmptyDockStartCommand = "app_start_collect_dust";
-
-	/** State names below `floors.<mapFlag>` that carry metadata instead of a room switch. */
-	private static readonly nonRoomStateNames = new Set(["add_time", "load", "mapFlag", "map_id", "name"]);
 
 	protected profile: VacuumProfile;
 	protected consumableService: V1ConsumableService;
@@ -613,30 +610,14 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		const states = await this.deps.adapter.getStatesAsync(pattern);
 		if (!states) return [];
 
-		const selectedByMapFlag = new Map<number, Set<number>>();
-		for (const [stateId, state] of Object.entries(states)) {
-			if (!state || (state.val !== true && state.val !== "true" && state.val !== 1)) continue;
-
-			const parts = stateId.split(".");
-			const lastSegment = parts[parts.length - 1];
-			if (!lastSegment || V1VacuumFeatures.nonRoomStateNames.has(lastSegment)) continue;
-
-			const roomId = normalizeRoomId(lastSegment);
-			const mapFlag = normalizeMapFlag(parts[parts.length - 2]);
-			if (roomId === null || mapFlag === null) continue;
-
-			let rooms = selectedByMapFlag.get(mapFlag);
-			if (!rooms) {
-				rooms = new Set<number>();
-				selectedByMapFlag.set(mapFlag, rooms);
-			}
-			rooms.add(roomId);
-		}
+		// Same reader the map renderer uses to decide which rooms it must not fade, so a room that
+		// gets cleaned is exactly a room that looks selected.
+		const selectedByMapFlag = groupSelectedRoomsByMapFlag(states);
 
 		if (selectedByMapFlag.size === 0) return [];
 
 		if (activeMapFlag !== null) {
-			return this.sortRoomIds(selectedByMapFlag.get(activeMapFlag));
+			return sortRoomIds(selectedByMapFlag.get(activeMapFlag));
 		}
 
 		// The active map slot is not known yet (no map_status seen so far). Falling back to all
@@ -648,11 +629,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		const [onlyMapFlag, onlyRooms] = [...selectedByMapFlag.entries()][0];
 		this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined, `Active map unknown; using floor ${onlyMapFlag} as it is the only one with selected rooms`, "debug");
-		return this.sortRoomIds(onlyRooms);
-	}
-
-	private sortRoomIds(roomIds: Set<number> | undefined): number[] {
-		return roomIds ? [...roomIds].sort((left, right) => left - right) : [];
+		return sortRoomIds(onlyRooms);
 	}
 
 	private normalizeCleanRepeat(value: unknown): number | null {

@@ -1,4 +1,4 @@
-import DeleteIcon from "@mui/icons-material/Delete";
+import CloseIcon from "@mui/icons-material/Close";
 import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import OpenWithIcon from "@mui/icons-material/OpenWith";
 import { render } from "@testing-library/react";
@@ -26,7 +26,9 @@ import { ZONE_HANDLE_GLYPHS, ZONE_HANDLE_KINDS, type ZoneHandleKind } from "./zo
 
 /** The MUI component each glyph is a copy of. */
 const SOURCE_ICONS: Record<ZoneHandleKind, () => React.ReactElement> = {
-	delete: () => <DeleteIcon />,
+	// The X, not a waste basket: the app marks this handle with a cross on a red disc, and at the
+	// size of a corner badge that reads without being recognised as a picture.
+	delete: () => <CloseIcon />,
 	scale: () => <OpenInFullIcon />,
 	move: () => <OpenWithIcon />,
 };

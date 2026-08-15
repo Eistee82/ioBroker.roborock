@@ -562,21 +562,49 @@ export class MapManager {
 			const duid = parts[parts.length - 3];
 			if (!duid) continue;
 
-			let mapData: any;
-			try {
-				mapData = JSON.parse(state.val);
-			} catch {
-				continue;
-			}
-			if (!mapData?.IMAGE?.dimensions) continue;
+			await this.repaintStoredMap(duid, state.val);
+		}
+	}
 
+	/**
+	 * Paints the map already on record for one device again.
+	 *
+	 * Same idea as {@link repaintStoredMaps}, for the cases that concern a single robot: the room
+	 * selection changed, so the highlight has to follow. Without this the new picture would only
+	 * appear with the next map the robot sends, which during a pause can be minutes.
+	 *
+	 * Silent by design when there is nothing to repaint - a device whose map has never been parsed
+	 * (B01/Q10, or simply not seen yet) is not an error, it just has no V1 map data to draw from.
+	 * @param duid Device Unique ID.
+	 * @param serializedMapData Content of `Devices.<duid>.map.mapData`, when the caller already has it.
+	 */
+	public async repaintStoredMap(duid: string, serializedMapData?: string): Promise<void> {
+		let raw = serializedMapData;
+		if (raw === undefined) {
 			try {
-				const model = this.adapter.http_api?.getRobotModel(duid) || "";
-				const [mapBase64Clean, mapBase64] = await this.mapCreator.canvasMap(mapData, { model, duid });
-				await this.saveGeneratedMap(duid, { mapBase64, mapBase64Clean });
+				const state = await this.adapter.getStateAsync(`Devices.${duid}.map.mapData`);
+				if (typeof state?.val !== "string" || !state.val) return;
+				raw = state.val;
 			} catch (e: unknown) {
-				this.adapter.rLog("MapManager", duid, "Warn", "Map", undefined, `Repaint of the stored map failed: ${this.adapter.errorMessage(e)}`, "warn");
+				this.adapter.rLog("MapManager", duid, "Warn", "Map", undefined, `Could not read the stored map for repaint: ${this.adapter.errorMessage(e)}`, "warn");
+				return;
 			}
+		}
+
+		let mapData: any;
+		try {
+			mapData = JSON.parse(raw);
+		} catch {
+			return;
+		}
+		if (!mapData?.IMAGE?.dimensions) return;
+
+		try {
+			const model = this.adapter.http_api?.getRobotModel(duid) || "";
+			const [mapBase64Clean, mapBase64] = await this.mapCreator.canvasMap(mapData, { model, duid });
+			await this.saveGeneratedMap(duid, { mapBase64, mapBase64Clean });
+		} catch (e: unknown) {
+			this.adapter.rLog("MapManager", duid, "Warn", "Map", undefined, `Repaint of the stored map failed: ${this.adapter.errorMessage(e)}`, "warn");
 		}
 	}
 
