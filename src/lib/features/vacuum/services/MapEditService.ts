@@ -1,7 +1,7 @@
 import { MapDecryptor } from "../../../map/v1/MapDecryptor";
 import { MapParser } from "../../../map/v1/MapParser";
 import { FEATURE_STR_FIELD, hasFeatureStrBit, readFeatureStr } from "../../../featureStr";
-import { SQUARE_METRES_PER_CELL } from "../../../../common/segmentRaster";
+import { MIN_SPLIT_AREA_SQM, splitPreconditions } from "../../../../common/splitLine";
 import type { SegmentInfo } from "../../../map/v1/types";
 import {
 	MAP_RECORD_MAP_SLOT,
@@ -803,24 +803,13 @@ export function readMaxMultiMap(raw: unknown): number | null {
 // (report sections 1.3, 1.4 and 2.2)
 // ---------------------------------------------------------------------------
 
-/** `MAX_BLOCK_NO` (module 1507): a map holds at most this many segments. */
-export const MAX_BLOCK_NO = 32;
-
 /**
- * Rooms a robot without `NewFeatureStrBit.MaxZoneOpened` may hold.
+ * `MAX_BLOCK_NO` (module 1507): a map holds at most this many segments.
  *
- * The app runs a two-stage gate, not the single one this service used to (`splitSelectBlock`,
- * A65:809425-809475, written up in `_appanalysis/28-raeume-teilen.md` §3.3):
- *
- * ```js
- * if (!MM.isAllowMaxBlock() && blockNum > 15) return toast(map_edit_split_restriction_num);
- * if ( MM.isAllowMaxBlock() && blockNum > 31) return toast(map_edit_split_restriction_num);
- * ```
- *
- * So the cut-off is "16 rooms already there" without the bit and "32" with it - a factor of two,
- * not the one room an earlier reading assumed.
+ * The limit a split is refused at is **not** always this one - see {@link splitPreconditions}, which
+ * holds the app's two-stage gate and is shared with the admin tab so that the two cannot drift.
  */
-export const MAX_BLOCK_NO_WITHOUT_MAX_ZONE = 16;
+export const MAX_BLOCK_NO = 32;
 
 /**
  * Bit 77 of `new_feature_info_str` (`NewFeatureStrBit.MaxZoneOpened`, A65:231849).
@@ -828,15 +817,6 @@ export const MAX_BLOCK_NO_WITHOUT_MAX_ZONE = 16;
  * `MM.isAllowMaxBlock()` (A65:340831-340841) is nothing but this bit.
  */
 export const MAX_ZONE_OPENED_FEATURE_BIT = 77n;
-
-/**
- * Floor area, in square metres, below which the app will not divide a room.
- *
- * `splitSelectBlock` (A65:809411-809417) refuses on `getSegmentArea(id) < 2`, and `getSegmentArea`
- * (A65:483620-483654) is `0.05 * centerInfo[id].count * 0.05` - the segment's cell count times the
- * area of one cell. Checked before anything is sent; the robot is never asked.
- */
-export const MIN_SPLIT_AREA_SQM = 2;
 
 /** A merge needs at least this many segments (`map_edit_merge_restriction`). */
 export const MIN_MERGE_SEGMENTS = 2;
@@ -1589,31 +1569,30 @@ export class MapEditService {
 	private async refuseSplitTheAppWouldRefuse(segmentId: number, knownRooms: number): Promise<void> {
 		const image = await this.readImageBlock();
 
-		const cells = image?.segments?.list?.find((room) => room.id === segmentId)?.count;
-		if (cells !== undefined) {
-			const squareMetres = cells * SQUARE_METRES_PER_CELL;
-			if (squareMetres < MIN_SPLIT_AREA_SQM) {
-				// Three decimals, not two: a room of 1.9975 m² printed as "2.00 m², which is under
-				// 2 m²" reads like a bug in the check rather than a small room.
-				throw new Error(
-					`split_segment: room ${segmentId} covers ${squareMetres.toFixed(3)} m² (${cells} cells), and the app refuses to divide anything under ${MIN_SPLIT_AREA_SQM} m². Dividing it would renumber every room for two halves too small to clean separately.`
-				);
-			}
-		}
-
 		// `blockNum` is the app's own number - the segment count in the image block header. The room
 		// mapping is the fallback, and it can undercount: a room the user has never named is on the
 		// map but not in `get_room_mapping`.
 		const blockNum = typeof image?.segments?.count === "number" && image.segments.count > 0 ? image.segments.count : knownRooms;
 
-		const allowMaxBlock = await this.isMaxZoneOpened();
-		const limit = allowMaxBlock === false ? MAX_BLOCK_NO_WITHOUT_MAX_ZONE : MAX_BLOCK_NO;
-		if (blockNum >= limit) {
-			const because = allowMaxBlock === false
-				? `this robot does not report NewFeatureStrBit.MaxZoneOpened, so the app's limit is ${MAX_BLOCK_NO_WITHOUT_MAX_ZONE}`
-				: `the app's limit is ${MAX_BLOCK_NO}`;
-			throw new Error(`split_segment: the map already holds ${blockNum} rooms and ${because}. Combine two rooms first.`);
+		const refusal = splitPreconditions({
+			cells: image?.segments?.list?.find((room) => room.id === segmentId)?.count,
+			rooms: blockNum,
+			maxZoneOpened: await this.isMaxZoneOpened(),
+		});
+		if (refusal === null) return;
+
+		if (refusal.reason === "tooSmall") {
+			// Three decimals, not two: a room of 1.9975 m² printed as "2.00 m², which is under
+			// 2 m²" reads like a bug in the check rather than a small room.
+			throw new Error(
+				`split_segment: room ${segmentId} covers ${refusal.squareMetres.toFixed(3)} m² (${refusal.cells} cells), and the app refuses to divide anything under ${MIN_SPLIT_AREA_SQM} m². Dividing it would renumber every room for two halves too small to clean separately.`
+			);
 		}
+
+		const because = refusal.limitedByFeature
+			? `this robot does not report NewFeatureStrBit.MaxZoneOpened, so the app's limit is ${refusal.limit}`
+			: `the app's limit is ${refusal.limit}`;
+		throw new Error(`split_segment: the map already holds ${refusal.rooms} rooms and ${because}. Combine two rooms first.`);
 	}
 
 	/**

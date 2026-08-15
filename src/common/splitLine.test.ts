@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RasterPoint, RasterView } from "./splitLine";
-import { snapSplitLine, splitPayload, startingSplitLine } from "./splitLine";
+import { previewSplitHalves, snapSplitLine, splitPayload, splitPreconditions, startingSplitLine } from "./splitLine";
 
 /**
  * The dividing line, tested against maps drawn as text.
@@ -331,6 +331,101 @@ describe("the line the app offers before the user moves anything", () => {
 		// Both probes span columns/rows 1..3 including the ring, so extents tie and the tie goes
 		// vertical - the same branch the app takes when neither direction is longer.
 		expect(startingSplitLine(ringed, ROOM, at(2, 2))).toEqual({ left: { x: 2, y: 1 }, right: { x: 2, y: 3 } });
+	});
+});
+
+describe("the checks the app makes before it will divide anything", () => {
+	// 800 cells is exactly 2 m²; the app refuses below that, so 800 passes and 799 does not.
+	const BIG = 4000;
+
+	it("refuses a room under two square metres", () => {
+		expect(splitPreconditions({ cells: 799, rooms: 4, maxZoneOpened: true })).toMatchObject({ reason: "tooSmall", cells: 799 });
+		expect(splitPreconditions({ cells: 800, rooms: 4, maxZoneOpened: true })).toBeNull();
+	});
+
+	it("stops at 32 rooms on a robot that announces MaxZoneOpened", () => {
+		expect(splitPreconditions({ cells: BIG, rooms: 31, maxZoneOpened: true })).toBeNull();
+		expect(splitPreconditions({ cells: BIG, rooms: 32, maxZoneOpened: true })).toMatchObject({ reason: "tooManyRooms", limit: 32, limitedByFeature: false });
+	});
+
+	it("stops at 16 rooms on a robot that says it has not got it", () => {
+		expect(splitPreconditions({ cells: BIG, rooms: 15, maxZoneOpened: false })).toBeNull();
+		expect(splitPreconditions({ cells: BIG, rooms: 16, maxZoneOpened: false })).toMatchObject({ reason: "tooManyRooms", limit: 16, limitedByFeature: true });
+	});
+
+	it("uses the permissive limit while the robot has not said either way", () => {
+		// Silence is not a cleared bit. Halving the limit here would take the function away from a
+		// robot whose feature string simply has not been read yet.
+		expect(splitPreconditions({ cells: BIG, rooms: 20, maxZoneOpened: null })).toBeNull();
+		expect(splitPreconditions({ cells: BIG, rooms: 32, maxZoneOpened: null })).toMatchObject({ reason: "tooManyRooms", limit: 32 });
+	});
+
+	it("skips whichever figure the map cannot supply", () => {
+		expect(splitPreconditions({ rooms: 4, maxZoneOpened: true })).toBeNull();
+		expect(splitPreconditions({ cells: BIG, maxZoneOpened: true })).toBeNull();
+		expect(splitPreconditions({ maxZoneOpened: null })).toBeNull();
+		// A room too small is still refused when the room count is missing.
+		expect(splitPreconditions({ cells: 10, maxZoneOpened: null })).toMatchObject({ reason: "tooSmall" });
+	});
+
+	it("reports the area before the room count, the order the app checks them in", () => {
+		expect(splitPreconditions({ cells: 10, rooms: 99, maxZoneOpened: false })).toMatchObject({ reason: "tooSmall" });
+	});
+});
+
+describe("previewing the two halves", () => {
+	it("splits the room's cells along the line", () => {
+		const room = view(`
+			........
+			.oooooo.
+			.oooooo.
+			.oooooo.
+			........
+		`);
+
+		// A vertical cut down the middle of a 6 x 3 room: three columns each side.
+		const halves = previewSplitHalves(room, ROOM, at(3.5, 0), at(3.5, 4));
+		expect(halves.negative + halves.positive).toBe(18);
+		expect(halves.negative).toBe(9);
+		expect(halves.positive).toBe(9);
+	});
+
+	it("counts walls of the room as part of it", () => {
+		const ringed = view(`
+			......
+			.####.
+			.#oo#.
+			.####.
+			......
+		`);
+
+		const halves = previewSplitHalves(ringed, ROOM, at(2.5, 0), at(2.5, 4));
+		expect(halves.negative + halves.positive).toBe(12);
+	});
+
+	it("ignores every other room", () => {
+		const two = view(`
+			........
+			.oo.++..
+			.oo.++..
+			........
+		`);
+
+		const halves = previewSplitHalves(two, ROOM, at(1.5, 0), at(1.5, 3));
+		expect(halves.negative + halves.positive).toBe(4);
+	});
+
+	it("puts an unequal cut where the line is", () => {
+		const room = view(`
+			........
+			.oooooo.
+			.oooooo.
+			........
+		`);
+
+		// Six columns over two rows; the cut leaves two columns on one side and four on the other.
+		const halves = previewSplitHalves(room, ROOM, at(2.5, 0), at(2.5, 3));
+		expect([halves.negative, halves.positive].sort((a, b) => a - b)).toEqual([4, 8]);
 	});
 });
 

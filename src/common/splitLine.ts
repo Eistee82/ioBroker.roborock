@@ -24,7 +24,7 @@
  * one. Same result, half the arithmetic.
  */
 
-import { RASTER_TYPE_EMPTY, RASTER_TYPE_WALL, rasterCellAt, rasterCellType, rasterSegmentId } from "./segmentRaster";
+import { RASTER_TYPE_EMPTY, RASTER_TYPE_WALL, rasterCellAt, rasterCellType, rasterSegmentId, SQUARE_METRES_PER_CELL } from "./segmentRaster";
 
 /** A position on the grid. Whole numbers are cell centres; the scan produces fractional values. */
 export interface RasterPoint {
@@ -262,6 +262,86 @@ export function startingSplitLine(view: RasterView, blockId: number, through: Ra
 		return { left: { x: minColumn, y: row }, right: { x: maxColumn, y: row } };
 	}
 	return { left: { x: column, y: minRow }, right: { x: column, y: maxRow } };
+}
+
+/**
+ * Rooms a robot without `NewFeatureStrBit.MaxZoneOpened` may hold before a split is refused.
+ * The app's two-stage gate; see {@link splitPreconditions}.
+ */
+export const MAX_ROOMS_WITHOUT_MAX_ZONE = 16;
+
+/** Rooms any robot may hold. `MAX_BLOCK_NO` of the app's module 1507. */
+export const MAX_ROOMS = 32;
+
+/** Floor area in square metres below which the app will not divide a room. */
+export const MIN_SPLIT_AREA_SQM = 2;
+
+/** Why a split is refused before anything is sent, or `null` when nothing stands in the way. */
+export type SplitRefusal =
+	| { reason: "tooSmall"; squareMetres: number; cells: number }
+	| { reason: "tooManyRooms"; rooms: number; limit: number; limitedByFeature: boolean };
+
+/**
+ * The two checks the app runs before it will divide a room, in its order.
+ *
+ * Both are the app's own and both happen before anything is sent (`splitSelectBlock`,
+ * A65:809364-809620, `_appanalysis/28-raeume-teilen.md` §3). They live here rather than in either
+ * caller because both the adapter's command path and the admin tab need them - the tab to grey out
+ * a button with a reason, the adapter to refuse whatever else writes the command state - and two
+ * copies of a rule with a firmware bit in it would drift.
+ *
+ * Anything the caller cannot supply is skipped rather than guessed: an older `mapData` carries no
+ * cell count, and a B01/Q10 device has no image block at all. Refusing on absent data would take
+ * the function away from exactly the users whose map is not measurable yet.
+ * @param input.cells Floor cells of the room, or `undefined` when the map does not say.
+ * @param input.rooms Rooms on the map (`IMAGE.segments.count`), or `undefined` when unknown.
+ * @param input.maxZoneOpened Whether the robot announces `MaxZoneOpened` (bit 77). **`null` means
+ *        the robot has not said**, and that is not the same as `false`: an unread feature string
+ *        would otherwise halve the limit on a robot that may well have the feature.
+ * @returns The first refusal that applies, or `null`.
+ */
+export function splitPreconditions(input: { cells?: number; rooms?: number; maxZoneOpened: boolean | null }): SplitRefusal | null {
+	if (input.cells !== undefined) {
+		const squareMetres = input.cells * SQUARE_METRES_PER_CELL;
+		if (squareMetres < MIN_SPLIT_AREA_SQM) return { reason: "tooSmall", squareMetres, cells: input.cells };
+	}
+
+	if (input.rooms !== undefined) {
+		const limitedByFeature = input.maxZoneOpened === false;
+		const limit = limitedByFeature ? MAX_ROOMS_WITHOUT_MAX_ZONE : MAX_ROOMS;
+		if (input.rooms >= limit) return { reason: "tooManyRooms", rooms: input.rooms, limit, limitedByFeature };
+	}
+
+	return null;
+}
+
+/**
+ * Counts the cells the dividing line would leave on either side.
+ *
+ * Only for showing the user what they are about to do - the app has nothing like it, and the robot
+ * decides the real outcome. The side a cell falls on is the sign of its offset from the line, which
+ * is what a straight cut means; the ends having been snapped to the room's boundary is what makes
+ * the cut reach across it.
+ * @returns Cells on each side, the sides named after the sign and not after anything on screen.
+ */
+export function previewSplitHalves(view: RasterView, blockId: number, left: RasterPoint, right: RasterPoint): { negative: number; positive: number } {
+	const dx = right.x - left.x;
+	const dy = right.y - left.y;
+	let negative = 0;
+	let positive = 0;
+
+	for (let row = 0; row < view.height; row++) {
+		for (let column = 0; column < view.width; column++) {
+			const cell = view.cells[row * view.width + column];
+			if (rasterSegmentId(cell) !== blockId || rasterCellType(cell) === RASTER_TYPE_EMPTY) continue;
+
+			const side = dx * (row - left.y) - dy * (column - left.x);
+			if (side < 0) negative++;
+			else if (side > 0) positive++;
+		}
+	}
+
+	return { negative, positive };
 }
 
 /**
