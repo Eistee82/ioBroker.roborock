@@ -186,6 +186,20 @@ direction only does anything once a floor direction has been set for each room**
 the Roborock app under *Edit Surface*. The switch here turns the behaviour on; it cannot set the
 directions, because the two values that command carries are not established.
 
+**High-Intensity Corner Mopping** is an eighth switch, and the only one unlocked a different way.
+There is no read command for it anywhere - the Roborock app does not use one either. It reads the
+position out of the status the robot sends by itself, and so does this adapter: a robot that
+mentions the field gets the switch, a robot that never mentions it gets nothing. That makes it the
+one switch with no read button beside it, because there is nothing to press. The test device does
+not have the feature, and says so twice over - the field is absent from its status, and the firmware
+flag the app checks is clear as well.
+
+Two things about it come from Roborock and are worth knowing. It is a **single-use mode**: the robot
+is expected to clear it again after a run, so the switch falling back to off by itself is the
+robot's doing, not a lost command. And the app **refuses to switch it on while the mopping route is
+set to Fast**. That rule is not enforced here, because it is a rule about a second setting this
+adapter does not own; if the robot drops the command for that reason, the log is where it will show.
+
 **Off-peak charging** is a second window of the day, beside Do Not Disturb and built the same way -
 writing a window switches it on, a separate button switches it off, and there is no flag in between,
 because the protocol has none. What it does is Roborock's own sentence: the robot fully charges only

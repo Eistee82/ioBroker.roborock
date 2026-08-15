@@ -50,6 +50,40 @@ export interface FeatureDependencies {
 	// Add other dependencies if needed
 }
 
+/**
+ * The state name for an answer that has no keys of its own.
+ *
+ * An object answer names its own states; an array or a bare value does not, so the method has to.
+ * `get_fw_features` becomes `fw_features`, `get_room_mapping` becomes `room_mapping` - the same
+ * name the robot's own field would carry, which keeps `firmwareFeatures.fw_features` readable
+ * instead of `firmwareFeatures.get_fw_features`.
+ *
+ * Two details that are not cosmetic:
+ *
+ * - Roborock's method table carries both plain and `user.`-prefixed forms of the same call
+ *   (`'GetTimer': 'user.get_timer'` and `'GetTimer': 'get_timer'`, control plugin A65:238176 and
+ *   A65:238179). Only the part behind the last dot is a name; keeping the prefix would split one
+ *   value across two states depending on which table a device happens to use.
+ * - Everything outside `[A-Za-z0-9_]` is replaced. The result is appended to an object path, and a
+ *   method name is not a trusted string - it reaches this function from a model class, and B01
+ *   builds it from device data. Same reasoning as `SAFE_PATH_SEGMENT` on the command handlers.
+ * @param method The RPC method name.
+ * @returns A path-safe state name, never empty.
+ */
+export function resultStateKeyForMethod(method: string): string {
+	let key = method.slice(method.lastIndexOf(".") + 1);
+
+	for (const prefix of ["app_get_", "get_", "app_"]) {
+		if (key.startsWith(prefix) && key.length > prefix.length) {
+			key = key.slice(prefix.length);
+			break;
+		}
+	}
+
+	key = key.replace(/[^A-Za-z0-9_]/g, "_");
+	return key.length > 0 ? key : "result";
+}
+
 // --- Registry & Decorator ---
 
 /** Maps robotModelId to feature class constructors. */
@@ -710,16 +744,18 @@ export abstract class BaseDeviceFeatures {
 
 	/**
 	 * Fetch data and store in folder.
+	 *
+	 * Handles all three answer shapes a Roborock getter produces, because only one of them used to
+	 * arrive. Everything else was dropped without a word - see {@link processNonObjectResult}.
 	 * @param method API method.
 	 * @param params API parameters.
 	 * @param folder Target folder.
-	 * @param mapper Optional data mapper.
+	 * @param mapper Optional data mapper. Applies to object answers only; an array or a scalar has
+	 *   no keys to map, and inventing some would be the guess this whole path exists to avoid.
 	 */
 	protected async requestAndProcess(method: string, params: any[], folder: string, mapper?: (data: any) => Record<string, any> | Promise<Record<string, any>>): Promise<void> {
 		try {
 			const result = await this.deps.adapter.requestsHandler.sendRequest(this.duid, method, params);
-
-			let resultObj: Record<string, unknown> | undefined;
 
 			// Recursively unwrap single-element arrays (common in B01/Tuya responses)
 			let unwrapped = result;
@@ -728,10 +764,8 @@ export abstract class BaseDeviceFeatures {
 			}
 
 			if (typeof unwrapped === "object" && unwrapped !== null && !Array.isArray(unwrapped)) {
-				resultObj = unwrapped as Record<string, unknown>;
-			}
+				let resultObj = unwrapped as Record<string, unknown>;
 
-			if (resultObj) {
 				// Apply mapper
 				if (mapper) {
 					resultObj = await mapper(resultObj);
@@ -742,10 +776,68 @@ export abstract class BaseDeviceFeatures {
 				for (const key in resultObj) {
 					await this.processResultKey(folder, key, resultObj[key]);
 				}
+				return;
 			}
+
+			await this.processNonObjectResult(method, folder, unwrapped);
 		} catch (e: unknown) {
 			this.deps.adapter.rLog("System", this.duid, "Warn", undefined, undefined, `Failed to update ${folder} (method: ${method}): ${this.deps.adapter.errorMessage(e)}`, "warn");
 		}
+	}
+
+	/**
+	 * Publish an answer that is not an object - an array or a bare value.
+	 *
+	 * ## Why this exists
+	 *
+	 * `requestAndProcess` used to write states only when the answer unwrapped to a plain object.
+	 * Everything else fell through to the end of the `try` block and vanished: no state, no log,
+	 * no error. That is not a corner case. Four of the adapter's own eight callers hit it on the
+	 * reference robot (`_appanalysis/19-geraetefaehigkeiten.md` §2):
+	 *
+	 * | Call | Answer | What used to happen |
+	 * | --- | --- | --- |
+	 * | `get_fw_features` | `[111,…,125]` | nothing - `Devices.*.firmwareFeatures` never existed |
+	 * | `get_room_mapping` | `[[16,"23351030",6],…]` | nothing - `map.room_mapping` never existed |
+	 * | `get_server_timer` | `[["1743140136890","on",-1]]` | unwrapped to a 3-element array, then nothing |
+	 * | `get_timer` | `[]` | nothing - indistinguishable from "robot did not answer" |
+	 *
+	 * Measured across all 43 getters the reference robot answers, 28 arrived and **15 were
+	 * dropped**. So the adapter could already publish values it knows nothing about - it just
+	 * refused to do so for a third of them.
+	 *
+	 * ## The rules, and what they deliberately do not do
+	 *
+	 * - **Bare value** (`[101]` → `101`, `["Europe/Berlin"]` → `"Europe/Berlin"`): one state, typed
+	 *   after the value.
+	 * - **Array** (`[]`, `[111,…]`, `[[16,…],…]`): one state holding the JSON, `common.type`
+	 *   `"array"`. An empty array is written as `[]` rather than skipped, because "answered, and
+	 *   the list is empty" and "did not answer" are different facts and the user has no other way
+	 *   to tell them apart.
+	 * - **Nothing at all** (`null`/`undefined`): no state, but a log line. Silence was the defect.
+	 *
+	 * The state carries a name and a type and nothing else - no role beyond the default, no unit,
+	 * no `states` list. That is on purpose: none of those can be derived from a value, and a
+	 * guessed unit is worse than none. They come from the mode tables instead
+	 * (`lib/protocols/roborock_value_lists.json`, `scripts/extract_appplugin_value_lists.js`).
+	 *
+	 * **Read-only, without exception.** A writable state whose range nobody knows is exactly what
+	 * this project has refused four times over: `save_map` drops every zone not sent with it
+	 * (`_appanalysis/14-editor-methoden.md` §2.1), `WashTowelModeMap` jumps 2 → 8 → 10, and the
+	 * robot acknowledges an out-of-range value with `["ok"]` before discarding it. Nothing here
+	 * sets `write`, and `ensureState` defaults it to `false`.
+	 * @param method The method that produced the answer; supplies the state name.
+	 * @param folder Target folder.
+	 * @param value The unwrapped answer.
+	 */
+	protected async processNonObjectResult(method: string, folder: string, value: unknown): Promise<void> {
+		if (value === undefined || value === null) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", undefined, undefined, `${method} answered without data, nothing written to ${folder}`, "debug");
+			return;
+		}
+
+		await this.deps.ensureFolder(`Devices.${this.duid}.${folder}`);
+		await this.processResultKey(folder, resultStateKeyForMethod(method), value);
 	}
 
 	/**
@@ -763,7 +855,13 @@ export abstract class BaseDeviceFeatures {
 		}
 
 		if (!common) {
-			common = { name: key, type: typeof val as ioBroker.CommonType, read: true, write: false };
+			// `typeof []` is "object", which mislabels every list. ioBroker has "array" for exactly
+			// this and both are stored as a JSON string, so the distinction costs nothing.
+			const derivedType: ioBroker.CommonType = Array.isArray(val) ? "array" : (typeof val as ioBroker.CommonType);
+			common = { name: key, type: derivedType, read: true, write: false };
+			if (derivedType === "array" || derivedType === "object") {
+				common.role = "json";
+			}
 		}
 
 		// Handle Objects/Arrays by stringifying them so they don't crash the state

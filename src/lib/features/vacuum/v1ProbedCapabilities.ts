@@ -177,15 +177,13 @@ export function toggleShape(toggle: StatusToggle): ToggleShape {
  * twice; the app reads `…_stretch_…`, not the `…_strech_…` variant that also exists in the
  * catalogue, and both title and detail of all five exist in **all eleven** adapter languages.
  *
- * ## Three neighbours that are deliberately absent
+ * ## Two neighbours that are deliberately absent, and one that moved
  *
- * - **`set_corner_clean_mode`** has the cleanest payload of the lot - its wrapper computes
- *   `{status: a0 ? 1 : 0}` by itself (A65:230197-230215), so not even the caller can get it wrong.
- *   It is still not here, because **there is no `get_corner_clean_mode` anywhere in the plugin**
- *   and the test device's status packet does not carry `corner_clean_mode` either (48 fields,
- *   `_appanalysis/local-mitschnitt.log`). With no way to ask whether a robot has it, the only
- *   options are a switch on every robot or none, and a switch that writes into the void is the
- *   fault this mechanism exists to prevent.
+ * - **`set_corner_clean_mode`** was listed here as unreachable, on the grounds that there is no
+ *   `get_corner_clean_mode` anywhere in the plugin. That part is still true, but the conclusion was
+ *   wrong: the app does not use a getter for it either, it reads `corner_clean_mode` out of the
+ *   **status packet**. It therefore lives in {@link STATUS_FIELD_TOGGLES} now, with the chain
+ *   written out there.
  * - **`set_mop_motor_status`** builds `{status: a0}` (A65:230617-230628) and has **no caller in the
  *   entire plugin** - the argument is never computed anywhere, so whether 1 means on is a guess.
  *   Same shape as `set_airdry_hours` in `_appanalysis/18-funktionsluecken.md` §C18.
@@ -268,6 +266,103 @@ export const STATUS_TOGGLES: ReadonlyArray<StatusToggle> = [
 /** Finds the toggle a command belongs to, by either of its two names. */
 export function statusToggleFor(command: string): StatusToggle | undefined {
 	return STATUS_TOGGLES.find((toggle) => toggle.setter === command || toggle.getter === command);
+}
+
+/**
+ * An on/off setting that has **no getter** - the robot carries it in the status packet instead.
+ *
+ * ## Why this is a second table and not a `StatusToggle` with an empty getter
+ *
+ * The two differ in the one thing that matters here: **what decides whether the switch exists.**
+ * A {@link StatusToggle} asks the robot a `get_*` and takes `unknown_method` for a no. These have
+ * nothing to ask, so the question becomes "does the robot mention this field when it reports its
+ * status" - a different mechanism, on a different schedule (the status arrives on every poll, the
+ * probe runs once), with a different failure mode. Folding them together would mean a `getter`
+ * field that must be empty and a probe that must be skipped, i.e. two special cases inside the
+ * existing path rather than one small path beside it.
+ *
+ * It also removes the need for the read-back these otherwise all do: the value is in the packet
+ * that arrives anyway, so there is nothing to ask for after a write.
+ */
+export interface StatusFieldToggle {
+	/** Key in the `get_status` answer that both unlocks the switch and carries its position. */
+	statusField: string;
+	/** Writing command. */
+	setter: string;
+	/** Roborock string key of the label, and what to show when the catalogue has no entry. */
+	labelKey: string;
+	labelFallback: string;
+	/** Roborock string key of the explanation shown as the object's description. */
+	descKey: string;
+	descFallback: string;
+	/** Where the field, the payload and the label were read; goes into the log of a refused write. */
+	fundstelle: string;
+}
+
+/**
+ * The status-carried on/off settings, and the proof behind each one.
+ *
+ * ## High-Intensity Corner Mopping
+ *
+ * This one entry closes a gap that was written up as unclosable. `v1ProbedCapabilities` used to say
+ * so in as many words: the payload is the cleanest of any setting - the wrapper computes
+ * `{status: a0 ? 1 : 0}` by itself, so not even a caller can get it wrong (A65:230197-230216) - but
+ * there is no `get_corner_clean_mode` anywhere in the plugin, so there was no way to ask whether a
+ * robot has it, and a switch for everyone was not an option.
+ *
+ * **There is a way, and the app uses it.** The switch position comes from the status packet:
+ *
+ * ```
+ * status.corner_clean_mode  ->  RSM.cornerCleanOn        A65:223836-223839  (!!value)
+ * RSM.cornerCleanOn         ->  component state          A65:251550-251551
+ * component state           ->  ToggleSwitch.isOn        A65:249108-249112
+ * ```
+ *
+ * That the object read at A65:223836 really is the status packet is not taken on the name: the same
+ * function reads `dss`, `wash_status`, `error_code`, `dock_error_status`, `water_box_mode`,
+ * `dock_type`, `auto_dust_collection`, `mop_mode`, `rdt`, `wash_ready` and `clean_percent` from it
+ * (A65:223549-223796), all of which the test device really sends.
+ *
+ * So the field is the capability answer as well. The test device does **not** send it - its status
+ * packet has 51 fields and `corner_clean_mode` is not among them, measured twice nearly five hours
+ * apart - and independently it does not announce the feature either: bit 31 of
+ * `new_feature_info_str` is clear, and that bit is what gates the whole view in the app
+ * (`isCornerCleanModeSupported`, A65:236944-236972, read at A65:245600 and A65:251539). **Two
+ * unrelated sources agree that this robot does not have it**, which is the strongest evidence in
+ * the whole capability round that the field is the right question to ask.
+ *
+ * The bit is the app's gate and would be the more faithful copy, but it is not usable here: neither
+ * feature bitfield reaches the adapter at all (see `lib/featureStr.ts`). The status field is
+ * available today, it is what the app reads the *value* from, and on the one robot that can be
+ * checked the two agree.
+ *
+ * ## What the switch does not copy, on purpose
+ *
+ * The app refuses to switch this **on** while the mopping route is *Fast*, with the toast
+ * `cannot_cornerclean_withfastclean_toast` (A65:246775-246778 and A65:246819-246829); switching it
+ * off is always allowed. That guard is not reproduced here, because it is a rule about a second
+ * setting whose value this module does not own, and enforcing half of it would be worse than
+ * naming it. It is in the description instead, in Roborock's own wording.
+ *
+ * Roborock also calls it a single-use mode (`corner_clean_switch_desc`), so the robot is expected
+ * to clear the flag itself after a run. Nothing here fights that: the switch mirrors whatever the
+ * next status packet says.
+ */
+export const STATUS_FIELD_TOGGLES: ReadonlyArray<StatusFieldToggle> = [
+	{
+		statusField: "corner_clean_mode",
+		setter: "set_corner_clean_mode",
+		labelKey: "corner_clean_switch_title",
+		labelFallback: "High-Intensity Corner Mopping",
+		descKey: "corner_clean_switch_desc",
+		descFallback: "The robot will complete Deep mode around corners, which is a single-use mode. The Roborock app refuses to switch this on while the mopping route is set to Fast.",
+		fundstelle: "A65:230197-230216, A65:223836-223839, A65:246779-246788"
+	}
+];
+
+/** Finds the status-carried toggle a command or status field belongs to. */
+export function statusFieldToggleFor(nameOrField: string): StatusFieldToggle | undefined {
+	return STATUS_FIELD_TOGGLES.find((toggle) => toggle.setter === nameOrField || toggle.statusField === nameOrField);
 }
 
 /**
@@ -692,6 +787,47 @@ export class V1ProbedCapabilityService {
 	}
 
 	/**
+	 * Registers one status-carried on/off setting.
+	 *
+	 * No read button beside it, unlike {@link registerStatusToggle}: there is nothing to read. The
+	 * value arrives with the next status packet whether anyone asks or not, so a button would be a
+	 * control that does nothing.
+	 *
+	 * @param toggle Which setting to register.
+	 * @param addCommand Registration callback of the feature class.
+	 */
+	public registerStatusFieldToggle(toggle: StatusFieldToggle, addCommand: (name: string, spec: Record<string, unknown>, group?: string) => void): void {
+		addCommand(toggle.setter, {
+			type: "boolean",
+			// Same reasoning as `registerStatusToggle`: without a switch role `main.ts` treats a
+			// boolean as a button that only ever fires `true`, and the switch could not be turned off.
+			role: "switch.enable",
+			name: this.text(toggle.labelKey, toggle.labelFallback),
+			desc: this.text(toggle.descKey, toggle.descFallback),
+			def: false,
+			write: true
+		}, "settings");
+
+		this.claimed.add(toggle.setter);
+	}
+
+	/**
+	 * Publishes the position of one status-carried setting onto its switch.
+	 *
+	 * @param toggle Which setting the value belongs to.
+	 * @param raw Value of the status field, as the robot sent it.
+	 */
+	public async applyStatusFieldValue(toggle: StatusFieldToggle, raw: unknown): Promise<void> {
+		// `!!value` is what the app does (A65:223837-223839), not a comparison against 1 - this is
+		// the one place where the two differ, and copying the app is what keeps an unexpected value
+		// from reading as "off".
+		await this.deps.adapter.setStateChanged(`Devices.${this.duid}.settings.${toggle.setter}`, {
+			val: Boolean(finiteNumber(raw) ?? raw),
+			ack: true
+		});
+	}
+
+	/**
 	 * Publishes the position of one on/off setting.
 	 *
 	 * Written onto the switch itself rather than into a second read-only state. These five are not
@@ -742,6 +878,13 @@ export class V1ProbedCapabilityService {
 				? { method, params: [flag] }
 				: { method, params: { status: flag } };
 		}
+
+		// The status-carried settings have no getter, so there is only the one direction to build.
+		// The wrapper of `set_corner_clean_mode` composes the object itself (A65:230201-230212); the
+		// same shape is sent here, because what goes on the wire is the wrapper's output, not its
+		// argument.
+		const fieldToggle = statusFieldToggleFor(method);
+		if (fieldToggle) return { method, params: { status: toBooleanFlag(value) } };
 
 		if (method === GET_TIMEZONE) return { method: GET_TIMEZONE, params: [] };
 		if (method === GET_DUST_COLLECTION_MODE) return { method: GET_DUST_COLLECTION_MODE, params: [] };

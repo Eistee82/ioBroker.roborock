@@ -25,6 +25,7 @@ import {
 	GET_TIMEZONE,
 	SET_DRYER_SETTING,
 	SET_DUST_COLLECTION_MODE,
+	STATUS_FIELD_TOGGLES,
 	STATUS_TOGGLES,
 	V1ProbedCapabilityService
 } from "./v1ProbedCapabilities";
@@ -1533,6 +1534,9 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			await this.republishWaterBoxModeCommand();
 		}
 
+		// The settings that have no getter: the packet is both the capability answer and the value.
+		await this.applyStatusFieldToggles(validStatus);
+
 		if (validStatus.dss !== undefined) {
 			await this.updateDockingStationStatus(Number(validStatus.dss));
 			delete validStatus.dss;
@@ -1838,6 +1842,15 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	private readonly probedStatusToggles = new Set<string>();
 
 	/**
+	 * Status-carried settings this robot has shown a field for.
+	 *
+	 * Grows from `processStatus`, not from the probe: these have no getter to ask (see
+	 * {@link STATUS_FIELD_TOGGLES}). A setter stays out of the object tree until the robot has
+	 * mentioned its field at least once.
+	 */
+	private readonly seenStatusFieldToggles = new Set<string>();
+
+	/**
 	 * Asks the robot about each of the five on/off settings and remembers the ones it has.
 	 *
 	 * All five are read-probed, so an unexpected answer costs nothing: `get_*` cannot change the
@@ -1879,6 +1892,58 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 			this.probedService.registerStatusToggle(toggle, (name, spec, group) => this.addCommand(name, spec, group));
 			void this.readStatusToggle(toggle);
+		}
+	}
+
+	/**
+	 * Unlocks and updates the settings the robot carries in its status packet.
+	 *
+	 * Runs on every poll, because that is the only place these appear. A field the robot never
+	 * mentions never creates a switch - which is the whole capability decision, and it costs no
+	 * request at all.
+	 *
+	 * The value is written on every packet and not only on the first, deliberately: Roborock calls
+	 * corner mopping a single-use mode, so the robot is expected to clear it by itself after a run.
+	 * A switch that only ever learnt the first value would then show "on" for a setting the robot
+	 * has already dropped.
+	 *
+	 * @param status The robot's `get_status` result.
+	 */
+	private async applyStatusFieldToggles(status: Record<string, any>): Promise<void> {
+		for (const toggle of STATUS_FIELD_TOGGLES) {
+			const raw = status?.[toggle.statusField];
+			if (raw === undefined || raw === null) continue;
+
+			if (!this.seenStatusFieldToggles.has(toggle.setter)) {
+				// A model class that already declares the setter owns it, mirroring included;
+				// unlocking it a second time here would put one command in two folders. Same guard as
+				// `detectStatusToggles` - but asked **only before the first registration**, because
+				// after ours the command is in a folder too and the guard would then skip every
+				// further packet, freezing the switch at the first value it ever saw.
+				if (this.folderOfCommand(toggle.setter)) continue;
+
+				this.seenStatusFieldToggles.add(toggle.setter);
+				this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined,
+					`The robot reports ${toggle.statusField}, so ${toggle.setter} is offered (${toggle.fundstelle}).`, "info");
+				await this.applyFeature(Feature.StatusFieldToggles);
+			}
+
+			await this.probedService.applyStatusFieldValue(toggle, raw);
+		}
+	}
+
+	/**
+	 * Publishes the status-carried settings the robot has shown a field for.
+	 *
+	 * Applied from {@link applyStatusFieldToggles}, so by the time this runs at least one field has
+	 * arrived. No read is started afterwards, unlike {@link initStatusToggles}: the value came with
+	 * the packet that triggered this, and the caller writes it immediately after.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.StatusFieldToggles)
+	public async initStatusFieldToggles(): Promise<void> {
+		for (const toggle of STATUS_FIELD_TOGGLES) {
+			if (!this.seenStatusFieldToggles.has(toggle.setter)) continue;
+			this.probedService.registerStatusFieldToggle(toggle, (name, spec, group) => this.addCommand(name, spec, group));
 		}
 	}
 

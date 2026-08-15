@@ -198,6 +198,21 @@ das geschieht in der Roborock-App unter *Bodenbelag bearbeiten*. Der Schalter hi
 Verhalten ein; die Richtungen kann er nicht setzen, weil die beiden Werte, die jener Befehl trägt,
 nicht belegt sind.
 
+**Kräftiges Wischen für Ecken** ist ein achter Schalter und der einzige, der auf einem anderen Weg
+freigeschaltet wird. Einen Lesebefehl dafür gibt es nirgends — die Roborock-App benutzt auch keinen.
+Sie liest die Stellung aus dem Status, den der Roboter von sich aus schickt, und genau das tut
+dieser Adapter: Ein Roboter, der das Feld nennt, bekommt den Schalter; ein Roboter, der es nie
+nennt, bekommt nichts. Deshalb ist es der einzige Schalter ohne Leseknopf daneben — es gibt nichts
+zu drücken. Das Testgerät hat die Funktion nicht, und es sagt das doppelt: Das Feld fehlt in seinem
+Status, und das Firmware-Kennzeichen, das die App prüft, ist ebenfalls nicht gesetzt.
+
+Zwei Dinge dazu stammen von Roborock und sind wissenswert. Es ist ein **Einmal-Modus**: Der Roboter
+löscht ihn nach einem Lauf voraussichtlich selbst wieder, ein Schalter, der von allein auf Aus
+zurückfällt, ist also das Werk des Roboters und kein verlorenes Kommando. Und die App **verweigert
+das Einschalten, solange die Wischroute auf Schnell steht**. Diese Regel wird hier nicht erzwungen,
+weil sie eine Regel über eine zweite Einstellung ist, die dieser Adapter nicht besitzt; verwirft der
+Roboter das Kommando deshalb, zeigt es sich im Log.
+
 **Laden außerhalb der Spitzenzeiten** ist ein zweites Tagesfenster neben Nicht-Stören und genauso
 gebaut: Ein Fenster zu schreiben schaltet es ein, ein eigener Knopf schaltet es aus, und dazwischen
 gibt es kein Kennzeichen, weil das Protokoll keines hat. Was es bewirkt, sagt Roborock selbst: Der

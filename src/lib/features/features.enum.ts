@@ -29,6 +29,10 @@ export enum Feature {
 	// `get_*`/`set_*` pair around a `status` field. Each is unlocked by its own getter; the feature
 	// is applied when at least one of them survived, and registers exactly those.
 	StatusToggles = "StatusToggles", // Adds the probed on/off settings
+	// The other kind of on/off setting: no getter at all, the robot carries it in the status packet.
+	// Unlocked by the field turning up there rather than by a probe, so this one is applied from
+	// `processStatus` and not from `detectProbedCapabilities`. See STATUS_FIELD_TOGGLES.
+	StatusFieldToggles = "StatusFieldToggles", // Adds the on/off settings the status packet carries
 	SoundVolume = "SoundVolume", // Adds the speaking volume and the sound test
 	DeviceIdentity = "DeviceIdentity", // Adds the serial number and the locale block, read-only
 	MapInventory = "MapInventory", // Adds which map is loaded and what backups exist, read-only
