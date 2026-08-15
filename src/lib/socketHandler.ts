@@ -1,8 +1,20 @@
 // /lib/socketHandler.ts
 
 import { Roborock } from "../main"; // Import main adapter type
+import type { BaseDeviceFeatures } from "./features/baseDeviceFeatures";
 import { isReportableMapTheme } from "./map/mapColorScheme";
 import { NON_ROOM_STATE_NAMES, floorFolderId, isRoomSwitchOn, normalizeMapFlag, normalizeRoomId } from "./map/roomKey";
+import {
+	APP_RC_END,
+	APP_RC_MOVE,
+	APP_RC_START,
+	APP_RC_STOP,
+	REMOTE_LAUNCH_MS,
+	REMOTE_LEASE_MS,
+	REMOTE_REFRESH_MS,
+	isKnownRemoteDirection,
+	remoteStartVerdict
+} from "./features/vacuum/remoteControl";
 
 // Robot object definition
 interface Robot {
@@ -65,7 +77,18 @@ export class socketHandler {
 		this.commandHandlers.set("get_translations", () => this.handleGetTranslations());
 		this.commandHandlers.set("set_map_theme", (msg) => this.handleSetMapTheme(msg));
 		this.commandHandlers.set("set_room_selection", (msg) => this.handleSetRoomSelection(msg));
+
+		this.commandHandlers.set("remote_start", (msg, id) => this.handleRemoteStart(msg, id));
+		this.commandHandlers.set("remote_move", (msg, id) => this.handleRemoteMove(msg, id));
+		this.commandHandlers.set("remote_stop", (msg, id) => this.handleRemoteSimple(msg, APP_RC_STOP, id));
+		this.commandHandlers.set("remote_end", (msg, id) => this.handleRemoteSimple(msg, APP_RC_END, id));
 	}
+
+	/**
+	 * Milliseconds the app waits after pausing a running job before it starts the remote mode
+	 * (`_delayedSuccessCallback`, A65:785931-785939).
+	 */
+	private static readonly REMOTE_PAUSE_SETTLE_MS = 800;
 
 	/**
 	 * Handles incoming 'sendTo' messages.
@@ -571,6 +594,152 @@ export class socketHandler {
 		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'set_room_selection' for floor ${mapFlag}: ${selected.length ? selected.join(", ") : "nothing"} (${written} switch(es) changed)`, "info");
 
 		return { result: "ok", mapFlag, selected: selected.sort((left, right) => left - right) };
+	}
+
+	/**
+	 * Finds the feature handler of a device that really offers remote control.
+	 *
+	 * The gate is the registered command folder and nothing else - the same boundary `set_state`
+	 * draws. A robot whose firmware did not report feature 125 never gets the folder
+	 * (`features/vacuum/v1VacuumFeatures.ts`, `detectRemoteControl`), so these four messages cannot
+	 * reach it however they are addressed.
+	 *
+	 * @param duid Device the message names.
+	 * @returns The handler; throws when the device is unknown or cannot be driven.
+	 */
+	private remoteHandler(duid: unknown): BaseDeviceFeatures {
+		if (!duid || typeof duid !== "string" || !SAFE_PATH_SEGMENT.test(duid)) {
+			throw new Error("Invalid remote control message: requires a valid 'duid'");
+		}
+
+		const handler = this.adapter.deviceFeatureHandlers.get(duid);
+		if (!handler) throw new Error(`No handler for DUID ${duid}`);
+		if (!handler.hasCommandFolder("remoteControl")) {
+			throw new Error(`DUID ${duid} does not offer remote control`);
+		}
+		return handler;
+	}
+
+	/**
+	 * Reads the robot's last reported state code.
+	 * @param duid Device to look at.
+	 * @returns The code, or null when none was ever written.
+	 */
+	private async robotStateCode(duid: string): Promise<number | null> {
+		const state = await this.adapter.getStateAsync(`Devices.${duid}.deviceStatus.state`);
+		const value = Number(state?.val);
+		return Number.isFinite(value) ? value : null;
+	}
+
+	/**
+	 * Opens the remote control mode, asking first where the app asks first.
+	 *
+	 * The three answers mirror `_checkRemoteControlCondition` (A65:785665-785840) and nothing beyond
+	 * it, so this side never blocks something the app allows:
+	 *
+	 * - `refused` while the firmware is updating - the app refuses that outright, with a toast.
+	 * - `confirm` while a job is running: the caller has to come back with `confirmed: true`, and
+	 *   only then is the job paused. Answering the question here rather than in the tab keeps the
+	 *   rule in one place, and a caller that ignores the answer simply does not start.
+	 * - `accepted` otherwise.
+	 *
+	 * The 800 ms between the pause and the start are the app's own
+	 * (`_delayedSuccessCallback`, A65:785931-785939), not a guess about what the robot needs.
+	 *
+	 * `launchMs` travels back so the caller can grey its pad out for as long as the app does: the
+	 * robot answers `app_rc_start` long before it acts on a direction, and the app sends nothing for
+	 * six seconds (A65:790960-790975).
+	 *
+	 * @param message Payload with `duid` and an optional `confirmed`.
+	 * @param id Callback id, only used for the log line.
+	 */
+	private async handleRemoteStart(
+		message: { duid: string; confirmed?: boolean },
+		id?: string | number
+	): Promise<{ result: "accepted" | "confirm" | "refused"; stateCode: number | null; launchMs?: number; refreshMs?: number; leaseMs?: number }> {
+		const handler = this.remoteHandler(message?.duid);
+		const duid = message.duid;
+
+		const stateCode = await this.robotStateCode(duid);
+		const verdict = remoteStartVerdict(stateCode);
+
+		if (verdict === "refuse") {
+			this.adapter.rLog("System", duid, "Info", undefined, undefined,
+				`Refusing 'remote_start': the robot reports state ${stateCode} (updating).`, "info");
+			return { result: "refused", stateCode };
+		}
+
+		if (verdict === "confirm" && message?.confirmed !== true) {
+			return { result: "confirm", stateCode };
+		}
+
+		if (verdict === "confirm") {
+			this.adapter.rLog("System", duid, "Info", undefined, undefined,
+				`'remote_start' confirmed while the robot is in state ${stateCode}; pausing the run first.`, "info");
+			await this.adapter.requestsHandler.command(handler, duid, "app_pause", undefined, id ? String(id) : undefined);
+			await this.wait(socketHandler.REMOTE_PAUSE_SETTLE_MS);
+		}
+
+		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'remote_start' (ID: ${id})`, "info");
+		await this.adapter.requestsHandler.command(handler, duid, APP_RC_START, undefined, id ? String(id) : undefined);
+
+		return { result: "accepted", stateCode, launchMs: REMOTE_LAUNCH_MS, refreshMs: REMOTE_REFRESH_MS, leaseMs: REMOTE_LEASE_MS };
+	}
+
+	/**
+	 * Drives one step in one of the app's eight directions.
+	 *
+	 * **One message, one move.** Nothing here repeats anything: the robot acts on a move for at most
+	 * 1.5 s and then stops by itself, so a caller that goes silent - a closed tab, a sleeping browser,
+	 * a broken connection - leaves a robot that stops. Repeating the move in the adapter would take
+	 * that away and turn a lost "stop" into a collision.
+	 *
+	 * @param message Payload with `duid` and a `direction` from 0 to 8; 0 means stand still.
+	 * @param id Callback id, only used for the log line.
+	 */
+	private async handleRemoteMove(message: { duid: string; direction: unknown }, id?: string | number): Promise<CommandAcknowledgement> {
+		const handler = this.remoteHandler(message?.duid);
+
+		const direction = Number(message?.direction);
+		if (!Number.isFinite(direction) || !isKnownRemoteDirection(direction)) {
+			throw new Error(`Invalid 'remote_move' message: 'direction' must be 0 to 8, received ${JSON.stringify(message?.direction)}`);
+		}
+
+		// Deliberately at debug: this arrives about every 400 ms while a key is held, and an info
+		// line per move would bury everything else in the log.
+		this.adapter.rLog("System", message.duid, "Debug", undefined, undefined, `Received 'remote_move' direction ${direction}`, "debug");
+
+		await this.adapter.requestsHandler.command(handler, message.duid, APP_RC_MOVE, direction, id ? String(id) : undefined);
+		return { result: "accepted" };
+	}
+
+	/**
+	 * Stops the motion (`app_rc_stop`) or leaves the mode (`app_rc_end`).
+	 *
+	 * The two are not the same call and not the same effect: the app sends the stop whenever both
+	 * components of the motion fall to zero and keeps the mode open (A65:790666-790690), and the end
+	 * only when it really leaves (A65:791093-791096).
+	 *
+	 * @param message Payload with `duid`.
+	 * @param method Which of the two to send.
+	 * @param id Callback id, only used for the log line.
+	 */
+	private async handleRemoteSimple(message: { duid: string }, method: string, id?: string | number): Promise<CommandAcknowledgement> {
+		const handler = this.remoteHandler(message?.duid);
+
+		this.adapter.rLog("System", message.duid, "Info", undefined, undefined, `Received '${method}' (ID: ${id})`, "info");
+		await this.adapter.requestsHandler.command(handler, message.duid, method, undefined, id ? String(id) : undefined);
+		return { result: "accepted" };
+	}
+
+	/**
+	 * Waits, on a timer the adapter owns so `onUnload` disposes of it.
+	 * @param ms How long to wait.
+	 */
+	private wait(ms: number): Promise<void> {
+		return new Promise<void>((resolve) => {
+			this.adapter.setTimeout(() => resolve(), ms);
+		});
 	}
 
 	/**

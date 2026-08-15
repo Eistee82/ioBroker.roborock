@@ -371,5 +371,22 @@
   "Live position: match the robot": "Live positie: afstemmen op de robot",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "Laat de adapter zelf uitzoeken hoe vaak deze robot zijn positie bijwerkt en stemt het tempo van de live positie daarop af. Uitschakelen om in plaats daarvan de vaste waarde hierboven te gebruiken. De standaardwaarde van 1500 ms is aan één robot gemeten; een robot die drie keer zo snel meldt zou erdoor worden afgeremd, en de eigenaar zou nooit merken dat er een instelling voor is. Gemeten wordt de afstand tussen twee waarnemingen van een verandering, niet het moment waarop de robot die schreef, en nooit fijner dan de huidige pauze — een snellere robot wordt daarom stapsgewijs herkend en niet in één keer. Alleen een robot die echt werkt telt mee, nooit een die in het dockingstation staat; het resultaat komt nooit onder de snelst toegestane waarde en nooit boven de twee seconden van een stilstaande robot. Waar de adapter op uitkomt staat in het logboek en in de alleen-lezen state map.liveTrackLearnedPause van elke robot. Staat de waarde hierboven op 0, dan is de live positie helemaal uit en kan deze optie haar niet weer inschakelen.",
   "ui_room_name_invalid": "Een kamernaam moet tussen 1 en %s tekens lang zijn.",
-  "ui_room_rename": "Naam"
+  "ui_room_rename": "Naam",
+  "ui_remote": "Afstandsbediening",
+  "ui_remote_hint": "Om schade per ongeluk te voorkomen, moet je de robot in de gaten houden.",
+  "ui_remote_start": "Afstandsbediening starten",
+  "ui_remote_confirm": "Als u afstandsbediening start, wordt de huidige reiniging onderbroken.",
+  "ui_remote_confirm_yes": "OKÉ",
+  "ui_remote_confirm_no": "Annuleren",
+  "ui_remote_refused_updating": "Bijwerken wordt uitgevoerd. Probeer het later opnieuw.",
+  "ui_remote_end": "Afstandsbediening beëindigen",
+  "ui_remote_launching": "De robot start op, klaar over %s s.",
+  "ui_remote_forward": "Vooruit",
+  "ui_remote_back": "Achteruit",
+  "ui_remote_left": "Naar links draaien",
+  "ui_remote_right": "Naar rechts draaien",
+  "ui_remote_forward_left": "Vooruit links",
+  "ui_remote_forward_right": "Vooruit rechts",
+  "ui_remote_back_left": "Achteruit links",
+  "ui_remote_back_right": "Achteruit rechts"
 }

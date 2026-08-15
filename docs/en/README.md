@@ -215,6 +215,43 @@ so an instance running **Local only** has never received them - it keeps the ada
 built-in dock symbol instead, and so does a robot that reports no dock type at all. The
 maps of the B01/Q10 pipelines keep the built-in symbol as well.
 
+### Driving the robot by hand
+
+The **remote control** panel drives the robot with a nine-key pad, the way the Roborock app
+does. It appears only for a robot whose own firmware reports that it can be driven; a robot
+that does not report it gets no panel and no objects, so there is nothing to press that
+would do nothing.
+
+**It drives only while a key is held.** Every step the robot is sent carries a time limit of
+1.5 seconds and is renewed roughly every 0.4 seconds - the app's own arrangement, and the
+whole safety design. If the browser tab is closed, sent to the background, loses its
+connection or freezes, no further step arrives and the robot stops by itself within one and a
+half seconds. Nothing in the adapter repeats a step on its own, so a lost "stop" cannot leave
+a robot driving. The arrow keys work as well while the panel is open, for the four straight
+directions; the diagonals stay on the pad.
+
+Starting is a mode, not a single command, and leaving it is a separate one. The adapter
+therefore ends the mode by itself after two seconds without any instruction, ends it when the
+adapter shuts down, and ends a mode that an earlier adapter run left open the next time it
+starts. That last one only ever applies to a session this adapter opened - a robot being
+driven from the phone app is left alone.
+
+Two things it deliberately does not do. It does not interrupt a running job silently: if the
+robot is cleaning, returning to the dock or driving to a spot, the panel asks first and then
+pauses the job before it starts, exactly as the app does. And while the robot is installing
+firmware it refuses outright.
+
+There is **no position display during remote control**, and that is not an omission. The
+robot writes its position about once every three seconds, so a marker on the map would be up
+to three seconds behind the machine in the room - which is worse than none, because it looks
+current. The Roborock app shows no map on its own remote page for the same reason. Roborock's
+own advice stands at the top of the panel: keep an eye on the robot.
+
+For scripts the same four calls sit in the `remoteControl` folder: a start button, a
+direction with the nine positions the app can express, a stop and an end. A written direction
+drives one step - at most 1.5 seconds - so a script has to repeat it to keep going, and the
+adapter closes the mode two seconds after the last one either way.
+
 ## Reference
 
 <!-- BEGIN:config -->

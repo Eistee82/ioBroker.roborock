@@ -76,6 +76,10 @@ describe("which probed capabilities a robot is offered", () => {
 
 		depsMock = {
 			adapter: adapterMock,
+			// Required by `FeatureDependencies` and left out until the remote control detection
+			// became the first thing here to read it. The robot answers `get_fw_features` with `{}`
+			// through the mock above, so it is offered nothing - which is what this file wants.
+			http_api: adapterMock.http_api,
 			ensureState: vi.fn().mockResolvedValue(undefined),
 			ensureFolder: vi.fn().mockResolvedValue(undefined),
 			log: adapterMock.log,

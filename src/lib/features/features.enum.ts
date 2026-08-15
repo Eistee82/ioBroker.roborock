@@ -25,6 +25,10 @@ export enum Feature {
 	DryerSetting = "DryerSetting", // Adds the drying selector
 	RobotTimezone = "RobotTimezone", // Adds the robot time zone state and its read button
 	CleanEstimate = "CleanEstimate", // Adds the estimate of the running clean
+	// Not a probe: the four `app_rc_*` calls are all actions, and a capability probe may only send a
+	// `get_*` (capabilityProbe.ts). The robot reports this one itself, as firmware feature 125 - the
+	// same number the app reads in `isRemoteSupported()`. See lib/features/vacuum/remoteControl.ts.
+	RemoteControl = "RemoteControl", // Adds the four remote control commands
 
 	// --- Actions primarily creating States (non-command) ---
 	LiveVideo = "LiveVideo", // Creates camera stream URL states

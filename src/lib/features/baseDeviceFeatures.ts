@@ -297,6 +297,22 @@ export abstract class BaseDeviceFeatures {
 		// safe answer for a device nobody has measured.
 	}
 
+	/**
+	 * Ends a remote control session before the adapter goes down.
+	 *
+	 * Called from `onUnload`, which js-controller does not let anybody await - so this can only
+	 * start the two closing calls, never see them arrive. It is deliberately a no-op by default:
+	 * only `V1VacuumFeatures` can enter the mode in the first place, and a protocol that has no such
+	 * mode must not start sending calls into a shutdown.
+	 *
+	 * The robot is not left driving either way: every `app_rc_move` carries `duration: 1500`, so it
+	 * stops by itself within 1.5 s of the last one. What this saves is the **mode**; what saves it
+	 * when the adapter did not get this far is the recovery on the next start.
+	 */
+	public shutdownRemoteControl(): void {
+		// Nothing to end on a device that cannot be driven by hand.
+	}
+
 	/** Every registered command as `folder.name`, for telling "something was added" from "something happened". */
 	private commandInventory(): string[] {
 		const inventory = Object.keys(this.commands).map((name) => `commands.${name}`);

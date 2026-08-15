@@ -39,6 +39,9 @@ import type { MapColorScheme } from "../engine/mapOverlayColors";
 import { CommandFeedbackSource } from "../feedback/commandFeedbackSource";
 import { formatFeedbackMessage } from "../feedback/commandFeedback";
 import type { CommandFeedbackSeverity } from "../feedback/commandFeedback";
+import { RemotePad } from "./RemotePad";
+import { EMPTY_REMOTE, RemoteDriver } from "../remote/remoteDriver";
+import type { RemoteDriverModel } from "../remote/remoteDriver";
 
 interface MapViewProps {
 	socket: AdminConnection;
@@ -151,11 +154,14 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [mapColorScheme, setMapColorScheme] = useState<MapColorScheme>("light");
 
 	const [robotSettings, setRobotSettings] = useState<RobotSettingsModel | null>(null);
+	// Everything about driving the robot by hand; `supported: false` keeps the pad away entirely.
+	const [remote, setRemote] = useState<RemoteDriverModel>(EMPTY_REMOTE);
 
 	const connection = useMemo(() => createEngineConnection(socket), [socket]);
 	const historySourceRef = useRef<CleaningHistorySource | null>(null);
 	const settingsSourceRef = useRef<RobotSettingsSource | null>(null);
 	const feedbackSourceRef = useRef<CommandFeedbackSource | null>(null);
+	const remoteDriverRef = useRef<RemoteDriver | null>(null);
 
 	/** Everything the tab itself could not do; always an error, never an open question. */
 	const showError = useCallback((message: string) => {
@@ -293,6 +299,34 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 
 	useEffect(() => {
 		feedbackSourceRef.current?.setDevice(instanceId, selectedRobot);
+	}, [connection, instanceId, selectedRobot]);
+
+	/*
+	 * Driving the robot by hand.
+	 *
+	 * Its own object rather than part of the engine, because it is the one control on this page that
+	 * has to keep working while nothing is being drawn - and because everything that ends a press
+	 * belongs in one place. See `remote/remoteDriver.ts` for the rule it keeps.
+	 */
+	useEffect(() => {
+		const driver = new RemoteDriver(connection, {
+			onChange: setRemote,
+			onError: showError,
+			t: (key, fallback) => {
+				const translated = I18n.t(key);
+				return translated === key ? fallback : translated;
+			}
+		});
+		remoteDriverRef.current = driver;
+
+		return () => {
+			driver.destroy();
+			remoteDriverRef.current = null;
+		};
+	}, [connection, showError]);
+
+	useEffect(() => {
+		void remoteDriverRef.current?.setDevice(instanceId, selectedRobot);
 	}, [connection, instanceId, selectedRobot]);
 
 	const writeSetting = useCallback((write: SettingWrite) => {
@@ -435,6 +469,14 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 					onAdd={kind => engineRef.current?.startMapZone(kind)}
 					onSave={() => void engineRef.current?.saveMapZone()}
 					onCancel={() => engineRef.current?.cancelMapZone()}
+				/>
+				<RemotePad
+					remote={remote}
+					onStart={confirmed => void remoteDriverRef.current?.start(confirmed)}
+					onCancelConfirmation={() => remoteDriverRef.current?.cancelConfirmation()}
+					onPress={direction => remoteDriverRef.current?.press(direction)}
+					onRelease={() => remoteDriverRef.current?.release()}
+					onEnd={() => void remoteDriverRef.current?.end()}
 				/>
 				<SettingsPanel
 					settings={robotSettings}

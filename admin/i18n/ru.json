@@ -371,5 +371,22 @@
   "Live position: match the robot": "Живое положение: подстроиться под робота",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "Позволяет адаптеру самому определить, как часто именно этот робот обновляет своё положение, и подстроить под это темп живого положения. Отключите, чтобы использовать фиксированное значение выше. Значение по умолчанию 1500 мс измерено на одном роботе; робот, который сообщает втрое быстрее, был бы им сдержан, а его владелец никогда бы не узнал, что есть настройка. Измеряется расстояние между двумя наблюдениями изменения, а не момент записи роботом, и не точнее текущей паузы — поэтому более быстрый робот распознаётся постепенно, а не сразу. Учитывается только работающий робот, никогда стоящий в доке; результат не опускается ниже самого быстрого допустимого значения и не превышает двух секунд, которые получает стоящий робот. Итог записывается в журнал и в состояние только для чтения map.liveTrackLearnedPause каждого робота. Если значение выше равно 0, живое положение полностью отключено, и эта опция не может его включить.",
   "ui_room_name_invalid": "Название комнаты должно содержать от 1 до %s символов.",
-  "ui_room_rename": "Название"
+  "ui_room_rename": "Название",
+  "ui_remote": "Ручное управление",
+  "ui_remote_hint": "Следите за роботом, чтобы избежать случайных повреждений.",
+  "ui_remote_start": "Запуск дистанционного управления",
+  "ui_remote_confirm": "При запуске режима «Дистанционное управление» текущая уборка будет приостановлена.",
+  "ui_remote_confirm_yes": "ОК",
+  "ui_remote_confirm_no": "Отмена",
+  "ui_remote_refused_updating": "Выполняется обновление робота. Повторите попытку позже.",
+  "ui_remote_end": "Завершить дистанционное управление",
+  "ui_remote_launching": "Робот запускается, готов через %s с.",
+  "ui_remote_forward": "Вперёд",
+  "ui_remote_back": "Назад",
+  "ui_remote_left": "Поворот влево",
+  "ui_remote_right": "Поворот вправо",
+  "ui_remote_forward_left": "Вперёд влево",
+  "ui_remote_forward_right": "Вперёд вправо",
+  "ui_remote_back_left": "Назад влево",
+  "ui_remote_back_right": "Назад вправо"
 }

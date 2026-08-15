@@ -371,5 +371,22 @@
   "Live position: match the robot": "Live position: match the robot",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.",
   "ui_room_name_invalid": "A room name needs between 1 and %s characters.",
-  "ui_room_rename": "Name"
+  "ui_room_rename": "Name",
+  "ui_remote": "Remote control",
+  "ui_remote_hint": "To prevent accidental damage, keep an eye on the robot.",
+  "ui_remote_start": "Start remote control",
+  "ui_remote_confirm": "Starting \"Remote Control\" will pause the current clean",
+  "ui_remote_confirm_yes": "OK",
+  "ui_remote_confirm_no": "Cancel",
+  "ui_remote_refused_updating": "Update in progress. Try again later.",
+  "ui_remote_end": "End remote control",
+  "ui_remote_launching": "The robot is starting up, ready in %s s.",
+  "ui_remote_forward": "Forward",
+  "ui_remote_back": "Backward",
+  "ui_remote_left": "Turn left",
+  "ui_remote_right": "Turn right",
+  "ui_remote_forward_left": "Forward left",
+  "ui_remote_forward_right": "Forward right",
+  "ui_remote_back_left": "Back left",
+  "ui_remote_back_right": "Back right"
 }

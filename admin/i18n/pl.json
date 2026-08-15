@@ -371,5 +371,22 @@
   "Live position: match the robot": "Pozycja na żywo: dostosuj do robota",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "Pozwala adapterowi samodzielnie ustalić, jak często ten robot aktualizuje swoją pozycję, i dostosowuje do tego takt pozycji na żywo. Wyłącz, aby zamiast tego użyć stałej wartości powyżej. Domyślne 1500 ms zmierzono na jednym robocie; robot zgłaszający się trzy razy szybciej byłby przez to hamowany, a jego właściciel nigdy by się nie dowiedział, że istnieje takie ustawienie. Mierzony jest odstęp między dwiema obserwacjami zmiany, a nie moment jej zapisania przez robota, i nigdy dokładniej niż bieżąca pauza — dlatego szybszy robot rozpoznawany jest krokami, a nie od razu. Liczy się tylko robot, który naprawdę pracuje, nigdy stojący w stacji; wynik nigdy nie spada poniżej najszybszej dozwolonej wartości ani nie przekracza dwóch sekund przysługujących stojącemu robotowi. To, na czym adapter się ustabilizował, trafia do dziennika i do stanu tylko do odczytu map.liveTrackLearnedPause każdego robota. Jeśli wartość powyżej wynosi 0, pozycja na żywo jest całkowicie wyłączona i ta opcja nie może jej ponownie włączyć.",
   "ui_room_name_invalid": "Nazwa pokoju musi mieć od 1 do %s znaków.",
-  "ui_room_rename": "Nazwa"
+  "ui_room_rename": "Nazwa",
+  "ui_remote": "Zdalne sterowanie",
+  "ui_remote_hint": "Aby unikać przypadkowych uszkodzeń, miej oko na robota.",
+  "ui_remote_start": "Uruchom zdalne sterowanie",
+  "ui_remote_confirm": "Uruchomienie trybu „Zdalne sterowanie” spowoduje wstrzymanie bieżącego odkurzania.",
+  "ui_remote_confirm_yes": "OK",
+  "ui_remote_confirm_no": "Anuluj",
+  "ui_remote_refused_updating": "Odkurzacz jest aktualizowany. Spróbuj ponownie później.",
+  "ui_remote_end": "Zakończ zdalne sterowanie",
+  "ui_remote_launching": "Robot się uruchamia, gotowy za %s s.",
+  "ui_remote_forward": "Do przodu",
+  "ui_remote_back": "Do tyłu",
+  "ui_remote_left": "Skręć w lewo",
+  "ui_remote_right": "Skręć w prawo",
+  "ui_remote_forward_left": "Do przodu w lewo",
+  "ui_remote_forward_right": "Do przodu w prawo",
+  "ui_remote_back_left": "Do tyłu w lewo",
+  "ui_remote_back_right": "Do tyłu w prawo"
 }

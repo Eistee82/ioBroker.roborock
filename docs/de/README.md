@@ -230,6 +230,46 @@ lokal* hat sie also nie erhalten und behält das eingebaute Stationssymbol. Dass
 für einen Roboter, der gar keinen Stationstyp meldet, und für die Karten der
 B01/Q10-Pipelines.
 
+### Den Roboter von Hand fahren
+
+Das Feld **Fernsteuerung** fährt den Roboter über ein Steuerkreuz, so wie es die
+Roborock-App tut. Es erscheint nur bei einem Roboter, dessen eigene Firmware meldet, dass er
+sich fahren lässt; ein Roboter ohne diese Meldung bekommt weder das Feld noch die Objekte -
+es gibt also nichts zu drücken, was ins Leere liefe.
+
+**Gefahren wird nur, solange eine Taste gedrückt ist.** Jeder Schritt, den der Roboter
+bekommt, trägt eine Frist von 1,5 Sekunden und wird etwa alle 0,4 Sekunden erneuert - so
+macht es die App, und darin liegt die ganze Sicherung. Wird der Browser-Tab geschlossen, in
+den Hintergrund geschoben, verliert er die Verbindung oder friert er ein, kommt kein weiterer
+Schritt an, und der Roboter hält binnen anderthalb Sekunden von selbst an. Der Adapter
+wiederholt von sich aus keinen Schritt, ein verlorengegangenes „Stopp" kann also keinen
+fahrenden Roboter zurücklassen. Bei geöffnetem Feld funktionieren zusätzlich die Pfeiltasten
+für die vier geraden Richtungen; die Diagonalen bleiben auf dem Steuerkreuz.
+
+Das Starten ist ein Modus, kein einzelner Befehl, und das Verlassen ein eigener. Der Adapter
+beendet den Modus deshalb von selbst nach zwei Sekunden ohne Anweisung, beendet ihn beim
+Herunterfahren, und beendet beim nächsten Start einen Modus, den ein früherer Adapterlauf
+offen gelassen hat. Letzteres gilt ausschließlich für eine Sitzung, die dieser Adapter selbst
+geöffnet hat - einen Roboter, der gerade aus der Handy-App gefahren wird, lässt er in Ruhe.
+
+Zwei Dinge tut er bewusst nicht. Er unterbricht keine laufende Aufgabe stillschweigend:
+reinigt der Roboter, fährt er zur Station oder zu einem Punkt, fragt das Feld erst nach und
+hält die Aufgabe dann an, bevor es startet - genau wie die App. Und während der Roboter eine
+Firmware installiert, lehnt er ab.
+
+Eine **Positionsanzeige während der Fernsteuerung gibt es nicht**, und das ist keine Lücke.
+Der Roboter schreibt seine Position nur etwa alle drei Sekunden fort; ein Marker auf der
+Karte wäre der Maschine im Raum also bis zu drei Sekunden hinterher - das ist schlechter als
+keiner, weil es aktuell aussieht. Die Roborock-App zeigt auf ihrer Fernsteuerseite aus
+demselben Grund gar keine Karte. Roborocks eigener Hinweis steht oben im Feld: den Roboter im
+Blick behalten.
+
+Für Skripte liegen dieselben vier Aufrufe im Ordner `remoteControl`: eine Starttaste, eine
+Richtung mit den neun Stellungen, die die App ausdrücken kann, ein Stopp und ein Ende. Eine
+geschriebene Richtung fährt einen Schritt - höchstens 1,5 Sekunden -, ein Skript muss sie
+also wiederholen, um weiterzufahren, und der Adapter schließt den Modus zwei Sekunden nach
+der letzten ohnehin.
+
 ## Referenz
 
 <!-- BEGIN:config -->

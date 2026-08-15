@@ -371,5 +371,22 @@
   "Live position: match the robot": "实时位置：与机器人同步",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "让适配器自行测算这台机器人更新自身位置的频率，并据此调整实时位置的节奏。关闭后将改用上面的固定值。默认的 1500 毫秒是在一台机器人上实测得出的；上报速度快三倍的机器人会因此被拖慢，而机主永远不会知道还有这么一项设置。所测量的是两次观察到变化之间的间隔，而不是机器人写入该值的时刻，并且精度绝不会高于当前使用的暂停时间——因此更快的机器人是逐步被识别的，而不是一次到位。只有真正在工作的机器人才计入，停在基站里的从不计入；结果不会低于允许的最快值，也不会超过静止机器人所用的两秒。适配器最终稳定在哪个值，会写入日志以及每台机器人的只读状态 map.liveTrackLearnedPause。若上面的值为 0，则实时位置完全关闭，本选项也无法重新启用它。",
   "ui_room_name_invalid": "房间名称需要 1 到 %s 个字符。",
-  "ui_room_rename": "房间命名"
+  "ui_room_rename": "房间命名",
+  "ui_remote": "遥控",
+  "ui_remote_hint": "为避免不必要碰撞，请确保机器人处于视线范围内",
+  "ui_remote_start": "开始遥控",
+  "ui_remote_confirm": "开始遥控将暂停当前任务",
+  "ui_remote_confirm_yes": "确定",
+  "ui_remote_confirm_no": "取消",
+  "ui_remote_refused_updating": "机器人正在升级中，请稍后再试",
+  "ui_remote_end": "退出遥控",
+  "ui_remote_launching": "机器人正在启动，%s 秒后就绪。",
+  "ui_remote_forward": "前进",
+  "ui_remote_back": "后退",
+  "ui_remote_left": "左转",
+  "ui_remote_right": "右转",
+  "ui_remote_forward_left": "左前",
+  "ui_remote_forward_right": "右前",
+  "ui_remote_back_left": "左后",
+  "ui_remote_back_right": "右后"
 }

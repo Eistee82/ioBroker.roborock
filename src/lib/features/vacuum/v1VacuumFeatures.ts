@@ -27,6 +27,16 @@ import {
 	SET_DUST_COLLECTION_MODE,
 	V1ProbedCapabilityService
 } from "./v1ProbedCapabilities";
+import {
+	APP_RC_END,
+	APP_RC_MOVE,
+	APP_RC_START,
+	APP_RC_STOP,
+	REMOTE_DIRECTIONS,
+	REMOTE_FIRMWARE_FEATURE,
+	RemoteControlService,
+	adapterClock
+} from "./remoteControl";
 import { getLocalizedErrorStates } from "./adapterErrorMapping";
 import {
 	VACUUM_CONSTANTS,
@@ -137,6 +147,25 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	 * {@link V1VacuumFeatures.processStatus}. Holds no timers, so `onUnload` has nothing to clean up.
 	 */
 	protected readonly commandVerifier = new CommandVerifier();
+
+	/**
+	 * Holds the remote control session and its dead man's switch.
+	 *
+	 * Built for every V1 robot but only ever used by one whose firmware reports feature 125 - the
+	 * commands that reach it are not registered otherwise. Its only timer comes from the adapter's
+	 * own `setTimeout`, so `onUnload` disposes of it with the rest; {@link shutdownRemoteControl}
+	 * additionally sends the closing calls on the way out.
+	 */
+	public readonly remoteControl: RemoteControlService = new RemoteControlService(
+		{ sendRequest: (duid, method, params, options) => this.deps.adapter.requestsHandler.sendRequest(duid, method, params, options) },
+		adapterClock(this.deps),
+		this.duid,
+		(message, level) => this.deps.adapter.rLog("System", this.duid, level === "warn" ? "Warn" : level === "info" ? "Info" : "Debug", "1.0", undefined, message, level),
+		(active) => void this.writeRemoteSessionFlag(active)
+	);
+
+	/** State that remembers an open session across an adapter restart; see `recoverLeftoverSession`. */
+	private static readonly REMOTE_SESSION_STATE = "remoteControl.sessionOpen";
 
 	constructor(dependencies: FeatureDependencies, duid: string, robotModel: string, config: DeviceModelConfig = { staticFeatures: [] }, profile: VacuumProfile = DEFAULT_PROFILE) {
 		super(dependencies, duid, robotModel, config);
@@ -630,7 +659,33 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			void this.readProbedValue(GET_DRYER_SETTING, [], (r) => this.probedService.applyDryerSettingResponse(r));
 		}
 
+		this.noteRemoteControlResult(finalMethod);
+
 		this.noteCommandForVerification(finalMethod, response, params);
+	}
+
+	/**
+	 * Keeps the remote control session in step with what the robot actually answered.
+	 *
+	 * Deliberately driven from the **answer** and not from the request. A session opened when
+	 * `app_rc_start` was merely sent would outlive a start that never arrived, and the adapter would
+	 * later close a mode the robot was never in. `onCommandResult` runs only after a reply
+	 * (`requestsHandler.ts`, the success branch of `_processResult`), so reaching here means the
+	 * robot spoke.
+	 *
+	 * Both `app_rc_move` and `app_rc_stop` extend the lease: a user who is holding "stop" is still a
+	 * user who is there, and ending the mode under them would be surprising.
+	 *
+	 * @param finalMethod The method that actually went on the wire.
+	 */
+	private noteRemoteControlResult(finalMethod: string): void {
+		if (finalMethod === APP_RC_START) {
+			this.remoteControl.noteStarted();
+		} else if (finalMethod === APP_RC_MOVE || finalMethod === APP_RC_STOP) {
+			this.remoteControl.noteActivity();
+		} else if (finalMethod === APP_RC_END) {
+			this.remoteControl.noteEnded();
+		}
 	}
 
 	/**
@@ -785,6 +840,10 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		if (this.probedService.handles(method)) {
 			return this.probedService.buildCommandParams(method, params);
+		}
+
+		if (this.remoteControl.handles(method)) {
+			return this.remoteControl.buildCommandParams(method, params);
 		}
 
 		if (method === "reset_consumable" && id) {
@@ -1620,6 +1679,183 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		await this.probeAndApply(GET_COLLISION_AVOID_STATUS, {}, Feature.CollisionAvoid, SET_COLLISION_AVOID_STATUS);
 		await this.probeAndApply(GET_DUST_COLLECTION_MODE, [], Feature.DustCollectionMode, SET_DUST_COLLECTION_MODE);
 		await this.probeAndApply(GET_DRYER_SETTING, [], Feature.DryerSetting, SET_DRYER_SETTING);
+		await this.detectRemoteControl();
+	}
+
+	/**
+	 * Unlocks driving the robot by hand when its firmware says it can be driven.
+	 *
+	 * **Not a capability probe, and it cannot be one.** `CapabilityProbe` refuses anything that is
+	 * not a `get_*`/`app_get_*` (`capabilityProbe.ts:107`), and rightly so - a probe must never
+	 * change the device. All four remote calls are actions, and there is no reading counterpart to
+	 * ask instead: the whole method catalogue of the test device was swept for one
+	 * (`_appanalysis/19-geraetefaehigkeiten.md`, 66 read-only calls) and none exists.
+	 *
+	 * So the question is put the only other way the device can answer it: `get_fw_features`, and the
+	 * presence of **125** in the list. That is still the robot speaking about itself rather than a
+	 * model table - the criterion this project asks for - and it is exactly what the app reads:
+	 * `isRemoteSupported() { return isSupportFeature(125); }` (A65:232713-232720), with
+	 * `isSupportFeature` being a plain membership test on the same list (A65:234799-234825).
+	 *
+	 * One difference from the app is deliberate. The app fills its list from
+	 * `app_get_init_status().result[0].feature_info` (A65:5773); the adapter has `get_fw_features`
+	 * and a cache for it already. On the test device both answers are the identical `[111…125]`
+	 * (`_appanalysis/geraetefaehigkeiten-1786790619395.json`), so nothing is lost, and the request
+	 * the adapter already knows how to make is the cheaper one.
+	 *
+	 * A robot that does not answer keeps the function switched off for this run - the same direction
+	 * of error the probe takes, and the same reason: a control that writes into the void is worse
+	 * than a missing one, and this control moves a machine.
+	 */
+	private async detectRemoteControl(): Promise<void> {
+		if (this.folderOfCommand(APP_RC_START)) return;
+
+		const features = await this.readFirmwareFeatureIds();
+		if (!features.includes(REMOTE_FIRMWARE_FEATURE)) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
+				`Firmware feature ${REMOTE_FIRMWARE_FEATURE} is absent, not offering remote control.`, "debug");
+			return;
+		}
+
+		await this.applyFeature(Feature.RemoteControl);
+	}
+
+	/**
+	 * Reads the firmware feature list once and remembers it for the rest of the run.
+	 *
+	 * Goes through the same cache `a179_features.ts` fills, so a robot that has both paths asks the
+	 * question once. Failure returns an empty list rather than throwing: every caller treats
+	 * "not in the list" as "does not have it", and an unreachable robot is not evidence in favour.
+	 *
+	 * @returns The feature ids the robot reports, or an empty list.
+	 */
+	private async readFirmwareFeatureIds(): Promise<number[]> {
+		const cached = this.deps.http_api.getFwFeaturesResult?.(this.duid);
+		if (Array.isArray(cached) && cached.length > 0) return cached;
+
+		try {
+			const response = await this.deps.adapter.requestsHandler.sendRequest(this.duid, "get_fw_features", [], { priority: -10 });
+			let payload: unknown = response;
+			if (payload && typeof payload === "object" && !Array.isArray(payload) && "data" in (payload as Record<string, unknown>)) {
+				payload = (payload as Record<string, unknown>).data;
+			}
+			if (!Array.isArray(payload)) return [];
+
+			const ids = payload.map((entry) => Number(entry)).filter((entry) => Number.isInteger(entry));
+			this.deps.http_api.storeFwFeaturesResult?.(this.duid, ids);
+			return ids;
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
+				`Failed to read get_fw_features: ${this.deps.adapter.errorMessage(e)}`, "debug");
+			return [];
+		}
+	}
+
+	/**
+	 * Publishes the four remote control commands in a folder of their own.
+	 *
+	 * They are kept out of `commands` on purpose. Everything in there is a single action that stands
+	 * on its own; these four are a **session**, and three of them are meaningless without the fourth.
+	 * A folder makes that visible in the object tree and lets the tab subscribe to exactly this
+	 * branch.
+	 *
+	 * `app_rc_move` is published as a direction, not as a raw motion parameter. The eight values are
+	 * the app's own `pressState` numbers and the service turns each into the proven
+	 * `{omega, velocity, seqnum, duration}` - so a script cannot invent a speed, and the one thing it
+	 * can express is the one thing the app can express.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.RemoteControl)
+	public async initRemoteControl(): Promise<void> {
+		const directions: Record<number, string> = {};
+		for (const entry of REMOTE_DIRECTIONS) {
+			directions[entry.value] = entry.label;
+		}
+
+		this.addCommand(APP_RC_START, {
+			type: "boolean",
+			role: "button",
+			name: "Start remote control",
+			desc: "The robot needs about six seconds after this before it acts on a direction.",
+			def: false
+		}, "remoteControl");
+
+		this.addCommand(APP_RC_MOVE, {
+			type: "number",
+			role: "value.list",
+			name: "Drive one step",
+			desc: "Drives for at most 1.5 s; repeat about every 400 ms to keep going. 0 stops.",
+			states: directions,
+			def: 0,
+			write: true
+		}, "remoteControl");
+
+		this.addCommand(APP_RC_STOP, {
+			type: "boolean",
+			role: "button",
+			name: "Stop moving",
+			desc: "Stops the motion but stays in remote control mode.",
+			def: false
+		}, "remoteControl");
+
+		this.addCommand(APP_RC_END, {
+			type: "boolean",
+			role: "button",
+			name: "Leave remote control",
+			def: false
+		}, "remoteControl");
+
+		await this.recoverRemoteSession();
+	}
+
+	/**
+	 * Writes down whether a remote control session is open, so a restart can find one that was not.
+	 *
+	 * Acknowledged and read-only: this is the adapter reporting what it is doing, not a switch. It
+	 * lives in the same folder as the four commands so everything about the mode is in one place.
+	 *
+	 * @param active Whether a session is open right now.
+	 */
+	private async writeRemoteSessionFlag(active: boolean): Promise<void> {
+		try {
+			await this.stateWriter.ensureAndSetState(V1VacuumFeatures.REMOTE_SESSION_STATE, {
+				name: "Remote control session open",
+				type: "boolean",
+				role: "indicator",
+				read: true,
+				write: false
+			}, active);
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
+				`Failed to record the remote control session flag: ${this.deps.adapter.errorMessage(e)}`, "warn");
+		}
+	}
+
+	/**
+	 * Closes a session an earlier adapter run left open.
+	 *
+	 * Runs once, while the commands are being registered. Not awaited any further than this: the
+	 * flag is nearly always false, and in the rare case it is not, two calls to a robot that is
+	 * standing still are not worth delaying the start-up for.
+	 */
+	private async recoverRemoteSession(): Promise<void> {
+		try {
+			const flag = await this.deps.adapter.getStateAsync(`Devices.${this.duid}.${V1VacuumFeatures.REMOTE_SESSION_STATE}`);
+			await this.remoteControl.recoverLeftoverSession(flag?.val === true);
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
+				`Could not check for a leftover remote control session: ${this.deps.adapter.errorMessage(e)}`, "debug");
+		}
+	}
+
+	/**
+	 * Ends an open remote control session on the way out of the adapter.
+	 *
+	 * Called from `onUnload`, which cannot await anything, so this is best effort by construction -
+	 * see {@link RemoteControlService.shutdown}. It is the third of four defences and the only one
+	 * that needs the adapter to still be alive.
+	 */
+	public shutdownRemoteControl(): void {
+		this.remoteControl.shutdown();
 	}
 
 	/**

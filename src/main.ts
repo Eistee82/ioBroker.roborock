@@ -1570,6 +1570,17 @@ export class Roborock extends utils.Adapter {
 			// being torn down anyway.
 			this.shuttingDown = true;
 
+			// Before anything is torn down: a robot that is being driven by hand must not be left in
+			// that mode. The calls cannot be awaited here - js-controller wants the callback now - so
+			// this is one of four defences, not the only one. See `features/vacuum/remoteControl.ts`.
+			for (const handler of this.deviceFeatureHandlers.values()) {
+				try {
+					handler.shutdownRemoteControl();
+				} catch (e: unknown) {
+					this.rLog("System", null, "Warn", undefined, undefined, `Failed to end a remote control session: ${this.errorMessage(e)}`, "warn");
+				}
+			}
+
 			if (this.mqttReconnectInterval) {
 				this.clearInterval(this.mqttReconnectInterval);
 			}

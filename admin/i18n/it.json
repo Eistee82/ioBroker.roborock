@@ -371,5 +371,22 @@
   "Live position: match the robot": "Posizione in tempo reale: adattarsi al robot",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "Lascia che l'adattatore scopra da solo con quale frequenza questo robot aggiorna la propria posizione e regola di conseguenza la cadenza della posizione in tempo reale. Disattivala per usare invece il valore fisso qui sopra. Il valore predefinito di 1500 ms è stato misurato su un solo robot; un robot che segnala tre volte più in fretta ne verrebbe frenato e il suo proprietario non saprebbe mai che esiste un'impostazione. Ciò che si misura è la distanza tra due osservazioni di un cambiamento, non il momento in cui il robot lo ha scritto, e mai più finemente della pausa in corso: un robot più rapido viene quindi riconosciuto a passi e non in una volta. Conta solo un robot che sta davvero lavorando, mai uno fermo nella stazione; il risultato non scende mai sotto il valore più rapido consentito né supera i due secondi di un robot fermo. Il valore su cui l'adattatore si è assestato viene scritto nel log e nello stato di sola lettura map.liveTrackLearnedPause di ciascun robot. Se il valore qui sopra è 0, la posizione in tempo reale è del tutto disattivata e questa opzione non può riattivarla.",
   "ui_room_name_invalid": "Il nome di una stanza deve avere da 1 a %s caratteri.",
-  "ui_room_rename": "Nome"
+  "ui_room_rename": "Nome",
+  "ui_remote": "Controllo remoto",
+  "ui_remote_hint": "Tenere sotto controllo il robot per evitare danni accidentali.",
+  "ui_remote_start": "Avvia comando a distanza",
+  "ui_remote_confirm": "Avviando \"Controllo remoto\" la pulizia corrente verrà messa in pausa",
+  "ui_remote_confirm_yes": "OK",
+  "ui_remote_confirm_no": "Annulla",
+  "ui_remote_refused_updating": "Il robot è in fase di aggiornamento, riprova più tardi.",
+  "ui_remote_end": "Termina controllo remoto",
+  "ui_remote_launching": "Il robot si sta avviando, pronto tra %s s.",
+  "ui_remote_forward": "Avanti",
+  "ui_remote_back": "Indietro",
+  "ui_remote_left": "Gira a sinistra",
+  "ui_remote_right": "Gira a destra",
+  "ui_remote_forward_left": "Avanti a sinistra",
+  "ui_remote_forward_right": "Avanti a destra",
+  "ui_remote_back_left": "Indietro a sinistra",
+  "ui_remote_back_right": "Indietro a destra"
 }

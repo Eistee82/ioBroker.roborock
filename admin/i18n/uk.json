@@ -371,5 +371,22 @@
   "Live position: match the robot": "Жива позиція: підлаштуватися під робота",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "Дозволяє адаптеру самостійно з'ясувати, як часто саме цей робот оновлює своє положення, і підлаштовує під це темп живої позиції. Вимкніть, щоб натомість використовувати фіксоване значення вище. Типове значення 1500 мс виміряно на одному роботі; робот, який повідомляє втричі швидше, був би ним пригальмований, а його власник ніколи б не дізнався, що є таке налаштування. Вимірюється відстань між двома спостереженнями зміни, а не мить, коли робот її записав, і ніколи точніше за поточну паузу — тому швидший робот розпізнається кроками, а не одразу. Враховується лише робот, який справді працює, ніколи той, що стоїть у станції; результат ніколи не опускається нижче найшвидшого дозволеного значення і не перевищує двох секунд, які отримує робот, що стоїть. Те, на чому адаптер зупинився, потрапляє до журналу та до стану лише для читання map.liveTrackLearnedPause кожного робота. Якщо значення вище дорівнює 0, жива позиція вимкнена повністю, і ця опція не може її ввімкнути.",
   "ui_room_name_invalid": "Назва кімнати має містити від 1 до %s символів.",
-  "ui_room_rename": "Змінити назву"
+  "ui_room_rename": "Змінити назву",
+  "ui_remote": "Дистанційне керування",
+  "ui_remote_hint": "Слідкуйте за роботом, щоб не допустити його випадкового пошкодження.",
+  "ui_remote_start": "Почати дистанційне керування",
+  "ui_remote_confirm": "Запуск Remote Control (Дистанційне керування) призупинить поточне прибирання",
+  "ui_remote_confirm_yes": "OK",
+  "ui_remote_confirm_no": "Скасувати",
+  "ui_remote_refused_updating": "Виконується оновлення, повторіть спробу пізніше.",
+  "ui_remote_end": "Завершити дистанційне керування",
+  "ui_remote_launching": "Робот запускається, буде готовий через %s с.",
+  "ui_remote_forward": "Уперед",
+  "ui_remote_back": "Назад",
+  "ui_remote_left": "Поворот ліворуч",
+  "ui_remote_right": "Поворот праворуч",
+  "ui_remote_forward_left": "Уперед ліворуч",
+  "ui_remote_forward_right": "Уперед праворуч",
+  "ui_remote_back_left": "Назад ліворуч",
+  "ui_remote_back_right": "Назад праворуч"
 }

@@ -371,5 +371,22 @@
   "Live position: match the robot": "Posición en directo: ajustarse al robot",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "Permite que el adaptador averigüe por sí mismo con qué frecuencia este robot actualiza su posición y ajusta a ello la cadencia de la posición en directo. Desactívela para usar el valor fijo de arriba. El valor predeterminado de 1500 ms se midió en un solo robot; un robot que informa tres veces más rápido quedaría frenado por él, y su propietario nunca sabría que existe un ajuste. Lo que se mide es la distancia entre dos observaciones de un cambio, no el momento en que el robot lo escribió, y nunca con más resolución que la pausa actual: por eso un robot más rápido se reconoce por pasos y no de golpe. Solo cuenta un robot que está trabajando de verdad, nunca uno parado en la base; el resultado nunca baja del valor más rápido permitido ni supera los dos segundos de un robot parado. Aquello en lo que el adaptador se ha estabilizado se escribe en el registro y en el estado de solo lectura map.liveTrackLearnedPause de cada robot. Si el valor de arriba es 0, la posición en directo está completamente desactivada y esta opción no puede reactivarla.",
   "ui_room_name_invalid": "El nombre de una habitación necesita entre 1 y %s caracteres.",
-  "ui_room_rename": "Nombre"
+  "ui_room_rename": "Nombre",
+  "ui_remote": "Control remoto",
+  "ui_remote_hint": "Para evitar daños accidentales, supervise el robot.",
+  "ui_remote_start": "Iniciar el control remoto",
+  "ui_remote_confirm": "Al iniciarse el \"Control remoto\", la limpieza en curso quedará pausada",
+  "ui_remote_confirm_yes": "OK",
+  "ui_remote_confirm_no": "Cancelar",
+  "ui_remote_refused_updating": "Actualización en curso. Inténtelo de nuevo más tarde.",
+  "ui_remote_end": "Finalizar el control remoto",
+  "ui_remote_launching": "El robot se está iniciando, listo en %s s.",
+  "ui_remote_forward": "Adelante",
+  "ui_remote_back": "Atrás",
+  "ui_remote_left": "Girar a la izquierda",
+  "ui_remote_right": "Girar a la derecha",
+  "ui_remote_forward_left": "Adelante a la izquierda",
+  "ui_remote_forward_right": "Adelante a la derecha",
+  "ui_remote_back_left": "Atrás a la izquierda",
+  "ui_remote_back_right": "Atrás a la derecha"
 }

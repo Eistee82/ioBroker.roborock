@@ -371,5 +371,22 @@
   "Live position: match the robot": "Posição em direto: ajustar ao robô",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "Permite que o adaptador descubra sozinho com que frequência este robô atualiza a sua posição e ajuste a cadência da posição em direto. Desligue para usar o valor fixo acima. A predefinição de 1500 ms foi medida num robô; um robô que comunica três vezes mais depressa seria travado por ela, e o seu dono nunca saberia que existe uma definição. O que se mede é a distância entre duas observações de uma mudança, não o momento em que o robô a escreveu, e nunca com mais resolução do que a pausa atual — por isso um robô mais rápido é reconhecido por passos e não de uma vez. Só conta um robô que está mesmo a trabalhar, nunca um parado na base; o resultado nunca desce abaixo do valor mais rápido permitido nem sobe acima dos dois segundos de um robô parado. Aquilo em que o adaptador estabilizou é escrito no registo e no estado só de leitura map.liveTrackLearnedPause de cada robô. Se o valor acima for 0, a posição em direto está totalmente desligada e esta opção não a pode reativar.",
   "ui_room_name_invalid": "O nome de uma divisão precisa de 1 a %s caracteres.",
-  "ui_room_rename": "Nomear"
+  "ui_room_rename": "Nomear",
+  "ui_remote": "Controlo remoto",
+  "ui_remote_hint": "O robô deve ser supervisionado para evitar danos acidentais.",
+  "ui_remote_start": "Iniciar controlo remoto",
+  "ui_remote_confirm": "Iniciar \"Controlo Remoto\" fará uma pausa na limpeza atual",
+  "ui_remote_confirm_yes": "OK",
+  "ui_remote_confirm_no": "Cancelar",
+  "ui_remote_refused_updating": "Atualização em curso. Tente novamente mais tarde.",
+  "ui_remote_end": "Terminar controlo remoto",
+  "ui_remote_launching": "O robô está a arrancar, pronto em %s s.",
+  "ui_remote_forward": "Para a frente",
+  "ui_remote_back": "Para trás",
+  "ui_remote_left": "Virar à esquerda",
+  "ui_remote_right": "Virar à direita",
+  "ui_remote_forward_left": "Frente à esquerda",
+  "ui_remote_forward_right": "Frente à direita",
+  "ui_remote_back_left": "Trás à esquerda",
+  "ui_remote_back_right": "Trás à direita"
 }

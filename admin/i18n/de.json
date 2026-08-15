@@ -371,5 +371,22 @@
   "Live position: match the robot": "Live-Position: am Roboter ausrichten",
   "Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it.": "Lässt den Adapter selbst herausfinden, wie oft dieser Roboter seine Position fortschreibt, und richtet den Takt der Live-Position danach. Ausschalten, um stattdessen den festen Wert darüber zu verwenden. Die Vorgabe von 1500 ms wurde an einem Roboter gemessen; ein Roboter, der dreimal so schnell meldet, würde davon ausgebremst, und sein Besitzer erführe nie, dass es dafür eine Einstellung gibt. Gemessen wird der Abstand zwischen zwei Beobachtungen einer Änderung, nicht der Zeitpunkt, zu dem der Roboter sie geschrieben hat — und nie feiner als die Pause, mit der gerade gearbeitet wird. Ein schnellerer Roboter wird deshalb schrittweise erkannt und nicht auf einen Schlag. Gezählt wird nur ein Roboter, der wirklich arbeitet, nie einer, der in der Station steht; das Ergebnis unterschreitet nie den schnellsten erlaubten Wert und überschreitet nie die zwei Sekunden, die ein stehender Roboter bekommt. Worauf sich der Adapter eingependelt hat, steht im Log und im nur lesbaren State map.liveTrackLearnedPause des jeweiligen Roboters. Steht der Wert darüber auf 0, ist die Live-Position ganz abgeschaltet, und diese Option kann sie nicht wieder einschalten.",
   "ui_room_name_invalid": "Ein Raumname braucht zwischen 1 und %s Zeichen.",
-  "ui_room_rename": "Name"
+  "ui_room_rename": "Name",
+  "ui_remote": "Fernbedienung",
+  "ui_remote_hint": "Achte auf den Roboter, um versehentliche Beschädigungen zu vermeiden.",
+  "ui_remote_start": "Fernsteuerung starten",
+  "ui_remote_confirm": "Durch das Starten von „Fernsteuerung“ wird die laufende Reinigung angehalten.",
+  "ui_remote_confirm_yes": "OK",
+  "ui_remote_confirm_no": "Abbrechen",
+  "ui_remote_refused_updating": "Aktualisierung läuft. Versuchen Sie es später erneut.",
+  "ui_remote_end": "Fernsteuerung beenden",
+  "ui_remote_launching": "Der Roboter fährt hoch, bereit in %s s.",
+  "ui_remote_forward": "Vorwärts",
+  "ui_remote_back": "Rückwärts",
+  "ui_remote_left": "Nach links drehen",
+  "ui_remote_right": "Nach rechts drehen",
+  "ui_remote_forward_left": "Vorwärts links",
+  "ui_remote_forward_right": "Vorwärts rechts",
+  "ui_remote_back_left": "Rückwärts links",
+  "ui_remote_back_right": "Rückwärts rechts"
 }
