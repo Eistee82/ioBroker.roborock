@@ -247,7 +247,12 @@ async function buildDeviceCatalog() {
             { folder: 'deviceStatus', entries: tableToRows(VACUUM_CONSTANTS.deviceStates) },
             { folder: 'consumables', entries: tableToRows(VACUUM_CONSTANTS.consumables) },
             { folder: 'cleaningInfo', entries: tableToRows(VACUUM_CONSTANTS.cleaningInfo) },
-            { folder: 'cleaningRecords', entries: tableToRows(VACUUM_CONSTANTS.cleaningRecords) }
+            // The folder name is not the name of the constants table: no code path ever writes
+            // `Devices.<duid>.cleaningRecords`. `processResultKey` reaches this table through
+            // `folder.includes("records")` (src/lib/features/baseDeviceFeatures.ts:648), and the
+            // folder the three pipelines actually write is `cleaningInfo.records.<index>`
+            // (v1VacuumFeatures.ts:1017, B01MapService.ts:322, Q10CleanRecordService.ts:79).
+            { folder: 'cleaningInfo.records.<index>', entries: tableToRows(VACUUM_CONSTANTS.cleaningRecords) }
         ],
         resetableConsumables: [...VACUUM_CONSTANTS.resetConsumables].sort((a, b) => a.localeCompare(b, 'en')),
         errorCodes

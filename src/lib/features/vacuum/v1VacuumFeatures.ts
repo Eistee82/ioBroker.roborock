@@ -5,6 +5,15 @@ import { MapEditService } from "./services/MapEditService";
 import { StationService } from "./services/StationService";
 import { V1ConsumableService } from "./services/V1ConsumableService";
 import { V1MapService } from "./services/V1MapService";
+import {
+	CLOSE_DND_TIMER,
+	DND_ENABLED_FIELD,
+	GET_DND_TIMER,
+	LOCK_STATUS_FIELD,
+	SET_CHILD_LOCK_STATUS,
+	SET_DND_TIMER,
+	V1RobotSettingsService
+} from "./services/V1RobotSettingsService";
 import { getLocalizedErrorStates } from "./adapterErrorMapping";
 import {
 	VACUUM_CONSTANTS,
@@ -92,6 +101,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 	protected mapService: V1MapService;
 	protected mapEditService: MapEditService;
+	protected settingsService: V1RobotSettingsService;
 
 	/**
 	 * Watches acknowledged `set_*` commands until the status shows their effect - or does not.
@@ -112,6 +122,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.consumableService = new V1ConsumableService(this.deps, this.duid, this.profile);
 		this.stationService = new StationService(this.deps, this.duid);
 		this.mapService = new V1MapService(this.deps, this.duid);
+		this.settingsService = new V1RobotSettingsService(this.deps, this.duid);
 		// Splitting or merging rooms renumbers the segments, so everything the adapter holds about
 		// them is stale the moment the robot confirms; the service asks for a refresh at that point.
 		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex(), async () => {
@@ -462,6 +473,20 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			changed = true;
 		}
 
+		// The two persistent settings, detected the same way the drying buttons above are: a robot
+		// that has the function reports its field in every status packet, one without it never
+		// does. That is the most dependable of the three tests report 18 lists for binding a
+		// command to a capability, and the only one that needs neither a model table nor a
+		// firmware bit. The live capture of the test device carries both fields
+		// (`_appanalysis/local-mitschnitt.log:15`).
+		if (statusData[DND_ENABLED_FIELD] !== undefined && await this.applyFeature(Feature.DoNotDisturb)) {
+			changed = true;
+		}
+
+		if (statusData[LOCK_STATUS_FIELD] !== undefined && await this.applyFeature(Feature.ChildLock)) {
+			changed = true;
+		}
+
 		// Consumables detection (usually static, but can check for keys)
 		if (await this.applyFeature(Feature.Consumables)) changed = true;
 
@@ -548,6 +573,17 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		if (this.mapEditService.handles(requestedMethod)) {
 			await this.mapEditService.resolveDeferredResult(finalMethod, response);
 		}
+
+		if (finalMethod === GET_DND_TIMER) {
+			await this.settingsService.applyDndTimerResponse(response);
+		} else if (finalMethod === SET_DND_TIMER || finalMethod === CLOSE_DND_TIMER) {
+			// The robot is the authority on its own window: it may clamp or reorder what was sent,
+			// and `close_dnd_timer` says nothing about which window it just switched off. Reading
+			// it back is one cheap request and keeps the published window from drifting away from
+			// the robot's.
+			await this.readDoNotDisturbWindow();
+		}
+
 		this.noteCommandForVerification(finalMethod, response, params);
 	}
 
@@ -623,12 +659,47 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		const value = result.reported[fields[0]];
 		if (typeof value !== "number") return;
 
-		await this.deps.adapter.setState(`Devices.${this.duid}.commands.${result.command}`, { val: value, ack: true });
+		// The command no longer necessarily lives in `commands`: the two persistent settings sit in
+		// `settings`, and writing their acknowledgement to the old fixed path would create a state
+		// nobody reads while leaving the real one unacknowledged. A command no folder declares
+		// keeps the old path - that is the case in which nothing has changed at all.
+		const folder = this.folderOfCommand(result.command) ?? "commands";
+		const type = this.getCommandSpec(folder, result.command)?.type;
+		const path = `Devices.${this.duid}.${folder}.${result.command}`;
+
+		// A switch holds true/false where the status reports 1/0.
+		if (type === "boolean") {
+			await this.deps.adapter.setState(path, { val: value === 1, ack: true });
+			return;
+		}
+
+		// Anything that is not a number state is left alone. `set_dnd_timer` is the reason for the
+		// guard: its state carries the window as text, and the field checked for it is
+		// `dnd_enabled` - writing a 1 into it would replace "22:00-07:00" with a number.
+		if (type !== undefined && type !== "number") return;
+
+		await this.deps.adapter.setState(path, { val: value, ack: true });
+	}
+
+	/**
+	 * Finds the command folder a registered command lives in.
+	 * @param command Command name.
+	 * @returns The folder, or null when no folder declares it.
+	 */
+	private folderOfCommand(command: string): string | null {
+		for (const folder of this.getCommandFolders()) {
+			if (this.getCommandSpec(folder, command)) return folder;
+		}
+		return null;
 	}
 
 	public override async getCommandParams(method: string, params?: unknown, id?: string): Promise<unknown> {
 		if (this.mapEditService.handles(method)) {
 			return this.mapEditService.buildRequest(method, params);
+		}
+
+		if (this.settingsService.handles(method)) {
+			return this.settingsService.buildCommandParams(method, params);
 		}
 
 		if (method === "reset_consumable" && id) {
@@ -1255,6 +1326,16 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 					await this.deps.adapter.setStateChanged(`Devices.${this.duid}.commands.set_mop_mode`, { val, ack: true });
     			}
     		},
+			// The child lock is the one setting whose switch can be kept in step without a request:
+			// the status carries it in every packet. `lock_status` keeps its own read-only entry in
+			// `deviceStatus` as before; the extra write only reaches the writable switch, and only
+			// on a robot that got one.
+			lock_status: async (val) => {
+				await this.processResultKey("deviceStatus", LOCK_STATUS_FIELD, val);
+				if (this.hasFeature(Feature.ChildLock)) {
+					await this.settingsService.mirrorStatusField(LOCK_STATUS_FIELD, val);
+				}
+			},
     		water_box_mode: async (val) => {
     			if (this.profile.mappings.water_box_mode) {
     				await this.deps.ensureState(`Devices.${this.duid}.deviceStatus.water_box_mode`, { type: "number", states: this.profile.mappings.water_box_mode });
@@ -1357,6 +1438,54 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 	public getCommonCleaningInfo(attribute: string | number): Partial<ioBroker.StateCommon> | undefined {
 		return (VACUUM_CONSTANTS.cleaningInfo as any)[attribute];
+	}
+
+	/**
+	 * Publishes the Do Not Disturb window and its off button.
+	 *
+	 * The window itself is not in the status, so it is asked for once here. That read is
+	 * deliberately **not** awaited: this method runs from `processStatus`, and letting a request
+	 * with an eight second timeout sit in front of every status update would stall the poll - and a
+	 * failing read would keep the feature unapplied and repeat the stall on the next poll. The
+	 * request goes into the same queue as every other one and is torn down with it; nothing is
+	 * scheduled here that `onUnload` would have to know about.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.DoNotDisturb)
+	public async initDoNotDisturb(): Promise<void> {
+		if (this.folderOfCommand(SET_DND_TIMER)) return;
+		this.settingsService.registerDoNotDisturbCommands((name, spec, group) => this.addCommand(name, spec, group));
+		await this.settingsService.ensureDndStates();
+		void this.readDoNotDisturbWindow();
+	}
+
+	/**
+	 * Publishes the child lock switch, unless the model class already declared one.
+	 *
+	 * `A179Features` brings its own `set_child_lock_status` together with its own parameter
+	 * building, and it calls `super.getCommandParams` before its own branch runs
+	 * (`a179_features.ts:1303-1330`). Registering a second definition here would leave that model
+	 * with two owners for one command; see {@link V1RobotSettingsService} for the whole reasoning.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.ChildLock)
+	public async initChildLock(): Promise<void> {
+		if (this.folderOfCommand(SET_CHILD_LOCK_STATUS)) return;
+		this.settingsService.registerChildLockCommand((name, spec, group) => this.addCommand(name, spec, group));
+	}
+
+	/**
+	 * Asks the robot for its Do Not Disturb window and publishes it.
+	 *
+	 * Failure is logged and swallowed on purpose - the window is a convenience, and a robot that
+	 * does not answer must not take the rest of the status handling down with it.
+	 */
+	private async readDoNotDisturbWindow(): Promise<void> {
+		try {
+			const response = await this.deps.adapter.requestsHandler.sendRequest(this.duid, GET_DND_TIMER, [], { priority: -5 });
+			await this.settingsService.applyDndTimerResponse(response);
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
+				`Failed to read the Do Not Disturb window: ${this.deps.adapter.errorMessage(e)}`, "warn");
+		}
 	}
 
 	@BaseDeviceFeatures.DeviceFeature(Feature.AutoEmptyDock)

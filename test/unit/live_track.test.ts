@@ -113,14 +113,20 @@ describe("live track", () => {
 		expect(sendRequest.mock.calls.filter((c) => c[1] === DYNAMIC_DATA_METHOD).length).toBe(afterFirst + 1);
 	});
 
-	it("does not fetch again while nonce and length are unchanged", async () => {
+	it("fetches again even when nonce and length are unchanged", async () => {
+		// It used to stop here, and that was the bug behind a position that would not keep up: the
+		// gate compared nonce and `max_len`, `max_len` is the length of the driven path, and that
+		// grows about once a second. The **position** sits in the same answer and moves continuously
+		// at up to 216 mm/s, so the gate was a 1 Hz rate limit on it. Nothing cheaper can be asked
+		// either - a diff reports channel nonces and lengths and says nothing about the robot having
+		// moved.
 		const { sendRequest, poller } = createEnv();
 		const state = freshState();
 
 		await refresh(poller, diffAnswer(NONCE, 2), state);
 		await refresh(poller, diffAnswer(NONCE, 2), state);
 
-		expect(sendRequest.mock.calls.filter((c) => c[1] === DYNAMIC_DATA_METHOD).length).toBe(1);
+		expect(sendRequest.mock.calls.filter((c) => c[1] === DYNAMIC_DATA_METHOD).length).toBe(2);
 	});
 
 	it("fetches when only the length grew, although count stays zero", async () => {

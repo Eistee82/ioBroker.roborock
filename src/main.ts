@@ -1717,8 +1717,10 @@ export class Roborock extends utils.Adapter {
 				}
 				await this.executeCommand(handler, duid, command, state, cmdDef);
 			} finally {
-				// Reset boolean command state ONLY if it is defined as boolean
-				const isBoolean = cmdDef.type === "boolean";
+				// Reset boolean command state ONLY if it is defined as boolean - and only when it
+				// really is a button. A switch has to keep the position it was put in; resetting it
+				// a second later would make it snap back in every UI that shows it.
+				const isBoolean = cmdDef.type === "boolean" && !Roborock.isSwitchCommand(cmdDef);
 
 				if (isBoolean && this.isTruthy(state.val)) {
 					this.rLog("Requests", duid, "Info", handler.protocolVersion || undefined, undefined, `[handleCommand] Scheduling reset for ${id} (boolean)`, "info");
@@ -1731,8 +1733,35 @@ export class Roborock extends utils.Adapter {
 	/**
 	 * Executes a specific command for a device.
 	 */
+	/**
+	 * Tells a switch from a button among the boolean commands.
+	 *
+	 * Both are `type: "boolean"`, and until now both were treated as buttons - which meant a switch
+	 * could be turned **on** and never off: `executeCommand` dropped every falsy write, and the
+	 * value was reset to `false` a second later anyway. Nineteen commands were affected
+	 * (`set_child_lock_status`, `set_collision_avoid_status`, `set_flow_led_status` and the rest of
+	 * the a179 set, plus `child_lock`, `carpet_turbo`, `light_mode` and `green_laser` on B01),
+	 * two of them with `def: true` - a switch that starts on and cannot be switched off.
+	 *
+	 * The test is the declared role and nothing else. Everything the adapter means as a switch
+	 * carries a role from ioBroker's `switch` family; everything else keeps exactly the behaviour it
+	 * had, so a boolean without a role stays the button it always was.
+	 * @param spec Command definition as the feature handler registered it.
+	 */
+	private static isSwitchCommand(spec: CommandSpec): boolean {
+		const role = typeof spec.role === "string" ? spec.role : "";
+		return role === "switch" || role.startsWith("switch.");
+	}
+
 	private async executeCommand(handler: BaseDeviceFeatures, duid: string, command: string, state: ioBroker.State, cmdDef: CommandSpec) {
 		const val = state.val;
+
+		// A switch sends both of its positions; see isSwitchCommand for what that repairs.
+		if (cmdDef.type === "boolean" && Roborock.isSwitchCommand(cmdDef)) {
+			this.rLog("Requests", duid, "Info", handler.protocolVersion || undefined, undefined, `[executeCommand] Setting switch ${command} to ${String(val)}`, "info");
+			await this.requestsHandler.command(handler, duid, command, this.isTruthy(val));
+			return;
+		}
 
 		// 1. Common command types handling
 		const isButton = cmdDef.role === "button" || cmdDef.type === "boolean";

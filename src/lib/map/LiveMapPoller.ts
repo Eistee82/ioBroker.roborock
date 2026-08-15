@@ -6,9 +6,9 @@
  * `get_dynamic_map_diff` every 1.2 s and only pulls the whole map once the answer says something
  * relevant changed. This class does the same for the adapter.
  *
- * It owns **no timer of its own**. {@link tick} and {@link tickDynamic} are called from the two
- * tickers the `DeviceManager` runs, so there is nothing extra to clear on unload; {@link dispose}
- * only drops the bookkeeping.
+ * The map side owns **no timer of its own**: {@link tick} is called from the one-second ticker the
+ * `DeviceManager` runs. The position side does own timers — see below — and {@link dispose} clears
+ * every one of them.
  *
  * Two branches exist for the map, exactly as in the app:
  *
@@ -18,48 +18,55 @@
  *    adapter refuses to and slows the cadence to {@link LIVE_MAP_POLICY.fullMapFloorSeconds},
  *    which leaves the behaviour where it was before this feature existed.
  *
- * ## The position runs on its own clock
+ * ## The position does not run on a clock at all
  *
- * {@link tickDynamic} is a second, independent cycle for the dynamic channel — robot position,
- * driven track, mop markers. It used to hang off the map cycle, which made the cheapest question
- * the adapter can ask inherit the pace of the most expensive one: `refreshDynamicTrack` was
- * reachable from exactly one place inside the incremental map cycle, so the position updated at
+ * {@link startDynamicCycle} drives a second, independent cycle for the dynamic channel — robot
+ * position, driven track, mop markers. It used to hang off the map cycle, which made the cheapest
+ * question the adapter can ask inherit the pace of the most expensive one: `refreshDynamicTrack`
+ * was reachable from exactly one place inside the incremental map cycle, so the position updated at
  * the map cadence (3 s working, 6 s idle), never at all on the full-map branch, and not while a
  * map transfer held `inFlight`. Measured at the device the two are not remotely comparable — two
  * local requests of 58 ms and 57 ms against a 248 ms cloud transfer of 7 KiB.
  *
- * Both cycles therefore keep their own due time and their own in-flight flag, and neither can
- * block the other. What they do share is a single {@link DeviceState.sharedDiff} slot: when both
- * fall due within {@link DIFF_SHARE_WINDOW_MS} of each other, the second one reuses the first
- * one's answer instead of asking again. That is safe only because both send the **same** nonce —
- * what a diff reports depends on the nonce it was asked with (`PROJECT_STATE.md`, "Was der Diff
- * meldet, hängt von der übergebenen Nonce ab"), so the cache is keyed by it and a mismatch simply
- * means each cycle asks for itself.
+ * Then it ran on a cadence of its own, and that hit the next wall: a cadence has to guess how long
+ * an answer takes, and at the rates a live view needs the guess is wrong more often than not.
+ * **It is now a free-running cycle** — one pass, a pause, the next pass — so it cannot overlap
+ * itself, it runs as fast as the link allows, and a slow link slows it down instead of queueing
+ * work behind it. The pause comes from `LIVE_TRACK_POLICY` and is a floor, not a target.
+ *
+ * Two things keep that from crowding everything else out. The two requests go in at
+ * {@link LIVE_TRACK_REQUEST_PRIORITY}, **below** normal, so a status poll, a map transfer or a
+ * button the user pressed all overtake them; they used to go in at normal, which for a cycle this
+ * busy would have been a real fault. And the cycle drops to the idle pause unless the robot is
+ * actually working, and to the cloud pause unless the local socket is up.
+ *
+ * What the two cycles share is a single {@link DeviceState.sharedDiff} slot: when both fall due
+ * within {@link DIFF_SHARE_WINDOW_MS} of each other, the second one reuses the first one's answer
+ * instead of asking again. That is safe only because both send the **same** nonce — what a diff
+ * reports depends on the nonce it was asked with (`PROJECT_STATE.md`, "Was der Diff meldet, hängt
+ * von der übergebenen Nonce ab"), so the cache is keyed by it and a mismatch simply means each
+ * cycle asks for itself.
  */
 
 import {
 	LIVE_MAP_DISABLED,
 	LIVE_TRACK_DISABLED,
+	LIVE_TRACK_REQUEST_PRIORITY,
 	getLiveMapIntervalSeconds,
-	getLiveTrackIntervalSeconds,
+	getLiveTrackPauseMs,
 	isChannelUnavailableError,
 	resolveLiveMapIntervalSeconds,
-	resolveLiveTrackIntervalSeconds
+	resolveLiveTrackPauseMs
 } from "../requestPolicy";
 import { MapManager } from "./MapManager";
 import {
 	DYNAMIC_DATA_BUNDLE_ID,
 	DYNAMIC_DATA_METHOD,
 	buildDynamicDataParams,
-	hasDynamicChannelChanged,
 	parseDynamicChannels,
 	parseDynamicDataResponse,
 	parseDynamicSnapshot
 } from "./dynamicData";
-// Separate statement on purpose: the esbuild that js-controller compiles this with does not
-// understand a `type` modifier inside a named import list and aborts the instance over it. Same
-// reason as the note in `v1/MapBuilder.ts`.
-import type { DynamicChannelState } from "./dynamicData";
 import { buildMapDiffParams, evaluateMapDiff, findOutdatedBlock, supportsIncrementalMap } from "./mapDiff";
 
 /** RPC the app uses to ask what changed since a given map nonce. */
@@ -104,8 +111,31 @@ export type LiveMapAdapter = {
 	getStateAsync(id: string): Promise<{ val?: unknown } | null | undefined>;
 	ensureState(id: string, common: Record<string, unknown>): Promise<unknown>;
 	setStateChangedAsync(id: string, value: { val: unknown; ack: boolean }): Promise<unknown>;
+	/**
+	 * The adapter's own timer, not the global one.
+	 *
+	 * js-controller tracks these and complains about any that outlive the instance, which is exactly
+	 * the safety net a self-rescheduling loop needs: every pause the cycle takes is a timer it owns
+	 * and {@link LiveMapPoller.dispose} clears.
+	 */
+	setTimeout(callback: () => void, ms: number): ioBroker.Timeout | undefined;
+	clearTimeout(timer: ioBroker.Timeout): void;
 	rLog(...args: any[]): void;
 	errorMessage(error: unknown): string;
+};
+
+/**
+ * What the cycle has to ask again on every pass.
+ *
+ * Passed as two functions rather than two booleans because a cycle outlives the moment it was
+ * started: a robot that was idle when the loop began is the normal case, and reading a snapshot
+ * taken back then would keep it at the idle pace for the whole cleaning run.
+ */
+export type DynamicCycleContext = {
+	/** Whether the robot is cleaning, returning, washing, mapping, ... */
+	isActive(): boolean;
+	/** Whether the local TCP session to this device is up; false means everything goes via cloud. */
+	isLocal(): boolean;
 };
 
 /** State that carries the driven track, its mop markers and the robot position for the UI. */
@@ -140,22 +170,19 @@ type DeviceState = {
 	owned: boolean;
 	/** Whether the last cycle used the diff, for logging the branch only once. */
 	loggedBranch: "incremental" | "full" | null;
-	/** Earliest epoch ms at which the live position of this device may be read again. */
-	nextDynamicDueAt: number;
 	/**
 	 * A position read is running.
 	 *
 	 * Separate from {@link inFlight} on purpose: a full map takes seconds, and it used to hold the
 	 * one shared flag for all of them, which is why the position stood still exactly while the
-	 * robot was busy enough to be worth watching.
+	 * robot was busy enough to be worth watching. The free-running cycle cannot overlap itself, so
+	 * this is no longer a gate - it is what tells the outside whether a pass is in the air.
 	 */
 	dynamicInFlight: boolean;
 	/** Consecutive `get_dynamic_map_diff` failures on the track cycle. */
 	trackDiffFailures: number;
 	/** The diff was given up on for the track cycle; the position is no longer read. */
 	trackDiffGaveUp: boolean;
-	/** State of the dynamic bundle at the last fetch, to notice when it was replaced or grew. */
-	lastDynamicChannel: DynamicChannelState | null;
 	/** The robot answered `get_dynamic_data` with an error; do not ask it again. */
 	dynamicUnsupported: boolean;
 	/** Last diff answer, offered to whichever cycle falls due next. */
@@ -166,6 +193,16 @@ export class LiveMapPoller {
 	private readonly adapter: LiveMapAdapter;
 	private readonly states = new Map<string, DeviceState>();
 	private stopped = false;
+	/** Pending pause of each running cycle, so `dispose` leaves no timer behind. */
+	private readonly dynamicTimers = new Map<string, ioBroker.Timeout>();
+	/**
+	 * Devices whose cycle is meant to be running.
+	 *
+	 * Separate from {@link dynamicTimers} because between an answer and the next pause there is no
+	 * timer, and a `stopDynamicCycle` landing in that window has to be noticed anyway - otherwise
+	 * the loop would schedule one more pass after unload.
+	 */
+	private readonly dynamicLoops = new Set<string>();
 
 	/**
 	 * @param adapter The adapter, or a stub carrying {@link LiveMapAdapter}.
@@ -190,7 +227,7 @@ export class LiveMapPoller {
 	 * @returns False when `liveTrackInterval` is 0.
 	 */
 	public isTrackEnabled(): boolean {
-		return resolveLiveTrackIntervalSeconds(this.adapter.config.liveTrackInterval) !== LIVE_TRACK_DISABLED;
+		return resolveLiveTrackPauseMs(this.adapter.config.liveTrackInterval) !== LIVE_TRACK_DISABLED;
 	}
 
 	/**
@@ -236,35 +273,75 @@ export class LiveMapPoller {
 	}
 
 	/**
-	 * One pass of the live position channel for one device.
+	 * Starts the live position cycle for one device, if it is not already running.
 	 *
-	 * Called from the fast ticker, independently of {@link tick}: a running map transfer must not
-	 * delay the position, and a slow position read must not delay the map. Cheap and returns
-	 * immediately unless the device is due. Never throws, for the same reason {@link tick} does not.
+	 * The cycle drives itself: one pass, then a pause, then the next pass. It is **not** a fixed
+	 * cadence, and the difference is the whole point. A fixed cadence has to guess how long an
+	 * answer takes; at the rates this channel is asked to run at, that guess is wrong often enough
+	 * to matter - a 100 ms cadence against a 55 ms median answer overlaps itself on every answer
+	 * above the median. Asking again only after the previous answer has arrived cannot overlap, uses
+	 * whatever speed the link actually offers, and slows down on a slow link without being told.
+	 *
+	 * Calling this again for a device that is already running is a no-op, so it is safe to call from
+	 * anywhere that notices a device might need it.
 	 *
 	 * @param duid Device Unique ID.
-	 * @param isActive Whether the robot is currently cleaning, returning, washing, ...
+	 * @param context Read fresh on every pass, because both answers change while the cycle runs.
 	 */
-	public async tickDynamic(duid: string, isActive: boolean): Promise<void> {
+	public startDynamicCycle(duid: string, context: DynamicCycleContext): void {
 		if (this.stopped) return;
+		if (this.dynamicTimers.has(duid) || this.dynamicLoops.has(duid)) return;
 
-		const intervalSeconds = getLiveTrackIntervalSeconds({
-			configuredSeconds: this.adapter.config.liveTrackInterval,
-			isActive
+		this.dynamicLoops.add(duid);
+		void this.runDynamicPass(duid, context);
+	}
+
+	/**
+	 * Stops the cycle of one device and clears its pending pause.
+	 * @param duid Device Unique ID.
+	 */
+	public stopDynamicCycle(duid: string): void {
+		this.dynamicLoops.delete(duid);
+		const timer = this.dynamicTimers.get(duid);
+		if (timer !== undefined) {
+			this.adapter.clearTimeout(timer);
+			this.dynamicTimers.delete(duid);
+		}
+	}
+
+	/** Stops every running cycle; called from {@link dispose}. */
+	private stopAllDynamicCycles(): void {
+		for (const duid of Array.from(this.dynamicTimers.keys())) this.stopDynamicCycle(duid);
+		this.dynamicLoops.clear();
+	}
+
+	/**
+	 * One pass of the cycle, followed by scheduling the next one.
+	 *
+	 * Never throws: a failed pass must pause and try again rather than tear the loop down, because
+	 * the usual cause is a robot that was briefly unreachable. The cases that really are permanent -
+	 * a robot that does not know the method at all - set their own flag and end the loop below.
+	 *
+	 * @param duid Device Unique ID.
+	 * @param context The device's live answers about state and channel.
+	 */
+	private async runDynamicPass(duid: string, context: DynamicCycleContext): Promise<void> {
+		if (this.stopped || !this.dynamicLoops.has(duid)) return;
+
+		const pauseMs = getLiveTrackPauseMs({
+			configuredPause: this.adapter.config.liveTrackInterval,
+			isActive: context.isActive(),
+			isLocal: context.isLocal()
 		});
-		if (intervalSeconds === LIVE_TRACK_DISABLED) return;
 
 		const state = this.getState(duid);
-		if (state.dynamicInFlight || state.dynamicUnsupported || state.trackDiffGaveUp) return;
+		if (pauseMs === LIVE_TRACK_DISABLED || state.dynamicUnsupported || state.trackDiffGaveUp) {
+			// Switched off, or this robot has proven it cannot answer. Either way the loop ends; it
+			// is started again from the outside when the configuration or the device changes.
+			this.stopDynamicCycle(duid);
+			return;
+		}
 
-		const now = Date.now();
-		if (now < state.nextDynamicDueAt) return;
-
-		// Fixed rate, not fixed delay: scheduling from the end of the work would add the round trip
-		// to every single cycle, so a 1 s cadence would really run every 1.06 s and drift further
-		// with every pass. The `finally` below only pushes the slot when the work outran the
-		// cadence, which is the one case where firing again at once would pile requests up.
-		state.nextDynamicDueAt = now + intervalSeconds * 1000;
 		state.dynamicInFlight = true;
 		try {
 			await this.runDynamicCycle(duid, state);
@@ -272,8 +349,19 @@ export class LiveMapPoller {
 			this.adapter.rLog("MapManager", duid, "Warn", "1.0", undefined, `Live position update failed: ${this.adapter.errorMessage(error)}`, "debug");
 		} finally {
 			state.dynamicInFlight = false;
-			state.nextDynamicDueAt = Math.max(state.nextDynamicDueAt, Date.now());
 		}
+
+		if (this.stopped || !this.dynamicLoops.has(duid)) return;
+
+		// Always through a timer, even at a pause of 0: `setTimeout(0)` yields to the event loop, a
+		// direct recursive call would not, and a channel that answered instantly would starve
+		// everything else in the process.
+		const timer = this.adapter.setTimeout(() => {
+			this.dynamicTimers.delete(duid);
+			void this.runDynamicPass(duid, context);
+		}, pauseMs);
+		if (timer !== undefined) this.dynamicTimers.set(duid, timer);
+		else this.stopDynamicCycle(duid);
 	}
 
 	/**
@@ -302,7 +390,7 @@ export class LiveMapPoller {
 			raw = shared.raw;
 		} else {
 			try {
-				raw = await this.adapter.requestsHandler.sendRequest(duid, MAP_DIFF_METHOD, buildMapDiffParams(nonce), { priority: 0 });
+				raw = await this.adapter.requestsHandler.sendRequest(duid, MAP_DIFF_METHOD, buildMapDiffParams(nonce), { priority: LIVE_TRACK_REQUEST_PRIORITY });
 			} catch (error: unknown) {
 				this.noteTrackDiffFailure(duid, state, error);
 				return;
@@ -470,12 +558,21 @@ export class LiveMapPoller {
 	}
 
 	/**
-	 * Fetches driven track, mop markers and robot position when the robot reports new ones.
+	 * Fetches driven track, mop markers and robot position.
 	 *
-	 * The trigger is the channel's **nonce**, not the `count` the answer also carries: measured on
-	 * a driving S7 Max Ultra, `count` stayed at 0 for the whole run while `maxLen` grew from 47 to
-	 * 71. Waiting for `count` therefore misses every movement. See `PROJECT_STATE.md`, section
-	 * "Live-Karte".
+	 * **It no longer asks whether the channel changed, and that is the fix for the lagging
+	 * position.** It used to return early unless `hasDynamicChannelChanged` said so, and that
+	 * predicate compares the nonce and `maxLen` (`dynamicData.ts:500-504`). `maxLen` is the length of
+	 * the driven path, which grows about once a second - so the gate was, in effect, a one-second
+	 * rate limit on the **position**, which sits in the same answer and moves continuously at up to
+	 * 216 mm/s. No cadence above 1 Hz could ever have shown through it. There is nothing cheaper to
+	 * ask either: the diff reports channel nonces and lengths, and neither of them says anything
+	 * about the robot having moved.
+	 *
+	 * What the gate saved is one request of about 712 bytes per pass. That is the price of the
+	 * position now being as fresh as the cycle is fast, and it is paid knowingly. Nothing extra
+	 * reaches the object database: `setStateChangedAsync` writes only when the JSON differs, so a
+	 * pass that fetched an unchanged track still costs no state update.
 	 *
 	 * Failures are deliberately quiet: this is an extra on top of the map, and a robot that does
 	 * not know the method must not lose the map because of it.
@@ -491,11 +588,10 @@ export class LiveMapPoller {
 
 		const channel = parseDynamicChannels(rawDiff).get(DYNAMIC_DATA_BUNDLE_ID);
 		if (!channel || channel.maxLen <= 0) return;
-		if (!hasDynamicChannelChanged(state.lastDynamicChannel, channel)) return;
 
 		try {
 			const params = buildDynamicDataParams(channel.nonce, DYNAMIC_DATA_BUNDLE_ID, 0, channel.maxLen);
-			const answer = await this.adapter.requestsHandler.sendRequest(duid, DYNAMIC_DATA_METHOD, params, { priority: 0 });
+			const answer = await this.adapter.requestsHandler.sendRequest(duid, DYNAMIC_DATA_METHOD, params, { priority: LIVE_TRACK_REQUEST_PRIORITY });
 			const response = parseDynamicDataResponse(answer);
 			if (response.result !== null && response.result !== 0) {
 				this.adapter.rLog("MapManager", duid, "Debug", "1.0", undefined, `${DYNAMIC_DATA_METHOD} answered result ${response.result}; keeping the previous track.`, "debug");
@@ -507,7 +603,6 @@ export class LiveMapPoller {
 			const id = `Devices.${duid}.${LIVE_TRACK_STATE}`;
 			await this.adapter.ensureState(id, { name: "Live track", type: "string", role: "json", read: true, write: false, def: "" });
 			await this.adapter.setStateChangedAsync(id, { val: JSON.stringify(snapshot), ack: true });
-			state.lastDynamicChannel = channel;
 		} catch (error: unknown) {
 			// An unavailable channel says nothing about the robot's abilities - keep asking later.
 			if (isChannelUnavailableError(error)) return;
@@ -659,11 +754,9 @@ export class LiveMapPoller {
 				diffGaveUp: false,
 				owned: false,
 				loggedBranch: null,
-				nextDynamicDueAt: 0,
 				dynamicInFlight: false,
 				trackDiffFailures: 0,
 				trackDiffGaveUp: false,
-				lastDynamicChannel: null,
 				dynamicUnsupported: false,
 				sharedDiff: null
 			};
@@ -687,6 +780,7 @@ export class LiveMapPoller {
 	 */
 	public dispose(): void {
 		this.stopped = true;
+		this.stopAllDynamicCycles();
 		this.states.clear();
 	}
 }

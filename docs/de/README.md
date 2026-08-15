@@ -125,6 +125,50 @@ bedienen - der zuletzt meldende entscheidet, was alle sehen. Ein Wechsel der Ein
 zeichnet die gespeicherten Karten sofort neu und kostet die Roboter keine einzige
 Anfrage.
 
+Die Tafel **Einstellungen** trägt die dauerhaften Roboter-Einstellungen. Heute sind das „Nicht
+stören" und die Kindersicherung; dort werden weitere Einstellungen nach und nach einsortiert. Ein
+Bedienelement erscheint nur bei einem Roboter, der die Einstellung wirklich hat — der Adapter legt
+die Objekte nur an, wenn der Status das zugehörige Feld meldet. Ein fehlendes Bedienelement heißt
+also „kann das Gerät nicht", nie „ist noch nicht geladen". Jede Beschriftung ist die, die der
+Adapter am Objekt veröffentlicht hat, im Wortlaut der Roborock-App.
+
+„Nicht stören" besteht aus einem Schalter sowie Beginn und Ende. Zwei Eigenheiten sind wissenswert,
+weil sie aus dem Protokoll stammen und nicht aus einer Gestaltungsentscheidung: Der Roboter hat
+**kein** eigenes Ein/Aus-Feld dafür — das Senden eines Zeitfensters *ist* das Einschalten, und zum
+Ausschalten gibt es einen eigenen Befehl, der das Fenster unangetastet lässt. Die Tafel schickt das
+Fenster deshalb beim Einschalten, und eine Zeit, die bei ausgeschaltetem Modus geändert wird, bleibt
+im Browser stehen und geht erst beim Einschalten an den Roboter. Und das Fenster gilt in der
+**Uhr des Roboters**, nicht in der des ioBroker-Hosts: Der Roboter speichert vier nackte Zahlen ohne
+Zeitzone, und die Roborock-App hat genau dafür eine eigene Seite für die Gerätezeitzone. Weicht die
+Zeitzone des Roboters von der eigenen ab, liegt die Ruhezeit zu einer anderen Stunde als der hier
+angezeigten.
+
+Die Kindersicherung ist ein gewöhnlicher Schalter. Beide Einstellungen sind auch im Objektbaum
+lesbar, und beide werden nach dem Senden überprüft: Der Roboter antwortet auch auf eine verworfene
+Einstellung mit `["ok"]`, deshalb vergleicht der Adapter das Gewünschte mit dem, was der Roboter
+danach meldet, und sagt es im Log, wenn beides nicht zusammenpasst.
+
+Der **Reinigungsverlauf** steht unter der Stationstafel und ist wie seine Nachbarn
+eingeklappt. Er listet die aufgezeichneten Läufe, neueste zuerst, mit dem Beginn, der Dauer,
+der gereinigten Fläche und der Art des Laufs — ganze Wohnung, Zone, Raumauswahl — und markiert
+nur die Läufe, die der Roboter nicht zu Ende gebracht hat; eine Markierung an jedem normalen
+Lauf sagt nichts. Über der Liste stehen die Gesamtwerte, die der Roboter führt: Gesamtfläche,
+Gesamtzeit, Anzahl der Läufe.
+
+Ein Klick auf einen Lauf öffnet ihn vollständig — **mitsamt der Karte dieses Laufs**. Der
+Adapter holt und rendert diese Karten seit jeher; angezeigt hat sie bisher nichts. Sie
+entstehen nur, solange **Kartenerzeugung aktivieren** eingeschaltet ist; ist sie aus, stehen
+die Läufe mit allen Werten trotzdem in der Liste, und die Detailansicht sagt, warum es kein
+Bild gibt. Das Bild wird erst beim Öffnen eines Laufs geladen, nicht mit der Liste — zwanzig
+gespeicherte Karten kosten also nichts, solange keine davon angesehen wird.
+
+Alles in diesem Bereich wird aus dem Objektbaum gelesen; die Tafel schickt dem Roboter nichts.
+Die Bezeichnungen der Laufarten und der Abbruchgründe sind Roborocks eigene, aus den Tabellen
+der App übernommen; einen Code, den diese Tabellen nicht führen, zeigt der Verlauf als nackte
+Zahl, statt ihm einen erfundenen Namen zu geben. Werte, deren Bedeutung nicht belegt ist — ein
+B01- oder Q10-Gerät veröffentlicht mehrere davon — stehen unter *Weitere Werte* mit dem Namen
+und der Einheit ihres eigenen Objekts.
+
 Die Ladestation zeichnet die Karte mit der Grafik, die auch die Roborock-App dafür
 verwendet, und dreht sie so, wie der Roboter die Ausrichtung der Station meldet. Welche
 Grafik es wird, hängt vom gemeldeten Stationstyp ab: eine einfache Ladeschale bekommt eine
@@ -172,7 +216,7 @@ Alle Einstellungen der Adapter-Instanz, entnommen aus der Admin-Konfigurationsbe
 | Aktualisierungsintervall während der Reinigung | `activePollInterval` | `number` | `5` | Sekunden zwischen zwei Abfragen, während der Roboter reinigt, zurückfährt oder wischt. Kleinere Werte lassen Position, Fläche und Fortschritt enger folgen, aber jede Abfrage ist eine Anfrage: Sie kostet Netzwerkverkehr und Last auf dem Roboter und auf ioBroker. Unter etwa 3 Sekunden ist der Gewinn kaum noch sichtbar. |
 | Maximale Wartezeit nach fehlgeschlagenen Abfragen | `pollBackoffMaxInterval` | `number` | `300` | Nach einer fehlgeschlagenen Abfrage wartet der Adapter 30 Sekunden und verdoppelt die Wartezeit nach jedem weiteren Fehlschlag, bis zu dieser Obergrenze. Ein niedriger Wert bemerkt einen zurückkehrenden Roboter früher, versucht es aber weiter gegen ein nicht erreichbares Gerät; ein hoher Wert hält Log und Netzwerk bei einer längeren Störung ruhig. |
 | Live-Aktualisierung der Karte | `liveMapInterval` | `number` | `3` | Sekunden zwischen zwei Prüfungen auf Kartenänderungen, während der Roboter reinigt; im Stillstand wartet der Adapter doppelt so lange. Die Prüfung selbst ist eine kleine Anfrage, die nur nach den Änderungen fragt, und eine vollständige Karte wird nur übertragen, wenn sich tatsächlich etwas geändert hat - ein kleiner Wert kostet also weit weniger, als es aussieht, bleibt aber eine Anfrage pro Intervall an den Roboter, das Netzwerk und ioBroker. Roboter ohne inkrementelle Karte müssen jedes Mal die ganze Karte übertragen und werden deshalb nie häufiger als alle 5 Sekunden geprüft. 0 schaltet die Live-Aktualisierung ab; die Karte wird dann nur noch von der normalen Abfrage erneuert. |
-| Live-Aktualisierung der Position | `liveTrackInterval` | `number` | `1` | Sekunden zwischen zwei Aktualisierungen der Roboterposition sowie der gefahrenen und gewischten Spur, während der Roboter reinigt; im Stillstand wartet der Adapter doppelt so lange. Das ist ein eigener Kanal, getrennt von der Karte darüber, und ein weit günstigerer: zwei kleine Anfragen, die der Roboter lokal in jeweils rund 55 Millisekunden beantwortet, statt einer vollständigen Karte von mehreren Kilobyte über die Cloud. Deshalb ist die Voreinstellung von 1 Sekunde schneller als die Roborock-App selbst. Kürzer wird nicht angeboten, weil der Roboter nur etwa einen Spurpunkt pro Sekunde hinzufügt und damit nichts Neues ankäme. 0 schaltet die Live-Position ab; der Roboter wird dann nur dort angezeigt, wo ihn die letzte Karte hinterlassen hat. |
+| Live-Position: Pause zwischen Aktualisierungen (ms) | `liveTrackInterval` | `number` | `200` | Millisekunden, die der Adapter nach einer Antwort wartet, bevor er die Roboterposition erneut abfragt. Es ist eine Pause, kein fester Takt: Die nächste Frage geht erst raus, wenn die vorige Antwort da ist. Dadurch können sich die Anfragen nie stapeln, und eine langsame Verbindung verlangsamt einfach die Aktualisierung. Das ist ein eigener Kanal neben der Karte darüber und ein weit billigerer: zwei kleine Anfragen, die der Roboter lokal in je etwa 55 Millisekunden beantwortet, gegenüber einer vollständigen Karte von mehreren Kilobyte über die Cloud. 200 ms ist die Vorgabe und wirkt flüssig; 100 ms ist der schnellste erlaubte Wert. Zwei Grenzen gelten automatisch und lassen sich nicht unterschreiten: Solange der Roboter stillsteht und solange er nur über die Roborock-Cloud erreichbar ist, beträgt die Pause mindestens 2 Sekunden. 0 schaltet die Live-Position ab; der Roboter wird dann nur dort gezeigt, wo ihn die letzte Karte hingesetzt hat. Werte von 1 bis 30 werden weiterhin als die ganzen Sekunden gelesen, die diese Option früher zählte, damit eine bestehende Einstellung weiter funktioniert – für die neue Einheit einen Wert ab 100 eintragen. |
 | Ausführung gespeicherter Programme | `sceneExecutionMode` | `select` | `"local"` | Lokal: führt die gespeicherte Szene lokal mit ihren Roborock-Szenenschritten aus und nutzt lokale Queue/Fortsetzen. Cloud: startet dieselbe Szene über die Roborock-Cloud wie die App. Es gibt keinen automatischen Wechsel.<br>Auswahl: `local` = Lokal mit Adapter-Queue, `cloud` = Cloud wie Roborock-App |
 | Auf Geräte-Broadcasts hören (UDP 58866) | `udpDiscoveryEnabled` | `checkbox` | `true` | Aus: Es werden nur Geräte mit statisch konfigurierter IP-Adresse verwendet. Hilfreich, wenn Broadcasts gefiltert werden (VLAN, WLAN-Client-Isolation, LXC- oder Docker-Bridges). |
 | Netzwerkschnittstelle für die Gerätesuche | `udpBindAddress` | `interface` |  | IP-Adresse oder Schnittstellenname (zum Beispiel eth0), an die der UDP-Discovery-Socket gebunden wird. Leer bedeutet alle Schnittstellen, was auf Hosts mit mehreren Netzen fehlschlagen kann.<br>Ausgeblendet, wenn `!data.udpDiscoveryEnabled` |
@@ -189,12 +233,12 @@ Alle Geräteobjekte liegen unter `roborock.<instanz>.Devices.<duid>`:
 | --- | --- |
 | `commands` | Beschreibbare Knöpfe und Wertobjekte, die eine Reinigung starten, Modi umschalten und so weiter. |
 | `queries` | Beschreibbare Objekte, die eine bestimmte Information beim Roboter abfragen. |
-| `settings` | Beschreibbare Objekte, die eine dauerhafte Robotereinstellung ändern. |
+| `settings` | Beschreibbare Objekte, die eine dauerhafte Robotereinstellung ändern. `set_dnd_timer` nimmt das Zeitfenster für „Nicht stören" als `HH:MM-HH:MM`; das Einschalten des Modus *ist* dasselbe wie das Schreiben eines Fensters. `close_dnd_timer` schaltet ihn aus, `set_child_lock_status` ist ein einfacher Schalter. Das aktuell gültige Fenster steht nur lesbar in `deviceStatus.dnd_start` und `deviceStatus.dnd_end`, ob es aktiv ist in `deviceStatus.dnd_enabled`. |
 | `deviceStatus` | Der Zustand, den der Roboter meldet. Nur lesbar. |
 | `consumables` | Restlaufzeit und Betriebsdauer von Bürsten, Filtern und Sensoren. |
 | `resetConsumables` | Je ein Knopf pro zurücksetzbarem Verbrauchsteil. |
 | `cleaningInfo` | Gesamtwerte über die Lebensdauer (Fläche, Zeit, Anzahl der Läufe). |
-| `cleaningRecords` | Die einzelnen Reinigungsläufe der Historie. |
+| `cleaningInfo.records.<index>` | Die einzelnen Reinigungsläufe der Historie, neueste zuerst; die gerenderte Karte je Lauf liegt unter `map`. |
 | `floors` | Ein Eintrag je gespeicherter Karte, inklusive Knopf zum Laden. |
 | `schedules` | Die im Roboter gespeicherten Timer inklusive Ein-/Ausschalter. |
 | `programs` | Die in der Roborock-App gespeicherten Szenen. |
@@ -663,9 +707,9 @@ Vom Roboter gemeldete Werte in `Devices.<duid>.cleaningInfo`.
 | `clean_time` |  | `number` | `h` | [h] |
 | `dust_collection_count` |  | `number` |  |  |
 
-#### `cleaningRecords`
+#### `cleaningInfo.records.<index>`
 
-Vom Roboter gemeldete Werte in `Devices.<duid>.cleaningRecords`.
+Vom Roboter gemeldete Werte in `Devices.<duid>.cleaningInfo.records.<index>`.
 
 | Objekt | Name | Typ | Einheit | Werte |
 | --- | --- | --- | --- | --- |

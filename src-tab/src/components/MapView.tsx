@@ -24,6 +24,14 @@ import { ConsumablesPanel } from "./ConsumablesPanel";
 import { DockPanel } from "./DockPanel";
 import { LiveTrackLegend } from "./LiveTrackLegend";
 import { ObstacleDialog } from "./ObstacleDialog";
+import { HistoryPanel } from "./HistoryPanel";
+import { HistoryDialog } from "./HistoryDialog";
+import { CleaningHistorySource } from "../history/historySource";
+import type { CleaningHistoryModel, CleaningRunModel } from "../history/historyTypes";
+import { SettingsPanel } from "./SettingsPanel";
+import { RobotSettingsSource } from "../settings/robotSettingsSource";
+import type { RobotSettingsModel, SettingWrite } from "../settings/robotSettings";
+import type { MapColorScheme } from "../engine/mapOverlayColors";
 
 interface MapViewProps {
 	socket: AdminConnection;
@@ -101,8 +109,17 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [goToActive, setGoToActive] = useState(false);
 	const [error, setError] = useState<string>("");
 	const [photo, setPhoto] = useState<ObstaclePhotoModel | null>(null);
+	const [history, setHistory] = useState<CleaningHistoryModel | null>(null);
+	const [historyRun, setHistoryRun] = useState<CleaningRunModel | null>(null);
+	// The scheme the **adapter** paints its map bitmaps in, not the admin theme; see
+	// `engine/mapOverlayColors.ts` for why the two are separate.
+	const [mapColorScheme, setMapColorScheme] = useState<MapColorScheme>("light");
+
+	const [robotSettings, setRobotSettings] = useState<RobotSettingsModel | null>(null);
 
 	const connection = useMemo(() => createEngineConnection(socket), [socket]);
+	const historySourceRef = useRef<CleaningHistorySource | null>(null);
+	const settingsSourceRef = useRef<RobotSettingsSource | null>(null);
 
 	useEffect(() => {
 		const host = hostRef.current;
@@ -152,6 +169,62 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			engineRef.current = null;
 		};
 	}, [connection, instanceId, language]);
+
+	/*
+	 * The history reads its own branch of the object tree and is deliberately not part of the map
+	 * engine: it needs no map, no D3 and no drawing, and the engine already carries enough.
+	 */
+	useEffect(() => {
+		const source = new CleaningHistorySource(connection, {
+			onHistory: setHistory,
+			onMapColorScheme: setMapColorScheme
+		});
+		historySourceRef.current = source;
+
+		return () => {
+			source.destroy();
+			historySourceRef.current = null;
+		};
+	}, [connection]);
+
+	// `connection` is a dependency although it is not read here: a new connection means the effect
+	// above built a new source, and that one has to be pointed at the device as well. Without it a
+	// reconnect would leave the panel with a source that was never told which robot to read.
+	useEffect(() => {
+		// A device switch closes an open run: its map belongs to the robot that was selected.
+		setHistoryRun(null);
+		historySourceRef.current?.setDevice(instanceId, selectedRobot, language);
+	}, [connection, instanceId, selectedRobot, language]);
+
+	const loadHistoryMap = useCallback(
+		(stateId: string) => historySourceRef.current?.loadMap(stateId) ?? Promise.resolve(null),
+		[]
+	);
+
+	/*
+	 * The persistent robot settings. Same shape as the history above and for the same reason: they
+	 * read their own branch of the object tree and have nothing to do with drawing a map.
+	 */
+	useEffect(() => {
+		const source = new RobotSettingsSource(connection, {
+			onSettings: setRobotSettings,
+			onError: setError
+		});
+		settingsSourceRef.current = source;
+
+		return () => {
+			source.destroy();
+			settingsSourceRef.current = null;
+		};
+	}, [connection]);
+
+	useEffect(() => {
+		settingsSourceRef.current?.setDevice(instanceId, selectedRobot, language);
+	}, [connection, instanceId, selectedRobot, language]);
+
+	const writeSetting = useCallback((write: SettingWrite) => {
+		void settingsSourceRef.current?.apply(write);
+	}, []);
 
 	const onCleanCountChange = useCallback((count: number) => {
 		// The adapter command `set_clean_repeat_times` allows one or two passes, nothing else.
@@ -280,6 +353,15 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 					dockActivity={status.dockActivity}
 					onCommand={(command, value) => engineRef.current?.sendDockValue(command, value)}
 				/>
+				<SettingsPanel
+					settings={robotSettings}
+					onWrite={writeSetting}
+				/>
+				<HistoryPanel
+					history={history}
+					language={language}
+					onSelectRun={setHistoryRun}
+				/>
 			</Stack>
 
 			{/*
@@ -359,6 +441,14 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			<ObstacleDialog
 				photo={photo}
 				onClose={() => setPhoto(null)}
+			/>
+
+			<HistoryDialog
+				run={historyRun}
+				language={language}
+				mapColorScheme={mapColorScheme}
+				loadMap={loadHistoryMap}
+				onClose={() => setHistoryRun(null)}
 			/>
 
 			<Snackbar

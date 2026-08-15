@@ -392,10 +392,20 @@ export class SVGMapRenderer implements IMapRenderer {
 			.style("opacity", "1");
 	}
 
+	/**
+	 * Draws the obstacle icons.
+	 *
+	 * The data join below was always here - and was defeated by a `g.selectAll(".obstacle-group")
+	 * .remove()` on the line above it, which meant every element was an entering one on every call
+	 * and `exit()` and `merge()` never had anything to do. The icons load through the same
+	 * asynchronous probe the furniture uses, so the effect was the same: a frame showing the
+	 * fallback icon after every redraw. The `remove()` is gone and the join is keyed by position and
+	 * type, which is what an obstacle is - it does not move, it is either detected or it is not.
+	 *
+	 * @param items Obstacles to draw; an empty list clears the layer.
+	 */
 	drawObstacles(items: DrawObstacleInput[]): void {
 		const g = this.opts.groups.obstacleGroup;
-		g.selectAll(".obstacle-group").remove();
-		if (!items.length) return;
 		const bgRadius = this.opts.obstacleRadius * 1.1;
 		const baseUrl = this.opts.obstacleAssetBaseUrl;
 		const obstacleFileName = this.opts.obstacleFileName;
@@ -404,7 +414,9 @@ export class SVGMapRenderer implements IMapRenderer {
 		const mapping = this.opts.obstacleMapping;
 		const onObstacleClick = this.opts.onObstacleClick;
 
-		const groups = g.selectAll(".obstacle-group").data(items);
+		const groups = g
+			.selectAll<SVGGElement, DrawObstacleInput>(".obstacle-group")
+			.data(items, (d) => `${d.x}|${d.y}|${String(d.typeOrSuffix)}`);
 
 		groups.exit().remove();
 
@@ -461,7 +473,17 @@ export class SVGMapRenderer implements IMapRenderer {
 				img.src = primaryUrl;
 			});
 
-		enter.merge(groups as unknown as d3.Selection<SVGGElement, DrawObstacleInput, SVGGElement, unknown>).attr("transform", (d) => `translate(${d.x}, ${d.y})`);
+		const merged = enter.merge(groups);
+		merged.attr("transform", (d) => `translate(${d.x}, ${d.y})`);
+		// Only a href the caller actually named is refreshed here. Where it named none, the icon on
+		// the element is whatever the probe above settled on, and overwriting that with the fallback
+		// would undo the probe on every redraw. Writing the identical value is skipped so the
+		// browser is never given a reason to fetch again.
+		merged.select<SVGImageElement>("image.obstacle-icon").each(function (this: SVGImageElement, d: DrawObstacleInput) {
+			if (!d.imageHref) return;
+			const icon = d3.select(this);
+			if (icon.attr("href") !== d.imageHref) icon.attr("href", d.imageHref);
+		});
 	}
 
 	/**
@@ -483,76 +505,154 @@ export class SVGMapRenderer implements IMapRenderer {
 	drawFurniture(items: DrawFurnitureInput[]): void {
 		const g = this.opts.groups.furnitureGroup;
 		if (!g) return;
-		g.selectAll("g.furniture").remove();
-		if (!items.length) return;
 
-		for (const item of items) {
-			const piece = g
-				.append("g")
-				.attr("class", "furniture")
-				.attr("data-furniture-id", String(item.id))
-				.attr(
-					"transform",
-					`translate(${item.centerX}, ${item.centerY}) rotate(${item.angle}) translate(${-item.width / 2}, ${-item.height / 2})`
-				);
+		const pieces = g.selectAll<SVGGElement, DrawFurnitureInput>("g.furniture").data(items, (d) => String(d.id));
 
-			// Native SVG tooltip. The app shows no permanent text on the map either (analysis
-			// §2.7), so the name stays out of the way until the pointer asks for it.
-			if (item.title) piece.append("title").text(item.title);
+		pieces.exit().remove();
 
+		const enter = pieces
+			.enter()
+			.append("g")
+			.attr("class", "furniture")
+			.attr("data-furniture-id", (d) => String(d.id));
+
+		enter
+			.append("rect")
+			.attr("class", "furniture-shape")
+			.attr("x", 0)
+			.attr("y", 0)
+			.style("fill", "rgba(120, 120, 120, 0.18)")
+			.style("stroke", "rgba(60, 60, 60, 0.55)")
+			.style("stroke-width", "0.75px");
+
+		const merged = enter.merge(pieces);
+
+		merged.attr(
+			"transform",
+			(d) => `translate(${d.centerX}, ${d.centerY}) rotate(${d.angle}) translate(${-d.width / 2}, ${-d.height / 2})`
+		);
+
+		merged
+			.select("rect.furniture-shape")
+			.attr("width", (d) => d.width)
+			.attr("height", (d) => d.height)
+			.attr("rx", (d) => Math.min(d.width, d.height) * 0.1);
+
+		// Native SVG tooltip. The app shows no permanent text on the map either (analysis §2.7), so
+		// the name stays out of the way until the pointer asks for it.
+		merged.each(function (this: SVGGElement, d: DrawFurnitureInput) {
+			const piece = d3.select(this);
+			const title = piece.select("title");
+			if (!d.title) {
+				title.remove();
+				return;
+			}
+			if (title.empty()) piece.insert("title", ":first-child").text(d.title);
+			else if (title.text() !== d.title) title.text(d.title);
+		});
+
+		merged.each((d, index, nodes) => this.syncFurnitureImage(nodes[index] as SVGGElement, d));
+	}
+
+	/**
+	 * Brings one piece's artwork in line with its data, without ever reloading a picture that is
+	 * already correct.
+	 *
+	 * This is where the flickering came from. The layer used to be thrown away and rebuilt on every
+	 * redraw, and because the `<image>` is only appended in an `Image()` probe's `onload` - which
+	 * fires a tick later **even for a file the browser already has** - every redraw left a frame
+	 * showing nothing but the grey placeholder. With the map republished every few seconds that
+	 * frame is exactly what the user reported as flickering.
+	 *
+	 * The probe itself has to stay: the artwork is downloaded per user from that user's own Roborock
+	 * account, so a purely local installation has none of it, and binding `href` straight to a file
+	 * that may not exist would show a broken-image icon on the map. What changed is that the probe
+	 * now runs **once per piece and href** instead of once per redraw. `data-probe-href` records
+	 * which file a node has already asked for; a failure clears it again, so a piece whose artwork
+	 * arrives later - the plugin download runs after start-up - still picks it up on a later redraw.
+	 *
+	 * @param node The piece's group element.
+	 * @param item Its data.
+	 */
+	private syncFurnitureImage(node: SVGGElement, item: DrawFurnitureInput): void {
+		const piece = d3.select(node);
+		const image = piece.select<SVGImageElement>("image.furniture-icon");
+		const shape = piece.select("rect.furniture-shape");
+		const wanted = item.imageHref;
+
+		// Nothing to show, or a different file is meant now: back to the outline, and let the block
+		// below fetch the new one. Leaving the old picture up would show the wrong furniture.
+		if (!image.empty() && (!wanted || image.attr("href") !== wanted)) {
+			image.remove();
+			shape.style("display", null);
+			piece.attr("data-probe-href", null);
+		}
+
+		if (!wanted) {
+			piece.attr("data-probe-href", null);
+			return;
+		}
+
+		const current = piece.select<SVGImageElement>("image.furniture-icon");
+		if (!current.empty()) {
+			// The picture is right; only its footprint can have changed.
+			current.attr("width", item.width).attr("height", item.height);
+			return;
+		}
+
+		// A probe for this very file is already pending or has already failed for this node.
+		if (piece.attr("data-probe-href") === wanted) return;
+		piece.attr("data-probe-href", wanted);
+
+		const probe = new Image();
+		probe.onload = (): void => {
+			// The piece may have been removed, or moved on to another graphic, while this loaded.
+			if (!node.isConnected || piece.attr("data-probe-href") !== wanted) return;
+			piece.select("rect.furniture-shape").style("display", "none");
 			piece
-				.append("rect")
-				.attr("class", "furniture-shape")
+				.append("image")
+				.attr("class", "furniture-icon")
 				.attr("x", 0)
 				.attr("y", 0)
 				.attr("width", item.width)
 				.attr("height", item.height)
-				.attr("rx", Math.min(item.width, item.height) * 0.1)
-				.style("fill", "rgba(120, 120, 120, 0.18)")
-				.style("stroke", "rgba(60, 60, 60, 0.55)")
-				.style("stroke-width", "0.75px");
-
-			if (!item.imageHref) continue;
-
-			const href = item.imageHref;
-			const probe = new Image();
-			probe.onload = () => {
-				// The map may have been redrawn while the image was loading.
-				const node = piece.node();
-				if (!node || !g.node()?.contains(node)) return;
-				piece.select("rect.furniture-shape").style("display", "none");
-				piece
-					.append("image")
-					.attr("class", "furniture-icon")
-					.attr("x", 0)
-					.attr("y", 0)
-					.attr("width", item.width)
-					.attr("height", item.height)
-					// The rectangle is the real footprint, so the artwork fills it instead of
-					// being letterboxed into it.
-					.attr("preserveAspectRatio", "none")
-					.attr("href", href);
-			};
-			probe.onerror = () => {
-				// Nothing to do - the neutral outline is already on the map.
-			};
-			probe.src = href;
-		}
+				// The rectangle is the real footprint, so the artwork fills it instead of being
+				// letterboxed into it.
+				.attr("preserveAspectRatio", "none")
+				.attr("href", wanted);
+		};
+		probe.onerror = (): void => {
+			// The neutral outline is already on the map. Forget the attempt so a graphic that only
+			// arrives later - the per-account download runs after start-up - is picked up again.
+			if (piece.attr("data-probe-href") === wanted) piece.attr("data-probe-href", null);
+		};
+		probe.src = wanted;
 	}
 
+	/**
+	 * Draws the room names.
+	 *
+	 * Same story as {@link drawObstacles}: the data join was written and then defeated by a
+	 * `remove()` above it. The icon here is bound straight from `iconHref` rather than through a
+	 * probe, so the gap is shorter than the furniture's - but a freshly created `<image>` still has
+	 * nothing to show until the browser has decoded the file, and at one redraw every few seconds
+	 * that is visible on the bubbles. Keyed by segment id, which is what a room is.
+	 *
+	 * Keeping the elements has a second effect that is wanted rather than merely tolerated: the
+	 * selection styling written by `MapEngine.applyRoomSelectionStyling()` and the font scaling from
+	 * `applyRoomLabelZoomBehavior()` both live on these nodes, and both used to be thrown away and
+	 * re-derived on every redraw.
+	 *
+	 * @param labels Labels to draw; an empty list clears the layer.
+	 */
 	drawRoomLabels(labels: DrawRoomLabelInput[]): void {
 		const g = this.opts.groups.roomNameGroup;
-		g.selectAll("g.room-label").remove();
-		if (!labels.length) return;
 		const onRoomLabelClick = this.opts.onRoomLabelClick;
 		const selectedSegmentIds = this.opts.selectedSegmentIds;
 		const overlayColors = this.opts.overlayColors ?? getMapOverlayColors(null);
-		const sel = g.selectAll("g.room-label").data(labels);
+		const sel = g.selectAll<SVGGElement, DrawRoomLabelInput>("g.room-label").data(labels, (d) => String(d.segmentId));
 		sel.exit().remove();
-		const enter = sel.enter()
-			.append("g")
-			.attr("class", onRoomLabelClick ? "room-label selectable" : "room-label")
-			.style("pointer-events", onRoomLabelClick ? "auto" : "none");
+		const enter = sel.enter().append("g");
 
 		if (onRoomLabelClick) {
 			enter.on("click", function (event: MouseEvent, d: DrawRoomLabelInput) {
@@ -578,7 +678,12 @@ export class SVGMapRenderer implements IMapRenderer {
 			.style("font-weight", "900")
 			.style("font-size", `${ROOM_LABEL_BADGE_FONT}px`);
 
-		const merged = enter.merge(sel as unknown as d3.Selection<SVGGElement, DrawRoomLabelInput, SVGGElement, unknown>)
+		// Set on every pass, not only on entering elements: whether a label is clickable comes from
+		// the renderer's options, and those can differ between two draws. A label that entered while
+		// the map was read-only would otherwise stay dead for as long as it survives.
+		const merged = enter.merge(sel)
+			.attr("class", onRoomLabelClick ? "room-label selectable" : "room-label")
+			.style("pointer-events", onRoomLabelClick ? "auto" : "none")
 			.attr("data-x", (d) => String(d.x))
 			.attr("data-y", (d) => String(d.y))
 			.attr("data-segment-id", (d) => String(d.segmentId))

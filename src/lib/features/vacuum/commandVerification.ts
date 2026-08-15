@@ -43,7 +43,28 @@ export const VERIFIABLE_SET_COMMANDS: Readonly<Record<string, readonly string[]>
 	set_mop_mode: Object.freeze(["mop_mode"]),
 	set_water_box_custom_mode: Object.freeze(["water_box_mode"]),
 	// Carries the whole triple in one payload; its keys are named exactly like the status fields.
-	set_clean_motor_mode: Object.freeze(["fan_power", "water_box_mode", "mop_mode"])
+	set_clean_motor_mode: Object.freeze(["fan_power", "water_box_mode", "mop_mode"]),
+	// `{lock_status: 0|1}` on the wire, `lock_status` in the status - the same name on both sides,
+	// so the payload is read by field name like the triple above.
+	set_child_lock_status: Object.freeze(["lock_status"]),
+	// The two Do Not Disturb commands carry no value the status could be compared against: one
+	// sends four times, the other nothing at all. What they do is switch `dnd_enabled`, and that
+	// is what {@link FIXED_COMMAND_EXPECTATIONS} states for them.
+	set_dnd_timer: Object.freeze(["dnd_enabled"]),
+	close_dnd_timer: Object.freeze(["dnd_enabled"])
+});
+
+/**
+ * Commands whose effect on the status is fixed rather than derived from what was sent.
+ *
+ * `set_dnd_timer` switches Do Not Disturb **on** whatever window it carries, and `close_dnd_timer`
+ * switches it off - both proven from the app's own switch handler,
+ * `onDonotDisturbSwitchValueChanged` (a65 control plugin, A65:851190-851262), which calls exactly
+ * these two for the two positions of one switch.
+ */
+export const FIXED_COMMAND_EXPECTATIONS: Readonly<Record<string, Readonly<Record<string, number>>>> = Object.freeze({
+	set_dnd_timer: Object.freeze({ dnd_enabled: 1 }),
+	close_dnd_timer: Object.freeze({ dnd_enabled: 0 })
 });
 
 /**
@@ -106,10 +127,16 @@ export function expectationFor(command: string, params: unknown): Record<string,
 	const fields = VERIFIABLE_SET_COMMANDS[command];
 	if (!fields) return null;
 
+	// A command whose effect does not depend on its payload states it outright.
+	const fixed = FIXED_COMMAND_EXPECTATIONS[command];
+	if (fixed) return { ...fixed };
+
 	const payload = Array.isArray(params) ? params[0] : params;
 
-	if (command === "set_clean_motor_mode") {
-		if (typeof payload !== "object" || payload === null) return null;
+	// An object payload names its own fields, and every command that has one names them exactly
+	// like the status fields they set (`set_clean_motor_mode`, `set_child_lock_status`). Reading by
+	// name rather than by position is what lets a new command join without a case of its own here.
+	if (typeof payload === "object" && payload !== null) {
 		const source = payload as Record<string, unknown>;
 		const expected: Record<string, number> = {};
 		for (const field of fields) {

@@ -119,6 +119,46 @@ one rendered image per robot, that last option cannot serve two browsers in two 
 the one that reported last decides what everyone sees. Changing the setting repaints the
 stored maps at once and does not cost the robots a single request.
 
+The **settings** panel carries the persistent robot settings. Today that is Do Not Disturb and the
+child lock; it is the place further settings will be added to. A control only appears for a robot
+that really has the setting - the adapter creates the objects only for a robot whose status reports
+the matching field - so an absent control means the robot does not offer it, never that something
+failed to load. Every label is the one the adapter published on the object, in the wording of the
+Roborock app.
+
+Do Not Disturb is a switch plus a start and an end. Two details are worth knowing because they come
+from the protocol and not from a design choice: the robot has **no** separate on/off flag for it -
+sending a window is what switches the mode on, and there is a separate command that switches it off
+without touching the window. The panel therefore sends the window when you switch the mode on, and
+a time you change while the mode is off is kept in the browser and sent when you switch it on. And
+the window is in the **robot's own clock**, not in the ioBroker host's: the robot stores four plain
+numbers with no time zone attached, and the Roborock app has a device time zone screen of its own
+for exactly that reason. If the robot's time zone differs from yours, the quiet period sits at a
+different hour than the one shown here.
+
+The child lock is an ordinary switch. Both settings are also readable in the object tree, and both
+are checked after they are sent: the robot answers `["ok"]` even to a setting it drops, so the
+adapter compares what it asked for against what the robot reports afterwards and says so in the log
+when the two disagree.
+
+The **cleaning history** sits below the dock panel, collapsed like its neighbours. It lists
+the recorded runs newest first with the moment each one started, how long it took, how much
+area it covered and what type of run it was - whole flat, zone, room selection - and it marks
+only the runs the robot did not finish, because a mark on every normal run says nothing. Above
+the list stand the lifetime totals the robot keeps: total area, total time, number of runs.
+
+Clicking a run opens it in full, including **the map of that run**. The adapter has been
+fetching and rendering those maps all along; until now nothing displayed them. They exist only
+while **Enable Map Creation** is on - with it off the runs are still listed with all their
+values, and the detail view says why there is no picture. The image is fetched when a run is
+opened, not with the list, so twenty stored maps cost nothing until one of them is looked at.
+
+Everything in this section is read from the object tree; the panel sends the robot nothing.
+The wording of the run types and of the reasons a run ended is Roborock's own, taken from the
+app's tables, and a code those tables do not list is shown as the plain number rather than
+given an invented name. Values whose meaning is not proven - a B01 or Q10 device publishes
+several - are listed under *More values* with the name and unit of their own object.
+
 The dock is drawn with the Roborock app's own picture of it, turned the way the robot
 reports the dock to stand. Which picture depends on the reported dock type: a plain
 charging dock gets a different graphic from a station that empties, washes or dries. Those
@@ -165,7 +205,7 @@ Every setting of the adapter instance, taken from the admin configuration defini
 | Update interval while cleaning | `activePollInterval` | `number` | `5` | Seconds between two polls while the robot is cleaning, returning or washing. Lower values make position, area and progress follow more closely, but every poll is a request: they cost network traffic and load on both the robot and ioBroker. Below about 3 seconds the gain is barely visible. |
 | Maximum wait after failed polls | `pollBackoffMaxInterval` | `number` | `300` | After a failed poll the adapter waits 30 seconds, then doubles the wait after each further failure, up to this limit. A low value notices a returning robot sooner but keeps retrying against an unreachable device; a high value keeps the log and the network quiet during a longer outage. |
 | Live map update | `liveMapInterval` | `number` | `3` | Seconds between two checks for map changes while the robot is cleaning; while it stands still the adapter waits twice as long. The check itself is a small request that asks only what changed, and a complete map is transferred only when something actually did - so a low value costs far less than it looks, but it is still one request per interval on the robot, the network and ioBroker. Robots that do not offer the incremental map have to transfer the whole map every time and are therefore never checked faster than every 5 seconds. 0 switches the live update off; the map is then only refreshed by the normal poll. |
-| Live position update | `liveTrackInterval` | `number` | `1` | Seconds between two updates of the robot position and of the driven and mopped track while the robot is cleaning; while it stands still the adapter waits twice as long. This is a separate channel from the map above and a far cheaper one: two small requests the robot answers locally in about 55 milliseconds each, instead of a complete map of several kilobytes over the cloud. That is why the default of 1 second is faster than the Roborock app itself. Lower is not offered because the robot only adds about one track point per second, so nothing new would arrive. 0 switches the live position off; the robot is then only shown where the last map put it. |
+| Live position: pause between updates (ms) | `liveTrackInterval` | `number` | `200` | Milliseconds the adapter waits after one answer before it asks for the robot position again. It is a pause, not a fixed rate: the next question goes out only once the previous answer has arrived, so the requests can never pile up and a slow connection simply slows the updates down instead. This is a separate channel from the map above and a far cheaper one - two small requests the robot answers locally in about 55 milliseconds each, against a complete map of several kilobytes over the cloud. 200 ms is the default and looks fluid; 100 ms is the fastest allowed. Two limits apply automatically and cannot be undercut: while the robot stands still, and while it is only reachable through the Roborock cloud, the pause is at least 2 seconds. 0 switches the live position off; the robot is then only shown where the last map put it. Values from 1 to 30 are still read as the whole seconds this option used to count, so an existing setting keeps working - set a value of 100 or more to use the new unit. |
 | Saved program execution | `sceneExecutionMode` | `select` | `"local"` | Local: runs the saved scene locally from its Roborock scene steps and keeps the local queue/resume. Cloud: starts the saved scene through Roborock cloud like the app. No automatic fallback between modes.<br>Options: `local` = Local adapter queue, `cloud` = Cloud like Roborock app |
 | Listen for device broadcasts (UDP 58866) | `udpDiscoveryEnabled` | `checkbox` | `true` | Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges). |
 | Network interface for discovery | `udpBindAddress` | `interface` |  | IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.<br>Hidden when `!data.udpDiscoveryEnabled` |
@@ -182,12 +222,12 @@ All device objects live below `roborock.<instance>.Devices.<duid>`:
 | --- | --- |
 | `commands` | Writable buttons and value objects that trigger a cleaning run, change modes and so on. |
 | `queries` | Writable objects that ask the robot for a specific piece of information. |
-| `settings` | Writable objects that change a persistent robot setting. |
+| `settings` | Writable objects that change a persistent robot setting. `set_dnd_timer` takes the Do Not Disturb window as `HH:MM-HH:MM` and switching the mode on is the same act as writing one; `close_dnd_timer` switches it off; `set_child_lock_status` is a plain switch. The window the robot currently holds is published read-only as `deviceStatus.dnd_start` and `deviceStatus.dnd_end`, and whether it is active as `deviceStatus.dnd_enabled`. |
 | `deviceStatus` | The status the robot reports. Read only. |
 | `consumables` | Remaining lifetime and run time of brushes, filters and sensors. |
 | `resetConsumables` | One button per resettable consumable. |
 | `cleaningInfo` | Lifetime totals (area, time, number of runs). |
-| `cleaningRecords` | The individual cleaning runs of the history. |
+| `cleaningInfo.records.<index>` | The individual cleaning runs of the history, newest first, with the rendered map of each run below `map`. |
 | `floors` | One entry per stored map, including the button that loads it. |
 | `schedules` | The timers stored in the robot, including an enable switch. |
 | `programs` | The scenes saved in the Roborock app. |
@@ -656,9 +696,9 @@ Values reported by the robot in `Devices.<duid>.cleaningInfo`.
 | `clean_time` |  | `number` | `h` | [h] |
 | `dust_collection_count` |  | `number` |  |  |
 
-#### `cleaningRecords`
+#### `cleaningInfo.records.<index>`
 
-Values reported by the robot in `Devices.<duid>.cleaningRecords`.
+Values reported by the robot in `Devices.<duid>.cleaningInfo.records.<index>`.
 
 | Object | Name | Type | Unit | Values |
 | --- | --- | --- | --- | --- |

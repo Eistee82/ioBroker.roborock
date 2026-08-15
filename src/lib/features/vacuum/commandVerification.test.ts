@@ -271,9 +271,17 @@ describe("the vacuum handler wired to the verifier", () => {
 
 describe("the boundaries of the check", () => {
 	it("only covers commands the status can answer for", () => {
+		// Every entry has to name a field the robot really reports in `get_status`. The three
+		// cleaning modes and the mode triple were the first four; `lock_status` and `dnd_enabled`
+		// joined them because the live capture of the test device carries both
+		// (`_appanalysis/local-mitschnitt.log:15`) and `VACUUM_CONSTANTS.deviceStates` has always
+		// declared them.
 		expect(Object.keys(VERIFIABLE_SET_COMMANDS).sort()).toEqual([
+			"close_dnd_timer",
+			"set_child_lock_status",
 			"set_clean_motor_mode",
 			"set_custom_mode",
+			"set_dnd_timer",
 			"set_mop_mode",
 			"set_water_box_custom_mode"
 		]);

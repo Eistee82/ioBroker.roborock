@@ -11,6 +11,10 @@ export enum Feature {
 	CleanRouteFastMode = "CleanRouteFastMode", // Adds 'Fast' to mop modes
 	SmartPlan = "SmartPlan", // Adds 'SmartPlan' (306) to mop modes
 	CustomWaterBoxDistance = "CustomWaterBoxDistance", // Creates the special distance command state
+	// Both are detected from the ordinary status: a robot that reports `dnd_enabled` has a Do Not
+	// Disturb window, one that reports `lock_status` has a child lock. See V1RobotSettingsService.
+	DoNotDisturb = "DoNotDisturb", // Adds the Do Not Disturb window and its off button
+	ChildLock = "ChildLock", // Adds the child lock switch
 
 	// --- Actions primarily creating States (non-command) ---
 	LiveVideo = "LiveVideo", // Creates camera stream URL states
