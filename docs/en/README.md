@@ -119,6 +119,14 @@ one rendered image per robot, that last option cannot serve two browsers in two 
 the one that reported last decides what everyone sees. Changing the setting repaints the
 stored maps at once and does not cost the robots a single request.
 
+The dock is drawn with the Roborock app's own picture of it, turned the way the robot
+reports the dock to stand. Which picture depends on the reported dock type: a plain
+charging dock gets a different graphic from a station that empties, washes or dries. Those
+pictures are part of the device plugin the adapter downloads from your Roborock account,
+so an instance running **Local only** has never received them - it keeps the adapter's
+built-in dock symbol instead, and so does a robot that reports no dock type at all. The
+maps of the B01/Q10 pipelines keep the built-in symbol as well.
+
 ## Reference
 
 <!-- BEGIN:config -->

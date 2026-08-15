@@ -6,8 +6,9 @@ import type { DrawObstacleInput, DrawRoomLabelInput, DrawVirtualWallInput } from
 import type { B01MapData } from "@adapter/lib/map/b01/types";
 import { Q10_CANVAS_SCALE, Q10MapGeometry } from "@adapter/lib/map/q10/Q10MapGeometry";
 import { floorScopeKey, normalizeMapFlag, normalizeRoomId, roomNameCacheKey } from "@adapter/lib/map/roomKey";
-import type { DrawFurnitureInput } from "./SVGMapRenderer";
+import type { ChargerArt, DrawFurnitureInput } from "./SVGMapRenderer";
 import { ROOM_LABEL_BASE_FONT, SVGMapRenderer } from "./SVGMapRenderer";
+import { chargerAssetFileName, chargerGraphicFor } from "./chargerGraphic";
 import { ROBOT_STATES, dockActivity, robotPhase } from "./robotStates";
 import {
 	LIVE_TRACK_STATE,
@@ -499,6 +500,13 @@ export class MapEngine {
 		waterBoxMode: number | null;
 		/** The mode the three values above add up to, derived by the adapter. */
 		cleanModeTab: number | null;
+		/**
+		 * Which station the robot is docked at, which decides the dock graphic on the map.
+		 *
+		 * Not part of the status bar - it is read here because the map needs it and this is the one
+		 * place `deviceStatus.*` is subscribed.
+		 */
+		dockType: number | null;
 	} = {
 		state: null,
 		status: null,
@@ -510,6 +518,7 @@ export class MapEngine {
 		mopMode: null,
 		waterBoxMode: null,
 		cleanModeTab: null,
+		dockType: null,
 	};
 	/** Value texts from the object definitions, so the UI needs no model knowledge. */
 	private stateTexts: Record<string, string> = {};
@@ -1086,6 +1095,8 @@ export class MapEngine {
 			// Derived by the adapter out of the three values above, because "water_box_mode = 200"
 			// means "vacuum only" rather than "water off" - a rule the UI should not have to know.
 			[`${deviceRoot}.deviceStatus.clean_mode_tab`, "cleanModeTab"],
+			// Not shown anywhere; it decides which of the app's two dock graphics the map draws.
+			[`${deviceRoot}.deviceStatus.dock_type`, "dockType"],
 		]);
 
 		// Transport channel of the local/cloud work package; simply hidden while it is absent.
@@ -1124,8 +1135,14 @@ export class MapEngine {
 			const statusKey = statusKeyByStateId.get(id);
 			if (statusKey) {
 				const raw = state && state.val !== null && state.val !== undefined ? Number(state.val) : NaN;
+				const previous = this.statusValues[statusKey];
 				this.statusValues[statusKey] = Number.isFinite(raw) ? raw : null;
 				this.renderStatusBar();
+				// The dock type picks the dock graphic, and it usually arrives after the map does.
+				// Only a real change redraws - this state is republished with every status poll.
+				if (statusKey === "dockType" && previous !== this.statusValues.dockType) {
+					this.drawOverlaysFromMap();
+				}
 				return;
 			}
 
@@ -1928,14 +1945,51 @@ export class MapEngine {
 		return `${ASSET_BASE}/${modelFolder}/drawable-mdpi/`;
 	}
 
+	/**
+	 * The Roborock app's own dock artwork for the current device, or null to keep the built-in
+	 * symbol.
+	 *
+	 * Null in two cases, both deliberate. A device that has not reported a `dock_type` would have
+	 * to be guessed at, and guessing wrong shows a base station to someone who owns a plain
+	 * charger. And the files themselves may simply not be there - they come from the per-account
+	 * plugin download - which {@link SVGMapRenderer.drawCharger} handles by probing before it
+	 * swaps anything out.
+	 *
+	 * @param baseUrl Density folder of the current model, ending in a slash.
+	 * @returns The artwork description, or null.
+	 */
+	private buildChargerArt(baseUrl: string): ChargerArt | null {
+		const graphic = chargerGraphicFor(this.statusValues.dockType);
+		if (!graphic) return null;
+		return {
+			graphic,
+			bodyHref: baseUrl + chargerAssetFileName(graphic.body),
+			topHref: graphic.top ? baseUrl + chargerAssetFileName(graphic.top) : null,
+			// The app measures its dock in map cells, and so does this pipeline - one cell is
+			// `VISUAL_BLOCK_SIZE` SVG user units here.
+			cellSize: VISUAL_BLOCK_SIZE,
+		};
+	}
+
 	private createSvgRenderer(baseUrl: string, params: MapParams | null): SVGMapRenderer {
-		return this.createSvgRendererWithOptions(baseUrl, params, {});
+		return this.createSvgRendererWithOptions(baseUrl, params, { chargerArt: this.buildChargerArt(baseUrl) });
 	}
 
 	private createSvgRendererWithOptions(
 		baseUrl: string,
 		params: MapParams | null,
-		options: Partial<{ obstacleRadius: number; obstacleImageSize: number; robotSize: number; chargerSize: number }>
+		options: Partial<{
+			obstacleRadius: number;
+			obstacleImageSize: number;
+			robotSize: number;
+			chargerSize: number;
+			/**
+			 * Left out by the Q10 path on purpose: its map is measured by `Q10MapGeometry`, and
+			 * that the app's cell sizes carry over to it is not proven. An unproven scale would
+			 * put a station of the wrong size on the map, so that pipeline keeps the symbol.
+			 */
+			chargerArt: ChargerArt | null;
+		}>
 	): SVGMapRenderer {
 		return new SVGMapRenderer({
 			groups: {
@@ -1980,6 +2034,7 @@ export class MapEngine {
 			robotImageHref: IMG_ROBOT_ORIGINAL,
 			chargerImageHref: IMG_CHARGER,
 			goToPinImageHref: IMG_GO_TO_PIN,
+			chargerArt: options.chargerArt ?? null,
 		});
 	}
 

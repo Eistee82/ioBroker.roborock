@@ -4,6 +4,7 @@
 import * as d3 from "d3";
 import type {
 	DrawCarpetInput,
+	DrawChargerInput,
 	DrawObstacleInput,
 	DrawPathInput,
 	DrawPredictedPathInput,
@@ -15,6 +16,8 @@ import type {
 	PathLayer,
 } from "@adapter/common/mapDrawing/types";
 import { VISUAL_BLOCK_SIZE } from "@adapter/common/mapDrawing/constants";
+import { chargerLayout } from "./chargerGraphic";
+import type { ChargerGraphic } from "./chargerGraphic";
 import { getMapOverlayColors } from "./mapOverlayColors";
 import type { MapOverlayColors } from "./mapOverlayColors";
 import {
@@ -177,6 +180,25 @@ export interface SVGMapRendererOptions {
 	robotImageHref: string;
 	chargerImageHref: string;
 	goToPinImageHref: string;
+	/**
+	 * The Roborock app's own dock artwork, or null to keep the built-in symbol.
+	 *
+	 * Null is not an error case: the Q10 pipeline measures its map in units this was never proven
+	 * against, and a device that has not reported a dock type could be given the wrong station.
+	 * Both keep the symbol that has always been drawn there.
+	 */
+	chargerArt?: ChargerArt | null;
+}
+
+/** The dock artwork of one device, resolved to URLs by the engine that knows its model folder. */
+export interface ChargerArt {
+	graphic: ChargerGraphic;
+	/** URL of the body image. */
+	bodyHref: string;
+	/** URL of the image drawn on top of the body, or null when the family has none. */
+	topHref: string | null;
+	/** Size of one map cell in SVG user units, so the graphic comes out to scale. */
+	cellSize: number;
 }
 
 export class SVGMapRenderer implements IMapRenderer {
@@ -258,17 +280,100 @@ export class SVGMapRenderer implements IMapRenderer {
 			);
 	}
 
-	drawCharger(input: { x: number; y: number }): void {
+	/**
+	 * Draws the dock, preferring the Roborock app's own artwork over the built-in symbol.
+	 *
+	 * **The built-in symbol goes down first, every time.** The app's dock graphics come out of the
+	 * control plugin, which is downloaded per user account; an installation that runs purely
+	 * locally has never seen them. Binding the plugin URL directly would turn that into an empty
+	 * spot where the dock used to be, so the symbol is drawn and only replaced once an off-screen
+	 * probe has confirmed the file is really there - the same order `drawFurniture` uses, and for
+	 * the same reason.
+	 *
+	 * The plugin family draws in two layers: a body and, for every dock above a plain charger, a
+	 * plate on top of it. Both sit in one rotated group, so the overlay cannot drift off the body.
+	 *
+	 * @param input Charging position in SVG user units and the angle the map reported for it.
+	 */
+	drawCharger(input: DrawChargerInput): void {
 		const g = this.opts.groups.chargerGroup;
 		g.selectAll("*").remove();
 		const size = this.opts.chargerSize;
-		g.append("image")
+		const builtIn = g
+			.append("image")
 			.attr("class", "charger")
 			.attr("href", this.opts.chargerImageHref)
 			.attr("width", size)
 			.attr("height", size)
 			.attr("x", input.x - size / 2)
 			.attr("y", input.y - size / 2);
+
+		const art = this.opts.chargerArt;
+		if (!art) return;
+
+		const layout = chargerLayout({
+			x: input.x,
+			y: input.y,
+			angle: input.angle,
+			graphic: art.graphic,
+			cellSize: art.cellSize,
+		});
+		const topHref = art.topHref;
+
+		const probe = new Image();
+		probe.onload = () => {
+			// The map may have been redrawn while the image was loading.
+			const node = builtIn.node();
+			if (!node || !g.node()?.contains(node)) return;
+			builtIn.remove();
+
+			const piece = g
+				.append("g")
+				.attr("class", "charger-art")
+				.attr("data-dock-kind", art.graphic.kind)
+				.attr(
+					"transform",
+					`translate(${layout.centerX}, ${layout.centerY}) rotate(${layout.rotation}) translate(${-layout.width / 2}, ${-layout.height / 2})`
+				);
+
+			piece
+				.append("image")
+				.attr("class", "charger-body")
+				.attr("x", 0)
+				.attr("y", 0)
+				.attr("width", layout.width)
+				.attr("height", layout.height)
+				// The box was derived from this image's own aspect, so fitting it in changes
+				// nothing; saying so keeps the two layers on the same rule.
+				.attr("preserveAspectRatio", "xMidYMid meet")
+				.attr("href", art.bodyHref);
+
+			if (!topHref) return;
+			const topProbe = new Image();
+			topProbe.onload = () => {
+				const pieceNode = piece.node();
+				if (!pieceNode || !g.node()?.contains(pieceNode)) return;
+				piece
+					.append("image")
+					.attr("class", "charger-top")
+					.attr("x", 0)
+					.attr("y", 0)
+					.attr("width", layout.width)
+					.attr("height", layout.height)
+					// `resizeMode: 'contain'` in the app: this one has a slightly taller aspect
+					// than the body and is letterboxed into its box rather than stretched.
+					.attr("preserveAspectRatio", "xMidYMid meet")
+					.attr("href", topHref);
+			};
+			topProbe.onerror = () => {
+				// The body on its own is still a recognisable dock; nothing to undo.
+			};
+			topProbe.src = topHref;
+		};
+		probe.onerror = () => {
+			// Nothing to do - the built-in symbol is already on the map.
+		};
+		probe.src = art.bodyHref;
 	}
 
 	drawGoToPin(input: { x: number; y: number }): void {

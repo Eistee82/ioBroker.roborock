@@ -43,7 +43,7 @@ export interface V1MapDataForDrawing {
 	GOTO_PREDICTED_PATH?: { points: [number, number][] };
 	OBSTACLES2?: Array<[number, number, number, ...unknown[]]>;
 	ROBOT_POSITION?: { position: [number, number]; angle?: number };
-	CHARGER_LOCATION?: { position: [number, number] };
+	CHARGER_LOCATION?: { position: [number, number]; angle?: number };
 	GOTO_TARGET?: [number, number];
 }
 
@@ -336,7 +336,7 @@ export async function drawMapV1(
 	// --- Charger ---
 	if (mapData.CHARGER_LOCATION?.position) {
 		const p = robotToPx(mapData.CHARGER_LOCATION.position[0], mapData.CHARGER_LOCATION.position[1]);
-		renderer.drawCharger({ x: p.x, y: p.y });
+		renderer.drawCharger({ x: p.x, y: p.y, angle: mapData.CHARGER_LOCATION.angle });
 	}
 
 	// --- Go-to pin ---

@@ -40,6 +40,13 @@ export interface DrawRobotInput {
 export interface DrawChargerInput {
 	x: number;
 	y: number;
+	/**
+	 * Which way the dock faces, in degrees, straight out of the map's `CHARGER_LOCATION` block.
+	 *
+	 * Optional because only the SVG renderer turns the artwork; a renderer that draws a symmetric
+	 * symbol simply ignores it, and a map pipeline that reports no angle leaves it out.
+	 */
+	angle?: number;
 }
 
 export interface DrawGoToPinInput {

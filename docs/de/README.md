@@ -125,6 +125,15 @@ bedienen - der zuletzt meldende entscheidet, was alle sehen. Ein Wechsel der Ein
 zeichnet die gespeicherten Karten sofort neu und kostet die Roboter keine einzige
 Anfrage.
 
+Die Ladestation zeichnet die Karte mit der Grafik, die auch die Roborock-App dafür
+verwendet, und dreht sie so, wie der Roboter die Ausrichtung der Station meldet. Welche
+Grafik es wird, hängt vom gemeldeten Stationstyp ab: eine einfache Ladeschale bekommt eine
+andere als eine Station, die absaugt, wäscht oder trocknet. Diese Grafiken stammen aus dem
+Geräte-Plugin, das der Adapter aus dem Roborock-Konto lädt - eine Instanz im Modus *Nur
+lokal* hat sie also nie erhalten und behält das eingebaute Stationssymbol. Dasselbe gilt
+für einen Roboter, der gar keinen Stationstyp meldet, und für die Karten der
+B01/Q10-Pipelines.
+
 ## Referenz
 
 <!-- BEGIN:config -->
