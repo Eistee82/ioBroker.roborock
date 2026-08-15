@@ -94,6 +94,12 @@ export const MAP_ZONE_CONFIRM_STATE = "mapEdit.zones";
 /** Command state that renames rooms; the adapter rebuilds the whole assignment behind it. */
 export const ROOM_NAME_COMMAND = "name_segment";
 
+/** Command state that combines rooms; it renumbers the segments, so the shell asks first. */
+export const ROOM_MERGE_COMMAND = "merge_segment";
+
+/** The app refuses a merge of fewer than this (`MIN_MERGE_SEGMENTS`, `map_edit_merge_restriction`). */
+export const MIN_MERGE_ROOMS = 2;
+
 /**
  * Which command continues a paused run, by the robot's own `in_cleaning`.
  *
@@ -2797,6 +2803,45 @@ export class MapEngine {
 	 * @param segmentId The robot's own id for the room.
 	 * @param name The new name; trimmed, and refused when empty or too long.
 	 */
+	/**
+	 * Combines the rooms the user picked into one.
+	 *
+	 * **This renumbers the robot's segments** (report section 2.2, event `RoomIdDidChanged`), which
+	 * is why the shell must have asked first - see `SegmentEditDialog`. The engine does not ask; it
+	 * is called after the answer.
+	 *
+	 * The rooms come from the map selection, in the order they were clicked, because that selection
+	 * is what the user can see. `merge_segment` takes the plain list of segment ids; the adapter
+	 * checks them against the robot's own room list and refuses ids the current map does not have,
+	 * so a stale selection cannot merge something else.
+	 *
+	 * Whether the rooms actually touch is the robot's decision - the adapter has no adjacency to
+	 * test with, and the app words its own refusal `map_edit_merge_not_adjacent`. A robot that says
+	 * no leaves the map alone.
+	 */
+	public async mergeSelectedRooms(): Promise<void> {
+		if (!this.currentRobotDuid) return;
+
+		const ids = Array.from(this.selectedRoomIds);
+		if (ids.length < MIN_MERGE_ROOMS) {
+			this.showError(
+				this.t("ui_rooms_merge_needs_two", "Pick at least %s rooms on the map to combine them.", MIN_MERGE_ROOMS)
+			);
+			return;
+		}
+
+		// The selection points at segment ids that are about to stop existing; keeping it would
+		// leave rooms highlighted that the next map no longer has.
+		this.clearRoomSelection();
+
+		await this.sendCommand("set_state", {
+			duid: this.currentRobotDuid,
+			folder: MAP_ZONE_COMMAND_FOLDER,
+			command: ROOM_MERGE_COMMAND,
+			value: JSON.stringify(ids),
+		});
+	}
+
 	public async renameRoom(segmentId: number, name: string): Promise<void> {
 		if (!this.currentRobotDuid) return;
 

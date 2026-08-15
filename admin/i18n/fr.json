@@ -394,5 +394,13 @@
   "ui_map2d": "Carte 2D",
   "ui_map3d": "Carte 3D",
   "ui_map3d_loading": "Chargement de la vue 3D…",
-  "ui_map3d_failed": "La vue 3D n'a pas pu démarrer ; la carte 2D est affichée."
+  "ui_map3d_failed": "La vue 3D n'a pas pu démarrer ; la carte 2D est affichée.",
+  "ui_segment_edit_intro": "Les numéros des pièces changent, ce qui concerne donc :",
+  "ui_segment_edit_loses_modes": "Réglages d’aspiration et d’eau propres à chaque pièce dans le robot. L’adaptateur ne les possède pas et ne peut pas les rétablir.",
+  "ui_segment_edit_loses_sequence": "L’ordre de nettoyage. L’adaptateur l’efface ensuite, car un ordre composé d’anciens numéros paraît valide tout en nettoyant les mauvaises pièces.",
+  "ui_segment_edit_loses_switches": "Scripts, widgets vis et scènes qui pointent vers les interrupteurs de pièce. L’adaptateur recrée les interrupteurs ; ce que vous avez construit dessus, c’est à vous de le repointer.",
+  "ui_segment_edit_warning": "Une fois que vous aurez combiné ou divisé des pièces, tous les paramètres et programmes associés deviendront non valides.",
+  "ui_map_room_split": "Diviser",
+  "ui_map_room_merge": "Fusionner",
+  "ui_rooms_merge_needs_two": "Sélectionnez au moins %s pièces sur la carte pour les combiner."
 }

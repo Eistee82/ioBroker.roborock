@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Box, Button, Chip, Collapse, IconButton, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import DoorFrontIcon from "@mui/icons-material/DoorFront";
 import EditIcon from "@mui/icons-material/Edit";
+import MergeIcon from "@mui/icons-material/Merge";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { FloatingSurface } from "./FloatingSurface";
@@ -11,6 +12,13 @@ interface RoomsPanelProps {
 	rooms: RoomListModel;
 	/** Sends the new name for one room; the engine refuses an empty or over-long one. */
 	onRename: (segmentId: number, name: string) => void;
+	/**
+	 * Asks to combine the rooms picked on the map.
+	 *
+	 * Only asks: combining renumbers the robot's segments, so the shell puts the confirmation
+	 * dialog in between. This panel never sends it.
+	 */
+	onMergeRequest: () => void;
 }
 
 /**
@@ -38,7 +46,7 @@ interface RoomsPanelProps {
  * either, and a row showing nothing but a number would invite renaming a room the user cannot
  * identify.
  */
-export function RoomsPanel({ rooms, onRename }: RoomsPanelProps): React.JSX.Element | null {
+export function RoomsPanel({ rooms, onRename, onMergeRequest }: RoomsPanelProps): React.JSX.Element | null {
 	const [open, setOpen] = useState(false);
 	/** Segment id whose name is being edited, or null. Only one at a time. */
 	const [editing, setEditing] = useState<number | null>(null);
@@ -95,6 +103,31 @@ export function RoomsPanel({ rooms, onRename }: RoomsPanelProps): React.JSX.Elem
 					spacing={1}
 					sx={{ px: 1.5, pb: 1.5, maxHeight: "44vh", overflowY: "auto" }}
 				>
+					{/*
+					 * Combining is offered from the selection, because that is the thing the user
+					 * can see on the map. Below two rooms it is greyed out rather than hidden: the
+					 * app refuses the same case, and a button that appears only once the right
+					 * number is picked is a button nobody finds.
+					 */}
+					<Tooltip
+						title={
+							selectedCount < 2 ? I18n.t("ui_rooms_merge_needs_two").replace("%s", "2") : I18n.t("ui_map_room_merge")
+						}
+					>
+						<span>
+							<Button
+								fullWidth
+								size="small"
+								variant="outlined"
+								startIcon={<MergeIcon />}
+								disabled={selectedCount < 2}
+								onClick={onMergeRequest}
+							>
+								{I18n.t("ui_map_room_merge")}
+							</Button>
+						</span>
+					</Tooltip>
+
 					{rooms.rooms.map(room =>
 						editing === room.segmentId ? (
 							<Box key={room.segmentId}>

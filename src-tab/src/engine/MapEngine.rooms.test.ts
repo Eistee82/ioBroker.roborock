@@ -144,6 +144,85 @@ describe("the room list", () => {
 	});
 });
 
+describe("combining rooms", () => {
+	/** Picks rooms on the map, in the order given. */
+	function pick(engine: MapEngine, ids: number[]): void {
+		for (const id of ids) {
+			(engine as unknown as { toggleRoomSelection(id: number): void }).toggleRoomSelection(id);
+		}
+	}
+
+	it("sends the picked segment ids, in the order they were picked", async () => {
+		const { engine, internals, sendTo } = await startEngine();
+		loadRooms(internals, [
+			{ id: 16, name: "Kitchen" },
+			{ id: 17, name: "Living room" },
+			{ id: 18, name: "Hallway" },
+		]);
+
+		pick(engine, [18, 16]);
+		await engine.mergeSelectedRooms();
+
+		// Picking a room already talks to the adapter, so the merge is found by its command name
+		// rather than by being the only call.
+		const merges = sendTo.mock.calls.filter((call) => call[2]?.command === "merge_segment");
+		expect(merges).toHaveLength(1);
+		const message = merges[0][2];
+		// The click order, not the map order: it is what the user can see and what the app sends.
+		expect(JSON.parse(message.value)).toEqual([18, 16]);
+	});
+
+	it("refuses a single room and says how many are needed", async () => {
+		const { engine, internals, sendTo, errors } = await startEngine();
+		loadRooms(internals, [
+			{ id: 16, name: "Kitchen" },
+			{ id: 17, name: "Living room" },
+		]);
+
+		pick(engine, [16]);
+		await engine.mergeSelectedRooms();
+
+		expect(sendTo.mock.calls.some((call) => call[2]?.command === "merge_segment")).toBe(false);
+		expect(errors[errors.length - 1]).toMatch(/at least 2/i);
+	});
+
+	it("sends nothing when no room is picked at all", async () => {
+		const { engine, internals, sendTo } = await startEngine();
+		loadRooms(internals, [{ id: 16, name: "Kitchen" }]);
+
+		await engine.mergeSelectedRooms();
+		expect(sendTo.mock.calls.some((call) => call[2]?.command === "merge_segment")).toBe(false);
+	});
+
+	it("drops the selection, because those segment ids are about to stop existing", async () => {
+		// Keeping it would leave rooms highlighted that the next map no longer has - and the
+		// highlight is what a segment run reads.
+		const { engine, internals, models } = await startEngine();
+		loadRooms(internals, [
+			{ id: 16, name: "Kitchen" },
+			{ id: 17, name: "Living room" },
+		]);
+
+		pick(engine, [16, 17]);
+		await engine.mergeSelectedRooms();
+
+		expect(models[models.length - 1].rooms.every((room) => !room.selected)).toBe(true);
+	});
+
+	it("sends nothing when no robot is selected", async () => {
+		const { engine, internals, sendTo } = await startEngine();
+		loadRooms(internals, [
+			{ id: 16, name: "Kitchen" },
+			{ id: 17, name: "Living room" },
+		]);
+		pick(engine, [16, 17]);
+		(engine as unknown as { currentRobotDuid: string | null }).currentRobotDuid = null;
+
+		await engine.mergeSelectedRooms();
+		expect(sendTo.mock.calls.some((call) => call[2]?.command === "merge_segment")).toBe(false);
+	});
+});
+
 describe("renaming a room", () => {
 	it("names the room by its segment id, as a JSON string", async () => {
 		const { engine, internals, sendTo } = await startEngine();
@@ -190,7 +269,7 @@ describe("renaming a room", () => {
 
 		await engine.renameRoom(16, "Kitchen");
 		await engine.renameRoom(16, "  Kitchen  ");
-		expect(sendTo).not.toHaveBeenCalled();
+		expect(sendTo.mock.calls.some((call) => call[2]?.command === "merge_segment")).toBe(false);
 	});
 
 	it("refuses an empty name and says so instead of sending it", async () => {
@@ -198,7 +277,7 @@ describe("renaming a room", () => {
 		loadRooms(internals, [{ id: 16, name: "Kitchen" }]);
 
 		await engine.renameRoom(16, "   ");
-		expect(sendTo).not.toHaveBeenCalled();
+		expect(sendTo.mock.calls.some((call) => call[2]?.command === "merge_segment")).toBe(false);
 		expect(errors[errors.length - 1]).toMatch(/1 and 30/);
 	});
 
@@ -207,7 +286,7 @@ describe("renaming a room", () => {
 		loadRooms(internals, [{ id: 16, name: "Kitchen" }]);
 
 		await engine.renameRoom(16, "x".repeat(31));
-		expect(sendTo).not.toHaveBeenCalled();
+		expect(sendTo.mock.calls.some((call) => call[2]?.command === "merge_segment")).toBe(false);
 		expect(errors[errors.length - 1]).toMatch(/1 and 30/);
 
 		// One character less is fine, so the boundary is where the app puts it.
@@ -220,6 +299,6 @@ describe("renaming a room", () => {
 		(engine as unknown as { currentRobotDuid: string | null }).currentRobotDuid = null;
 
 		await engine.renameRoom(16, "Kitchen");
-		expect(sendTo).not.toHaveBeenCalled();
+		expect(sendTo.mock.calls.some((call) => call[2]?.command === "merge_segment")).toBe(false);
 	});
 });

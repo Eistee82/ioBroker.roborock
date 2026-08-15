@@ -394,5 +394,13 @@
   "ui_map2d": "Mapa 2D",
   "ui_map3d": "Mapa 3D",
   "ui_map3d_loading": "A carregar a vista 3D…",
-  "ui_map3d_failed": "A vista 3D não arrancou; a mostrar o mapa 2D."
+  "ui_map3d_failed": "A vista 3D não arrancou; a mostrar o mapa 2D.",
+  "ui_segment_edit_intro": "Os números das divisões mudam, pelo que isto afeta:",
+  "ui_segment_edit_loses_modes": "Definições de sucção e água por divisão no robô. O adaptador não as tem e não as pode repor.",
+  "ui_segment_edit_loses_sequence": "A ordem de limpeza. O adaptador limpa-a depois, porque uma ordem com números antigos parece válida e limpa as divisões erradas.",
+  "ui_segment_edit_loses_switches": "Scripts, widgets vis e cenas que apontam para os interruptores das divisões. O adaptador recria os interruptores; o que construiu sobre eles tem de ser reapontado por si.",
+  "ui_segment_edit_warning": "Após a combinação ou divisão de divisões, todas as definições e programações relacionadas deixam de ser válidas.",
+  "ui_map_room_split": "Dividir",
+  "ui_map_room_merge": "Juntar",
+  "ui_rooms_merge_needs_two": "Selecione pelo menos %s divisões no mapa para as combinar."
 }

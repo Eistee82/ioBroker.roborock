@@ -394,5 +394,13 @@
   "ui_map2d": "二维地图",
   "ui_map3d": "三维地图",
   "ui_map3d_loading": "正在加载三维视图…",
-  "ui_map3d_failed": "三维视图无法启动，显示二维地图。"
+  "ui_map3d_failed": "三维视图无法启动，显示二维地图。",
+  "ui_segment_edit_intro": "房间编号会改变，因此会影响：",
+  "ui_segment_edit_loses_modes": "扫地机中按房间设置的吸力和水量。适配器没有这些设置，也无法恢复。",
+  "ui_segment_edit_loses_sequence": "清扫顺序。适配器随后会清空它，因为使用旧房间编号的顺序看似有效，却会清扫错误的房间。",
+  "ui_segment_edit_loses_switches": "指向房间开关的脚本、vis 控件和场景。适配器会重建这些开关；您在其上搭建的内容需要自行指向新房间。",
+  "ui_segment_edit_warning": "合并分割后，与所选区域相关配置和定时失效",
+  "ui_map_room_split": "房间拆分",
+  "ui_map_room_merge": "房间合并",
+  "ui_rooms_merge_needs_two": "在地图上至少选择 %s 个房间才能合并。"
 }

@@ -28,6 +28,8 @@ import { ConsumablesPanel } from "./ConsumablesPanel";
 import { DockPanel } from "./DockPanel";
 import { MapZonesPanel } from "./MapZonesPanel";
 import { RoomsPanel } from "./RoomsPanel";
+import { SegmentEditDialog } from "./SegmentEditDialog";
+import type { SegmentEditKind } from "./SegmentEditDialog";
 import { ObstacleDialog } from "./ObstacleDialog";
 import { HistoryPanel } from "./HistoryPanel";
 import { HistoryDialog } from "./HistoryDialog";
@@ -139,6 +141,13 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [zones, setZones] = useState<ZoneModel>({ count: 0, max: 5, atLimit: false });
 	const [mapZones, setMapZones] = useState<MapZonesModel>(EMPTY_MAP_ZONES);
 	const [roomList, setRoomList] = useState<RoomListModel>({ rooms: [], maxNameLength: 30 });
+	/**
+	 * The segment edit waiting for a yes, or null.
+	 *
+	 * Dividing and combining renumber the robot own segments, so neither is sent from the panel
+	 * that offers it - the dialog sits in between and this is what holds it open.
+	 */
+	const [segmentEdit, setSegmentEdit] = useState<SegmentEditKind | null>(null);
 	const [cleanCount, setCleanCount] = useState(1);
 	const [consumables, setConsumables] = useState<ConsumablePartModel[]>([]);
 	const [dock, setDock] = useState<DockModel>({ controls: [], status: [], faulty: false, activity: EMPTY_DOCK_ACTIVITY });
@@ -595,6 +604,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				/>
 				<RoomsPanel
 					rooms={roomList}
+					onMergeRequest={() => setSegmentEdit("merge")}
 					onRename={(segmentId, name) => void engineRef.current?.renameRoom(segmentId, name)}
 				/>
 				<MapZonesPanel
@@ -696,6 +706,16 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 					/>
 				</FloatingSurface>
 			</Box>
+
+			<SegmentEditDialog
+				pending={segmentEdit}
+				roomNames={roomList.rooms.filter(room => room.selected).map(room => room.name)}
+				onConfirm={() => {
+					setSegmentEdit(null);
+					if (segmentEdit === "merge") void engineRef.current?.mergeSelectedRooms();
+				}}
+				onCancel={() => setSegmentEdit(null)}
+			/>
 
 			<ObstacleDialog
 				photo={photo}

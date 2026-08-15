@@ -26,15 +26,17 @@ function model(overrides: Partial<RoomListModel> = {}): RoomListModel {
 
 function renderPanel(rooms: RoomListModel) {
 	const onRename = vi.fn();
+	const onMergeRequest = vi.fn();
 	const view = render(
 		<RoomsPanel
 			rooms={rooms}
 			onRename={onRename}
+			onMergeRequest={onMergeRequest}
 		/>,
 	);
 	const header = screen.queryByText(I18n.t("ui_rooms"));
 	if (header) fireEvent.click(header);
-	return { onRename, view };
+	return { onRename, onMergeRequest, view };
 }
 
 /** Opens the field of one room and returns it. */
@@ -62,6 +64,7 @@ describe("RoomsPanel", () => {
 			<RoomsPanel
 				rooms={model()}
 				onRename={vi.fn()}
+				onMergeRequest={vi.fn()}
 			/>,
 		);
 		expect(screen.getByText("1")).toBeTruthy();
@@ -125,6 +128,54 @@ describe("RoomsPanel", () => {
 		const { onRename } = renderPanel(model({ maxNameLength: 30 }));
 		expect(editField("Kitchen").maxLength).toBe(30);
 		expect(onRename).not.toHaveBeenCalled();
+	});
+
+	it("only asks to combine, never sends it", () => {
+		// Combining renumbers the robot's segments, so the confirmation dialog sits between this
+		// button and the command. The panel must not know how to send one.
+		const { onMergeRequest, onRename } = renderPanel(
+			model({
+				rooms: [
+					{ segmentId: 16, name: "Kitchen", selected: true },
+					{ segmentId: 17, name: "Living room", selected: true },
+				],
+			}),
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_map_room_merge") }));
+		expect(onMergeRequest).toHaveBeenCalledTimes(1);
+		expect(onRename).not.toHaveBeenCalled();
+	});
+
+	it("greys the combine button out below two picked rooms instead of hiding it", () => {
+		// A button that only appears once the right number is picked is a button nobody finds.
+		const { onMergeRequest } = renderPanel(
+			model({
+				rooms: [
+					{ segmentId: 16, name: "Kitchen", selected: true },
+					{ segmentId: 17, name: "Living room", selected: false },
+				],
+			}),
+		);
+
+		const button = screen.getByRole("button", { name: I18n.t("ui_map_room_merge") }) as HTMLButtonElement;
+		expect(button.disabled).toBe(true);
+		fireEvent.click(button);
+		expect(onMergeRequest).not.toHaveBeenCalled();
+	});
+
+	it("offers it as soon as two rooms are picked", () => {
+		const { onMergeRequest } = renderPanel(
+			model({
+				rooms: [
+					{ segmentId: 16, name: "Kitchen", selected: true },
+					{ segmentId: 17, name: "Living room", selected: true },
+				],
+			}),
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_map_room_merge") }));
+		expect(onMergeRequest).toHaveBeenCalledTimes(1);
 	});
 
 	it("edits one room at a time", () => {

@@ -394,5 +394,13 @@
   "ui_map2d": "Mappa 2D",
   "ui_map3d": "Mappa 3D",
   "ui_map3d_loading": "Caricamento della vista 3D…",
-  "ui_map3d_failed": "La vista 3D non è partita; viene mostrata la mappa 2D."
+  "ui_map3d_failed": "La vista 3D non è partita; viene mostrata la mappa 2D.",
+  "ui_segment_edit_intro": "I numeri delle stanze cambiano, quindi questo riguarda:",
+  "ui_segment_edit_loses_modes": "Impostazioni di aspirazione e acqua legate alle stanze nel robot. L'adapter non le ha e non può ripristinarle.",
+  "ui_segment_edit_loses_sequence": "L'ordine di pulizia. L'adapter lo cancella dopo, perché un ordine con i vecchi numeri sembra valido ma pulisce le stanze sbagliate.",
+  "ui_segment_edit_loses_switches": "Script, widget vis e scene che puntano agli interruttori delle stanze. L'adapter ricrea gli interruttori; quello che ci hai costruito sopra devi ripuntarlo tu.",
+  "ui_segment_edit_warning": "Dopo avere combinato o diviso delle stanze, tutte le impostazioni e i programmi relativi non saranno più validi.",
+  "ui_map_room_split": "Dividi",
+  "ui_map_room_merge": "Unisci",
+  "ui_rooms_merge_needs_two": "Seleziona almeno %s stanze sulla mappa per combinarle."
 }

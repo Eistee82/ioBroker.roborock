@@ -394,5 +394,13 @@
   "ui_map2d": "Mapa 2D",
   "ui_map3d": "Mapa 3D",
   "ui_map3d_loading": "Ładowanie widoku 3D…",
-  "ui_map3d_failed": "Widok 3D nie uruchomił się; pokazywana jest mapa 2D."
+  "ui_map3d_failed": "Widok 3D nie uruchomił się; pokazywana jest mapa 2D.",
+  "ui_segment_edit_intro": "Numery pokoi się zmieniają, dotyczy to więc:",
+  "ui_segment_edit_loses_modes": "Ustawienia ssania i wody przypisane do pokoi w robocie. Adapter ich nie ma i nie może ich przywrócić.",
+  "ui_segment_edit_loses_sequence": "Kolejność sprzątania. Adapter ją potem czyści, bo kolejność ze starymi numerami wygląda poprawnie, a sprząta niewłaściwe pokoje.",
+  "ui_segment_edit_loses_switches": "Skrypty, widżety vis i sceny wskazujące na przełączniki pokoi. Adapter odtworzy przełączniki; to, co na nich zbudowano, trzeba przekierować samodzielnie.",
+  "ui_segment_edit_warning": "Po połączeniu lub podzieleniu pomieszczeń wszystkie powiązane ustawienia i harmonogramy staną się nieważne.",
+  "ui_map_room_split": "Podziel",
+  "ui_map_room_merge": "Scal",
+  "ui_rooms_merge_needs_two": "Wybierz na mapie co najmniej %s pokoje, aby je połączyć."
 }
