@@ -72,23 +72,52 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 		this.setState({ ready: true });
 		this.applyThemeToDocument();
 		this.publishMapTheme();
-		// A theme switch in the admin writes the key from another window, which fires `storage`
-		// here. `GenericApp` waits for an `updateTheme` message instead, and that does not reach
-		// every tab - then the page keeps the mode it was opened with until it is reloaded.
-		window.addEventListener("storage", this.onThemeStorage);
+		// Switching the theme while this tab stays open reaches it two ways, and neither is enough
+		// on its own: `storage` fires when the admin writes its key from another window, and the
+		// admin posts `updateTheme` into every tab it holds. `GenericApp` listens for the message
+		// too, but re-resolves the mode from that same stored key - which on the reporting
+		// installation is wrong. So both are taken as a hint to look again, and the looking is
+		// done by `readAdminThemeName`, which asks the admin's own background first.
+		window.addEventListener("storage", this.onThemeHint);
+		window.addEventListener("message", this.onThemeHint);
 	}
 
 	componentWillUnmount(): void {
-		window.removeEventListener("storage", this.onThemeStorage);
+		window.removeEventListener("storage", this.onThemeHint);
+		window.removeEventListener("message", this.onThemeHint);
+		if (this.themeRecheck !== null) {
+			clearTimeout(this.themeRecheck);
+			this.themeRecheck = null;
+		}
 	}
 
+	/** Pending re-check after a theme hint; see {@link onThemeHint}. */
+	private themeRecheck: ReturnType<typeof setTimeout> | null = null;
+
 	/**
-	 * Re-renders when the admin stores a different theme.
-	 * @param event Storage event; ignored unless it concerns the theme key.
+	 * Looks at the theme again after anything that suggests it changed.
+	 *
+	 * Deliberately not choosy about the event: a storage write of another key or an unrelated
+	 * message costs one re-render that changes nothing, while being too strict costs a tab that
+	 * stays light in a dark admin - the failure this whole path exists for.
+	 *
+	 * The delayed second look matters. The admin repaints its own page after it posts the message,
+	 * so reading its background in the same tick still returns the old colour. One frame later it
+	 * is the new one.
+	 * @param event Storage or message event; only its arrival is used.
 	 */
-	private onThemeStorage = (event: StorageEvent): void => {
-		if (event.key && event.key !== "App.themeName") return;
+	private onThemeHint = (event: Event): void => {
+		if (event.type === "storage") {
+			const key = (event as StorageEvent).key;
+			if (key && key !== "App.themeName") return;
+		}
+
 		this.forceUpdate();
+		if (this.themeRecheck !== null) clearTimeout(this.themeRecheck);
+		this.themeRecheck = setTimeout(() => {
+			this.themeRecheck = null;
+			this.forceUpdate();
+		}, 120);
 	};
 
 	componentDidUpdate(): void {
@@ -241,11 +270,28 @@ function readAdminThemeName(): "dark" | "light" | null {
 		}
 	};
 
-	// The admin hands a tab its theme in the query string, and that is the only source that is
-	// current by construction: it is written the moment the tab is opened. `GenericApp` parses the
-	// same query but takes only `instance` and `newReact` out of it (see its constructor), so the
-	// theme in there is dropped - which is why the classic HTML tabs of other adapters follow the
-	// dark mode and this one did not.
+	// **First**, because it is the only source that is right in both situations: the admin's own
+	// background colour. It is what the user is looking at, so it is current by definition -
+	// including after a switch while the tab stays open, which is where the two sources below
+	// fail. The query string is written once when the tab is opened and then goes stale; the
+	// stored key was measured as `light` on an installation whose dark mode was on.
+	//
+	// Same-origin only; a foreign origin throws and the next source takes over.
+	try {
+		const parentBody = window.parent !== window ? window.parent.document?.body : null;
+		if (parentBody) {
+			const background = window.parent.getComputedStyle(parentBody).backgroundColor;
+			const dark = isDarkColour(background);
+			if (dark !== null) return dark ? "dark" : "light";
+		}
+	} catch {
+		// Cross-origin, or the admin has not painted yet. Fall through.
+	}
+
+	// The theme the admin handed this tab when it opened it. `GenericApp` parses the same query but
+	// takes only `instance` and `newReact` out of it, so the theme beside them is dropped - which
+	// is why the classic HTML tabs of other adapters follow the dark mode and this one did not.
+	// Correct at load time, stale after a switch, hence second.
 	const fromQuery = themeFromQuery(window.location.search);
 	if (fromQuery) return fromQuery;
 
@@ -255,25 +301,6 @@ function readAdminThemeName(): "dark" | "light" | null {
 	const byName = themeFromName(name);
 	if (byName) return byName;
 
-	// Last resort, and the only source that cannot be out of date: look at the admin itself.
-	//
-	// Measured on a real installation - admin 7.0.25 with dark mode switched on - the stored
-	// `App.themeName` said `light`. Whatever the admin does with its own setting, the page it
-	// draws is the ground truth, and the tab sits inside it. So the background colour of the
-	// surrounding document decides: a dark page means dark mode, whatever any key claims.
-	//
-	// Same-origin only, like the storage read above; a foreign origin throws and leaves the
-	// resolved mode alone.
-	try {
-		const parentBody = window.parent !== window ? window.parent.document?.body : null;
-		if (parentBody) {
-			const background = window.parent.getComputedStyle(parentBody).backgroundColor;
-			const dark = isDarkColour(background);
-			if (dark !== null) return dark ? "dark" : "light";
-		}
-	} catch {
-		// Cross-origin, or the admin has not painted yet. Nothing to correct.
-	}
 
 	// Deliberately no fall back to `prefers-color-scheme`. This value exists to *correct* what
 	// GenericApp resolved, and the browser preference is not evidence about the admin: an admin
