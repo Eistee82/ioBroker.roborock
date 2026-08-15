@@ -448,7 +448,12 @@ export class V1MapService {
 					await this.deps.ensureState(`Devices.${this.duid}.floors.${mapFlag}.mapFlag`, { name: "Map Flag", type: "number", write: false });
 					await this.adapter.setStateChanged(`Devices.${this.duid}.floors.${mapFlag}.mapFlag`, { val: mapFlag, ack: true });
 
-					await this.deps.ensureState(`Devices.${this.duid}.floors.${mapFlag}.add_time`, { name: "Created At", type: "string", write: false });
+					// "Last saved", not "created": measured across two read-only sweeps 4 h 47 min apart
+					// (_appanalysis/23-geraetefaehigkeiten-runde2.md), the ground floor's add_time moved
+					// from 10:07:20 to 10:43:33 - twelve seconds after the robot finished driving back
+					// to the dock - while the cellar, which was never cleaned, kept its stamp from 2024.
+					// The field is the robot's own name; only the label was wrong.
+					await this.deps.ensureState(`Devices.${this.duid}.floors.${mapFlag}.add_time`, { name: "Last Saved", type: "string", write: false });
 					await this.adapter.setStateChanged(`Devices.${this.duid}.floors.${mapFlag}.add_time`, { val: formattedTime, ack: true });
 
 					// Legacy: Also keep local load button (optional but useful)
