@@ -31,6 +31,8 @@ import {
 import type { CleaningModeCapabilities } from "./cleaningModes";
 import { readFeatureStr } from "../../featureStr";
 import { floorFolderId, groupSelectedRoomsByMapFlag, normalizeMapFlag, sortRoomIds } from "../../map/roomKey";
+import { CommandVerifier, VERIFIABLE_SET_COMMANDS } from "./commandVerification";
+import type { CommandVerificationResult } from "./commandVerification";
 
 // --- Shared Constants ---
 // These are the *selectable* levels: what a model profile offers in its pickers. The markers the
@@ -90,6 +92,14 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 	protected mapService: V1MapService;
 	protected mapEditService: MapEditService;
+
+	/**
+	 * Watches acknowledged `set_*` commands until the status shows their effect - or does not.
+	 *
+	 * Fed in {@link V1VacuumFeatures.onCommandResult}, questioned in
+	 * {@link V1VacuumFeatures.processStatus}. Holds no timers, so `onUnload` has nothing to clean up.
+	 */
+	protected readonly commandVerifier = new CommandVerifier();
 
 	constructor(dependencies: FeatureDependencies, duid: string, robotModel: string, config: DeviceModelConfig = { staticFeatures: [] }, profile: VacuumProfile = DEFAULT_PROFILE) {
 		super(dependencies, duid, robotModel, config);
@@ -538,6 +548,82 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		if (this.mapEditService.handles(requestedMethod)) {
 			await this.mapEditService.resolveDeferredResult(finalMethod, response);
 		}
+		this.noteCommandForVerification(finalMethod, response, params);
+	}
+
+	/**
+	 * Starts watching a command that the robot just answered with `["ok"]`.
+	 *
+	 * Only that answer is watched. Anything else is already reported by
+	 * `requestsHandler.command` (`requestsHandler.ts:727-733`), and a second line about the same
+	 * request would only make the log harder to read. The `["ok"]` case is precisely the one nobody
+	 * reported so far: the robot confirms and does nothing.
+	 *
+	 * @param finalMethod The method that actually went on the wire.
+	 * @param response    The robot's answer.
+	 * @param params      The parameters that went with it.
+	 */
+	private noteCommandForVerification(finalMethod: string, response: unknown, params: unknown): void {
+		if (!VERIFIABLE_SET_COMMANDS[finalMethod]) return;
+
+		const data = (response && typeof response === "object" && "data" in response)
+			? (response as Record<string, unknown>).data
+			: response;
+		if (!Array.isArray(data) || data.length !== 1 || data[0] !== "ok") return;
+
+		this.commandVerifier.record(finalMethod, params);
+	}
+
+	/**
+	 * Says out loud what the status makes of the commands that are still waiting.
+	 *
+	 * A confirmation additionally marks the command state acknowledged. `processStatus` mirrors the
+	 * reported value into that state with `setStateChanged`, which writes nothing when the value did
+	 * not change - so a user who picks the level the robot already has would leave the state sitting
+	 * at `ack: false` forever, indistinguishable from a command that never arrived. One write per
+	 * user command settles that.
+	 *
+	 * @param status The robot's `get_status` result.
+	 */
+	private async reportCommandVerification(status: Record<string, any>): Promise<void> {
+		const results = this.commandVerifier.evaluate(status);
+		for (const result of results) {
+			if (result.kind === "confirmed") {
+				await this.acknowledgeCommandState(result);
+				continue;
+			}
+
+			if (result.kind === "unobservable") {
+				this.deps.adapter.rLog("Requests", this.duid, "Debug", this.protocolVersion || undefined, undefined,
+					`[Command check] ${result.command} was acknowledged, but the status never reported the fields it sets - not verifiable on this robot.`, "debug");
+				continue;
+			}
+
+			const detail = result.mismatches
+				.map((m) => `${m.field}=${JSON.stringify(m.actual)} (requested ${m.expected})`)
+				.join(", ");
+			this.deps.adapter.rLog("Requests", this.duid, "Warn", this.protocolVersion || undefined, undefined,
+				`[Command check] ${result.command} was answered with ["ok"], but ${Math.round(result.elapsedMs / 1000)}s later the robot still reports ${detail}. The requested value is not in effect - the robot may not support it in its current configuration, or it changed the setting again on its own.`, "warn");
+		}
+	}
+
+	/**
+	 * Marks the command state of a confirmed command acknowledged, with the value the robot reports.
+	 *
+	 * `set_clean_motor_mode` is left alone on purpose: its state holds one of the generated preset
+	 * JSON strings, and rebuilding that string from three numbers would have to guess the exact
+	 * preset spelling. The three single-value commands map one to one onto a state.
+	 *
+	 * @param result The confirmed verification result.
+	 */
+	private async acknowledgeCommandState(result: CommandVerificationResult): Promise<void> {
+		const fields = VERIFIABLE_SET_COMMANDS[result.command];
+		if (!fields || fields.length !== 1) return;
+
+		const value = result.reported[fields[0]];
+		if (typeof value !== "number") return;
+
+		await this.deps.adapter.setState(`Devices.${this.duid}.commands.${result.command}`, { val: value, ack: true });
 	}
 
 	public override async getCommandParams(method: string, params?: unknown, id?: string): Promise<unknown> {
@@ -1192,6 +1278,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		await Promise.all(promises);
 		await this.publishCleaningMode(validStatus);
+		// Last, so the states already carry what the robot reports when the check speaks about them.
+		await this.reportCommandVerification(validStatus);
 	}
 
 	/**
