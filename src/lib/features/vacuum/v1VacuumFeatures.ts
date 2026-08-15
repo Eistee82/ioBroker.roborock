@@ -5,12 +5,15 @@ import { MapEditService } from "./services/MapEditService";
 import { StationService } from "./services/StationService";
 import { V1ConsumableService } from "./services/V1ConsumableService";
 import { V1MapService } from "./services/V1MapService";
+import { CapabilityProbe } from "../capabilityProbe";
 import {
 	CLOSE_DND_TIMER,
 	DND_ENABLED_FIELD,
 	GET_DND_TIMER,
 	LOCK_STATUS_FIELD,
+	GET_COLLISION_AVOID_STATUS,
 	SET_CHILD_LOCK_STATUS,
+	SET_COLLISION_AVOID_STATUS,
 	SET_DND_TIMER,
 	V1RobotSettingsService
 } from "./services/V1RobotSettingsService";
@@ -102,6 +105,18 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected mapService: V1MapService;
 	protected mapEditService: MapEditService;
 	protected settingsService: V1RobotSettingsService;
+
+	/**
+	 * Asks the robot which commands it knows, once per adapter run.
+	 *
+	 * Holds no timers and nothing persistent - see `capabilityProbe.ts` for why a verdict is
+	 * deliberately not remembered across restarts.
+	 */
+	protected readonly capabilityProbe = new CapabilityProbe(
+		{ sendRequest: (duid, method, params, options) => this.deps.adapter.requestsHandler.sendRequest(duid, method, params, options) },
+		this.duid,
+		(message, level) => this.deps.adapter.rLog("System", this.duid, level === "info" ? "Info" : "Debug", "1.0", undefined, message, level)
+	);
 
 	/**
 	 * Watches acknowledged `set_*` commands until the status shows their effect - or does not.
@@ -1465,6 +1480,36 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	 * (`a179_features.ts:1303-1330`). Registering a second definition here would leave that model
 	 * with two owners for one command; see {@link V1RobotSettingsService} for the whole reasoning.
 	 */
+	/**
+	 * Asks the robot which of the probeable commands it has.
+	 *
+	 * Exactly one entry today, and that is deliberate: every probe costs a request at start-up, and
+	 * a capability only belongs here once its **write** side is proven too. Obstacle avoidance is:
+	 * the wrapper builds `{status}` (a65 control plugin, A65:230180-230192) and its switch handler
+	 * computes `status = on ? 1 : 0` (`onToggleAvoidCollision`, A65:837660-837680). The measurement
+	 * showed the a65 answers the getter although the adapter only ever offered the command to the
+	 * a179 (`_appanalysis/19-geraetefaehigkeiten.md` §4).
+	 *
+	 * Deliberately **not** here yet, although the a65 answers their getters: the carpet deep clean
+	 * status, the dryer setting, the smart wash parameters and the mop wash mode. Their setters pass
+	 * their argument straight through in the app, so the payload is unread - and a probe that proves
+	 * a robot can *read* something proves nothing about how to write it. `get_wash_towel_mode` yes /
+	 * `get_wash_towel_params` no is the standing warning that even neighbours differ.
+	 */
+	protected override async detectProbedCapabilities(): Promise<void> {
+		if (this.folderOfCommand(SET_COLLISION_AVOID_STATUS)) return;
+
+		const verdict = await this.capabilityProbe.probe(GET_COLLISION_AVOID_STATUS, {});
+		if (verdict !== "capable") return;
+
+		await this.applyFeature(Feature.CollisionAvoid);
+	}
+
+	@BaseDeviceFeatures.DeviceFeature(Feature.CollisionAvoid)
+	public async initCollisionAvoid(): Promise<void> {
+		this.settingsService.registerCollisionAvoidCommand((name, spec, group) => this.addCommand(name, spec, group));
+	}
+
 	@BaseDeviceFeatures.DeviceFeature(Feature.ChildLock)
 	public async initChildLock(): Promise<void> {
 		if (this.folderOfCommand(SET_CHILD_LOCK_STATUS)) return;

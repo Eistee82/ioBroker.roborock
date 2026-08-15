@@ -126,10 +126,21 @@ zeichnet die gespeicherten Karten sofort neu und kostet die Roboter keine einzig
 Anfrage.
 
 Die Tafel **Einstellungen** trägt die dauerhaften Roboter-Einstellungen. Heute sind das „Nicht
-stören" und die Kindersicherung; dort werden weitere Einstellungen nach und nach einsortiert. Ein
-Bedienelement erscheint nur bei einem Roboter, der die Einstellung wirklich hat — der Adapter legt
-die Objekte nur an, wenn der Status das zugehörige Feld meldet. Ein fehlendes Bedienelement heißt
-also „kann das Gerät nicht", nie „ist noch nicht geladen". Jede Beschriftung ist die, die der
+stören", die Kindersicherung und die Kollisionsvermeidung; dort werden weitere Einstellungen nach
+und nach einsortiert. Ein Bedienelement erscheint nur bei einem Roboter, der die Einstellung
+wirklich hat, und der Adapter findet das auf zwei Wegen heraus: Manche Einstellungen melden sich im
+Status, den der Roboter ohnehin schickt; für die übrigen **fragt der Adapter den Roboter einmal beim
+Start**, ob er den zugehörigen Lesebefehl kennt. Wer antwortet, bekommt das Bedienelement; wer mit
+`unknown_method` ablehnt, nicht. Ein fehlendes Bedienelement heißt also „kann das Gerät nicht", nie
+„ist noch nicht geladen".
+
+Der zweite Weg ersetzt das Raten anhand des Modellnamens, und das war in beide Richtungen falsch:
+An einem Roboter gemessen beherrschte er neun Kommandos, die an die Klasse eines anderen Modells
+gebunden waren, und elf nicht — zwei Kommandos derselben Funktionsgruppe konnten sich
+unterscheiden. Nur das Gerät selbst weiß es. Ist die Antwort etwas, das der Adapter nicht eindeutig
+erkennt, gilt die Einstellung als nicht vorhanden, statt ein Bedienelement anzubieten, das
+möglicherweise nichts tut: Eine fehlende Funktion fällt auf und lässt sich melden, ein toter
+Schalter nicht. Jede Beschriftung ist die, die der
 Adapter am Objekt veröffentlicht hat, im Wortlaut der Roborock-App.
 
 „Nicht stören" besteht aus einem Schalter sowie Beginn und Ende. Zwei Eigenheiten sind wissenswert,

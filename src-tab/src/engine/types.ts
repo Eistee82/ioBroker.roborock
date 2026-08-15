@@ -191,8 +191,15 @@ export interface MapZonesModel {
 	selectedKey: string | null;
 	/** Kind of the selected one, or of the one being placed. */
 	selectedKind: "no_go" | "no_mop" | "wall" | null;
-	/** True while a new wall or zone is being placed and nothing has been sent yet. */
+	/** True while something is unsaved: a new wall or zone, or a change to an existing one. */
 	drafting: boolean;
+	/**
+	 * True when what is unsaved is a change to a zone the robot already holds.
+	 *
+	 * Only the wording differs - "place this" against "move this" - but the two are different
+	 * actions to the user, and the panel opens itself for both.
+	 */
+	editing: boolean;
 	/** False on maps that carry no such overlays at all; the controls then stay away. */
 	supported: boolean;
 	/**

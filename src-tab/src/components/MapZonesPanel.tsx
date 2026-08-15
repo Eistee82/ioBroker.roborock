@@ -33,25 +33,24 @@ const KINDS: { kind: "no_go" | "no_mop" | "wall"; labelKey: string; fallback: st
 /**
  * The walls and zones stored on the robot itself.
  *
- * ## Why placing is a two-step action
+ * ## Why every change is a two-step action
  *
  * Every change to these rewrites the **complete** set on the robot: `save_map` keeps only what it
  * is sent, with no operation code and no zone id (`_appanalysis/14-editor-methoden.md` section
  * 2.1). The adapter makes that safe by reading the robot's own map first and writing everything
  * back, but each save is still one full rewrite.
  *
- * So a new zone is placed in the browser first. It can be dragged, resized and turned as often as
- * the user likes, and only "Save" sends anything - one write for one zone, instead of one write per
- * nudge. It also means a mis-drawn zone can simply be dropped, which is the difference between a
- * mistake and a boundary the user has to reconstruct by hand.
+ * So a zone - new or existing - is changed in the browser first. It can be dragged, resized and
+ * turned as often as the user likes, and only "Save" sends anything: one write per editing session
+ * instead of one per nudge. It also means a mis-drawn zone can simply be dropped, which is the
+ * difference between a mistake and a boundary the user has to reconstruct by hand.
  *
- * ## Why an existing zone can only be deleted here
+ * ## Why the two buttons live here and the handles live on the map
  *
- * Moving one would be "remove, then add": two rewrites with a fresh read of the robot's map in
- * between, and whether that second read already reflects the first write is not decidable from
- * outside the firmware. If it does not, the removed zone comes back and the moved one is added
- * beside it. Deleting and placing anew is one rewrite each and cannot end in that state, so that is
- * what is offered until the adapter can do both in a single cycle.
+ * Changing an existing zone starts by grabbing one of its handles, which is where the zone is. What
+ * cannot live there is the decision to keep or discard the change, because that is not a place on
+ * the map. The panel therefore opens itself whenever something is unsaved - see `expanded` below -
+ * so those two controls are never hidden behind a collapsed header.
  */
 export function MapZonesPanel({ zones, onAdd, onSave, onCancel }: MapZonesPanelProps): React.JSX.Element | null {
 	const [open, setOpen] = useState(false);
@@ -62,6 +61,12 @@ export function MapZonesPanel({ zones, onAdd, onSave, onCancel }: MapZonesPanelP
 
 	const total = zones.counts.no_go + zones.counts.no_mop + zones.counts.wall;
 	const blocked = zones.refusalText !== null;
+
+	// Forced open while something is unsaved. Changing an existing zone starts by grabbing one of
+	// its handles on the map, not by pressing a button in here, so a collapsed panel would hide the
+	// only two controls that can finish the job - and leave the user having moved a zone with no
+	// visible way to send it or to take it back.
+	const expanded = open || zones.drafting;
 
 	return (
 		<FloatingSurface sx={{ width: 300, maxWidth: "100%" }}>
@@ -86,11 +91,11 @@ export function MapZonesPanel({ zones, onAdd, onSave, onCancel }: MapZonesPanelP
 					/>
 				) : null}
 				<IconButton size="small">
-					<ExpandMoreIcon sx={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+					<ExpandMoreIcon sx={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
 				</IconButton>
 			</Stack>
 
-			<Collapse in={open}>
+			<Collapse in={expanded}>
 				<Stack
 					spacing={1.5}
 					sx={{ px: 1.5, pb: 1.5 }}
@@ -103,7 +108,7 @@ export function MapZonesPanel({ zones, onAdd, onSave, onCancel }: MapZonesPanelP
 								variant="body2"
 								sx={{ mb: 1 }}
 							>
-								{I18n.t("ui_map_zone_draft_hint")}
+								{I18n.t(zones.editing ? "ui_map_zone_edit_hint" : "ui_map_zone_draft_hint")}
 							</Typography>
 							<Stack
 								direction="row"

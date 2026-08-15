@@ -125,6 +125,7 @@ describe("the state ids the source has to read", () => {
 			`${ROOT}.deviceStatus.dnd_start`,
 			`${ROOT}.settings.close_dnd_timer`,
 			`${ROOT}.settings.set_child_lock_status`,
+			`${ROOT}.settings.set_collision_avoid_status`,
 			`${ROOT}.settings.set_dnd_timer`,
 		].sort());
 	});

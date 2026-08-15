@@ -359,5 +359,7 @@
   "ui_map_zones_malformed": "无法解析此地图的“%s”数据块，因此无法在此修改其虚拟墙与禁区。",
   "ui_map_zones_no_map": "尚未读取地图，无法在此修改虚拟墙与禁区。",
   "ui_map_zones_unreproducible": "此地图包含适配器无法写回的“%s”图层，因此无法在此修改其虚拟墙与禁区。",
-  "ui_zone_handle_rotate": "旋转区域"
+  "ui_zone_handle_rotate": "旋转区域",
+  "ui_map_zone_unconfirmed": "扫地机未确认虚拟墙与禁区的更改。可能什么都没有改变——请检查地图和适配器日志。",
+  "ui_map_zone_edit_hint": "在地图上拖动、缩放或旋转。保存前不会发送到扫地机。"
 }

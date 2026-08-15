@@ -119,11 +119,20 @@ one rendered image per robot, that last option cannot serve two browsers in two 
 the one that reported last decides what everyone sees. Changing the setting repaints the
 stored maps at once and does not cost the robots a single request.
 
-The **settings** panel carries the persistent robot settings. Today that is Do Not Disturb and the
-child lock; it is the place further settings will be added to. A control only appears for a robot
-that really has the setting - the adapter creates the objects only for a robot whose status reports
-the matching field - so an absent control means the robot does not offer it, never that something
-failed to load. Every label is the one the adapter published on the object, in the wording of the
+The **settings** panel carries the persistent robot settings. Today that is Do Not Disturb, the
+child lock and obstacle avoidance; it is the place further settings will be added to. A control only
+appears for a robot that really has the setting, and there are two ways the adapter finds that out:
+some settings announce themselves in the status the robot sends anyway, and for the rest the adapter
+**asks the robot once at start-up** whether it knows the matching read command. A robot that answers
+gets the control; one that answers `unknown_method` does not. So an absent control means the robot
+does not offer it, never that something failed to load.
+
+That second way replaces guessing by model name, which was wrong in both directions: measured
+against one robot, nine commands bound to another model's class turned out to work on it, and
+eleven did not - two commands of the same function group could differ. Only the robot knows. Where
+the answer is anything the adapter does not clearly recognise, it treats the setting as absent
+rather than offering a control that might do nothing; a missing function is visible and can be
+reported, a dead switch is not. Every label is the one the adapter published on the object, in the wording of the
 Roborock app.
 
 Do Not Disturb is a switch plus a start and an end. Two details are worth knowing because they come

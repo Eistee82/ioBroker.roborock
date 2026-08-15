@@ -67,6 +67,7 @@ const EMPTY_MAP_ZONES: MapZonesModel = {
 	selectedKey: null,
 	selectedKind: null,
 	drafting: false,
+	editing: false,
 	supported: false,
 	refusalText: null
 };

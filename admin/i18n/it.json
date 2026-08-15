@@ -359,5 +359,7 @@
   "ui_map_zones_malformed": "Il blocco '%s' di questa mappa non è stato compreso, quindi le sue pareti e zone non si possono modificare da qui.",
   "ui_map_zones_no_map": "La mappa non è ancora stata letta; pareti e zone non si possono modificare da qui.",
   "ui_map_zones_unreproducible": "Questa mappa contiene un livello '%s' che l'adapter non è in grado di riscrivere, quindi le sue pareti e zone non si possono modificare da qui.",
-  "ui_zone_handle_rotate": "Ruota la zona"
+  "ui_zone_handle_rotate": "Ruota la zona",
+  "ui_map_zone_unconfirmed": "Il robot non ha confermato la modifica di pareti e zone. Potrebbe non essere cambiato nulla: controlla la mappa e il log dell'adapter.",
+  "ui_map_zone_edit_hint": "Trascina, ridimensiona o ruota sulla mappa. Nulla raggiunge il robot finché non salvi."
 }

@@ -359,5 +359,7 @@
   "ui_map_zones_malformed": "The '%s' block of this map was not understood, so its walls and zones cannot be changed from here.",
   "ui_map_zones_no_map": "The map has not been read yet; walls and zones cannot be changed from here.",
   "ui_map_zones_unreproducible": "This map carries a '%s' overlay the adapter cannot write back, so its walls and zones cannot be changed from here.",
-  "ui_zone_handle_rotate": "Turn zone"
+  "ui_zone_handle_rotate": "Turn zone",
+  "ui_map_zone_unconfirmed": "The robot has not confirmed the change to the walls and zones. Nothing may have been changed - check the map and the adapter log.",
+  "ui_map_zone_edit_hint": "Drag, resize or turn it on the map. Nothing reaches the robot until you save."
 }

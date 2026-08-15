@@ -359,5 +359,7 @@
   "ui_map_zones_malformed": "Der '%s'-Block dieser Karte wurde nicht verstanden. Ihre Wände und Zonen lassen sich von hier aus nicht ändern.",
   "ui_map_zones_no_map": "Die Karte wurde noch nicht gelesen. Wände und Zonen lassen sich von hier aus nicht ändern.",
   "ui_map_zones_unreproducible": "Diese Karte trägt eine '%s'-Ebene, die der Adapter nicht zurückschreiben kann. Ihre Wände und Zonen lassen sich von hier aus nicht ändern.",
-  "ui_zone_handle_rotate": "Zone drehen"
+  "ui_zone_handle_rotate": "Zone drehen",
+  "ui_map_zone_unconfirmed": "Der Roboter hat die Änderung an den Wänden und Zonen nicht bestätigt. Möglicherweise wurde nichts geändert — Karte und Adapterlog prüfen.",
+  "ui_map_zone_edit_hint": "Auf der Karte verschieben, skalieren oder drehen. Erst beim Speichern geht etwas an den Roboter."
 }

@@ -237,6 +237,43 @@ describe("commands registered by a runtime-detected feature", () => {
 		expect(lines.some((line) => line.includes("Runtime detection added") && line.includes("set_child_lock_status"))).toBe(true);
 	});
 
+	it("creates a probed command only for a robot that answered its getter", async () => {
+		// The probe has to run before the objects are written - that is the only moment at which
+		// its answer can still decide whether a control exists at all.
+		const capable = createDeps();
+		(capable.deps as any).adapter.requestsHandler.sendRequest = vi.fn().mockResolvedValue([{ status: 1 }]);
+		const withProbe = new V1VacuumFeatures(capable.deps, "duid-test", "roborock.vacuum.a65", { staticFeatures: [] } as any);
+		await withProbe.setupProtocolFeatures();
+		await (withProbe as any).detectProbedCapabilities();
+		await withProbe.createCommandObjects();
+
+		expect(capable.ensured.some((id) => id.endsWith("settings.set_collision_avoid_status"))).toBe(true);
+	});
+
+	it("creates nothing for a robot that rejects the getter", async () => {
+		const rejecting = createDeps();
+		(rejecting.deps as any).adapter.requestsHandler.sendRequest = vi.fn().mockResolvedValue("unknown_method");
+		const withProbe = new V1VacuumFeatures(rejecting.deps, "duid-test", "roborock.vacuum.q7", { staticFeatures: [] } as any);
+		await withProbe.setupProtocolFeatures();
+		await (withProbe as any).detectProbedCapabilities();
+		await withProbe.createCommandObjects();
+
+		expect(rejecting.ensured.some((id) => id.endsWith("settings.set_collision_avoid_status"))).toBe(false);
+		expect(withProbe.getCommandSpec("settings", "set_collision_avoid_status")).toBeUndefined();
+	});
+
+	it("creates nothing for a robot that did not answer at all", async () => {
+		// A device that is unreachable must not be handed controls on a maybe.
+		const silent = createDeps();
+		(silent.deps as any).adapter.requestsHandler.sendRequest = vi.fn().mockRejectedValue(new Error("timeout"));
+		const withProbe = new V1VacuumFeatures(silent.deps, "duid-test", "roborock.vacuum.a65", { staticFeatures: [] } as any);
+		await withProbe.setupProtocolFeatures();
+		await (withProbe as any).detectProbedCapabilities();
+		await withProbe.createCommandObjects();
+
+		expect(silent.ensured.some((id) => id.endsWith("settings.set_collision_avoid_status"))).toBe(false);
+	});
+
 	it("still gives a statically declared feature its object", async () => {
 		// The control from the original investigation: applied before the objects are written, so
 		// it never depended on this path and must keep working.

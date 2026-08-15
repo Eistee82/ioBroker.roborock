@@ -359,5 +359,7 @@
   "ui_map_zones_malformed": "No se ha entendido el bloque '%s' de este mapa, así que sus paredes y zonas no se pueden cambiar desde aquí.",
   "ui_map_zones_no_map": "El mapa aún no se ha leído; las paredes y zonas no se pueden cambiar desde aquí.",
   "ui_map_zones_unreproducible": "Este mapa contiene una capa '%s' que el adaptador no puede reescribir, así que sus paredes y zonas no se pueden cambiar desde aquí.",
-  "ui_zone_handle_rotate": "Girar la zona"
+  "ui_zone_handle_rotate": "Girar la zona",
+  "ui_map_zone_unconfirmed": "El robot no ha confirmado el cambio en las paredes y zonas. Puede que no se haya cambiado nada: revisa el mapa y el registro del adaptador.",
+  "ui_map_zone_edit_hint": "Arrástralo, cambia su tamaño o gíralo en el mapa. No se envía nada al robot hasta que guardes."
 }

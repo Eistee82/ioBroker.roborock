@@ -359,5 +359,7 @@
   "ui_map_zones_malformed": "Het '%s'-blok van deze kaart werd niet begrepen; de muren en zones ervan zijn hier niet te wijzigen.",
   "ui_map_zones_no_map": "De kaart is nog niet gelezen; muren en zones zijn hier niet te wijzigen.",
   "ui_map_zones_unreproducible": "Deze kaart bevat een '%s'-laag die de adapter niet kan terugschrijven; de muren en zones ervan zijn hier niet te wijzigen.",
-  "ui_zone_handle_rotate": "Zone draaien"
+  "ui_zone_handle_rotate": "Zone draaien",
+  "ui_map_zone_unconfirmed": "De robot heeft de wijziging van muren en zones niet bevestigd. Mogelijk is er niets gewijzigd — controleer de kaart en het adapterlogboek.",
+  "ui_map_zone_edit_hint": "Sleep, schaal of draai het op de kaart. Er gaat pas iets naar de robot als u opslaat."
 }

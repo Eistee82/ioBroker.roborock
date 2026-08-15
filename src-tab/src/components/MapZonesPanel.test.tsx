@@ -27,6 +27,7 @@ function model(overrides: Partial<MapZonesModel> = {}): MapZonesModel {
 		selectedKey: null,
 		selectedKind: null,
 		drafting: false,
+		editing: false,
 		supported: true,
 		refusalText: null,
 		...overrides,

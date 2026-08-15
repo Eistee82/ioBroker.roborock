@@ -69,6 +69,23 @@ export const CLOSE_DND_TIMER = "close_dnd_timer";
 /** RPC that sets the child lock. */
 export const SET_CHILD_LOCK_STATUS = "set_child_lock_status";
 
+/**
+ * RPC that reads obstacle avoidance; used as the capability probe for the setter below.
+ *
+ * The a65 answers it with `{"status":1}` although the adapter only ever offered the command to the
+ * a179 (`_appanalysis/19-geraetefaehigkeiten.md` §4).
+ */
+export const GET_COLLISION_AVOID_STATUS = "get_collision_avoid_status";
+
+/**
+ * RPC that switches obstacle avoidance.
+ *
+ * Payload `{status}` (wrapper A65:230180-230192), and the value is the plain 0/1 its own switch
+ * handler computes: `onToggleAvoidCollision` does `status = on ? 1 : 0` (A65:837660-837680) - the
+ * same shape as the child lock.
+ */
+export const SET_COLLISION_AVOID_STATUS = "set_collision_avoid_status";
+
 /** Status field carrying whether Do Not Disturb is on. */
 export const DND_ENABLED_FIELD = "dnd_enabled";
 
@@ -279,6 +296,25 @@ export class V1RobotSettingsService {
 		this.claimed.add(SET_CHILD_LOCK_STATUS);
 	}
 
+	/**
+	 * Registers the obstacle avoidance switch.
+	 *
+	 * Unlike the two above, whether the robot has this is not visible in the status - it is decided
+	 * by asking `get_collision_avoid_status` and reading the answer (see `capabilityProbe.ts`). This
+	 * method is only called once that answer came back.
+	 * @param addCommand Registration callback of the feature class.
+	 */
+	public registerCollisionAvoidCommand(addCommand: (name: string, spec: Record<string, unknown>, group?: string) => void): void {
+		addCommand(SET_COLLISION_AVOID_STATUS, {
+			type: "boolean",
+			role: "switch.enable",
+			name: this.text("avoid_collision_mode", "Less Collision Mode"),
+			def: false
+		}, "settings");
+
+		this.claimed.add(SET_COLLISION_AVOID_STATUS);
+	}
+
 	/** Creates the two read-only states the window is published in. */
 	public async ensureDndStates(): Promise<void> {
 		await this.stateWriter.ensureFolder("deviceStatus");
@@ -325,6 +361,10 @@ export class V1RobotSettingsService {
 
 		if (method === SET_CHILD_LOCK_STATUS) {
 			return { method: SET_CHILD_LOCK_STATUS, params: { lock_status: this.toBinary(value) } };
+		}
+
+		if (method === SET_COLLISION_AVOID_STATUS) {
+			return { method: SET_COLLISION_AVOID_STATUS, params: { status: this.toBinary(value) } };
 		}
 
 		return { method, params: value };

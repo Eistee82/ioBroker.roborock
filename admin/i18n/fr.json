@@ -359,5 +359,7 @@
   "ui_map_zones_malformed": "Le bloc « %s » de cette carte n’a pas été compris ; ses murs et zones ne peuvent pas être modifiés ici.",
   "ui_map_zones_no_map": "La carte n’a pas encore été lue ; les murs et zones ne peuvent pas être modifiés ici.",
   "ui_map_zones_unreproducible": "Cette carte comporte un calque « %s » que l’adaptateur ne sait pas réécrire ; ses murs et zones ne peuvent pas être modifiés ici.",
-  "ui_zone_handle_rotate": "Faire pivoter la zone"
+  "ui_zone_handle_rotate": "Faire pivoter la zone",
+  "ui_map_zone_unconfirmed": "Le robot n’a pas confirmé la modification des murs et des zones. Il se peut que rien n’ait changé — vérifiez la carte et le journal de l’adaptateur.",
+  "ui_map_zone_edit_hint": "Déplacez, redimensionnez ou faites pivoter sur la carte. Rien n’est envoyé au robot avant l’enregistrement."
 }

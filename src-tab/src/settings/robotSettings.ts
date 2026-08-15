@@ -108,6 +108,10 @@ const KNOWN_SETTINGS: ReadonlyArray<
 		endStatus: "dnd_end",
 	},
 	{ kind: "switch", command: "set_child_lock_status" },
+	// Only exists for a robot that answered `get_collision_avoid_status` when the adapter asked
+	// it at start-up - see `src/lib/features/capabilityProbe.ts`. Nothing has to be done about
+	// that here: an absent object means no entry, which is the same rule every setting follows.
+	{ kind: "switch", command: "set_collision_avoid_status" },
 ];
 
 /** Builds the object id of the settings folder of one device. */

@@ -34,6 +34,7 @@ import {
 	MAP_ZONE_KINDS,
 	MAP_ZONE_LIMIT,
 	MAP_ZONE_REMOVE_COMMAND,
+	MAP_ZONE_UPDATE_COMMAND,
 	mapZoneKey,
 	parseZoneInput,
 	pointsBox,
@@ -41,6 +42,7 @@ import {
 	readMapZones,
 	zoneAddPayload,
 	zoneRemovalPayload,
+	zoneUpdatePayload,
 } from "./mapZones";
 import type { MapZone, MapZoneKind, MapZonePoint, MapZoneRefusal, ZoneBox } from "./mapZones";
 import { layoutMapZoneHandles, renderMapZoneLayer } from "./mapZoneLayer";
@@ -85,6 +87,28 @@ export const MAP_ZONE_DEFAULT_HALF_MM = 500;
  * size of its own handles cannot be aimed at any more either.
  */
 export const MAP_ZONE_MIN_EDGE_PX = 6;
+
+/** State below the device root that carries the confirmed set of walls and zones. */
+export const MAP_ZONE_CONFIRM_STATE = "mapEdit.zones";
+
+/**
+ * How long a zone edit may stay unconfirmed before the user is told, in milliseconds.
+ *
+ * Generous on purpose. The adapter first fetches the robot's whole map, then writes, and a robot
+ * that defers the call is polled every two seconds up to eight times before the adapter gives up
+ * (`RETRY_POLL_INTERVAL_MS` × `RETRY_MAX_ATTEMPTS` = 16 s). A message that arrived before that had
+ * finished would be a false alarm, and a false alarm about lost zones is its own harm.
+ */
+export const MAP_ZONE_CONFIRM_TIMEOUT_MS = 30000;
+
+/** What a published `mapEdit.zones` has to show for a pending edit to count as landed. */
+export interface MapZoneExpectation {
+	kind: MapZoneKind;
+	/** The record that was written or removed. */
+	zone: number[];
+	/** True when it has to be in the published set afterwards, false when it has to be gone. */
+	present: boolean;
+}
 import { buildCleaningModeTabs } from "./cleaningModes";
 import { CONSUMABLE_LABEL_OVERRIDES, consumableGroup } from "./consumables";
 import { DOCK_ACTIVITY_STATES, EMPTY_DOCK_ACTIVITY, readDockActivity } from "./dockActivity";
@@ -551,6 +575,10 @@ export class MapEngine {
 	 * in screen coordinates would drift with the picture underneath it.
 	 */
 	private mapZoneDraft: { kind: MapZoneKind; box: ZoneBox; origin: MapZone | null } | null = null;
+	/** The zone edit that is on its way to the robot and not yet confirmed, or null. */
+	private pendingMapZoneEdit: MapZoneExpectation | null = null;
+	/** Timer that turns an unconfirmed edit into a visible message; cleared on unload. */
+	private mapZoneConfirmTimeout: number | null = null;
 	/** Cache: "duid.mapFlag.roomId" -> room name (from get_room_names for cloud maps). */
 	private roomNamesFromStates: Record<string, string> = {};
 	/** Guard: "duid.mapFlag" of the floor whose room names have already been requested. */
@@ -786,6 +814,7 @@ export class MapEngine {
 			clearTimeout(this.popupTimeout);
 			this.popupTimeout = null;
 		}
+		this.clearMapZoneConfirmation();
 		this.host.container.replaceChildren();
 	}
 
@@ -1158,6 +1187,9 @@ export class MapEngine {
 		this.mapZoneRefusal = null;
 		this.mapZoneDraft = null;
 		this.selectedMapZoneKey = null;
+		// An edit waiting on the previous robot can never be confirmed now, and its timer would
+		// otherwise fire a message about a robot the user has left.
+		this.clearMapZoneConfirmation();
 		this.mapZoneGroup.selectAll("*").remove();
 		this.publishMapZoneModel();
 		this.currentMapBase64Clean = null;
@@ -1179,6 +1211,8 @@ export class MapEngine {
 		const deviceRoot = `${this.instanceId}.Devices.${duid}`;
 		const mapBase64CleanStateId = `${deviceRoot}.map.mapBase64Clean`;
 		const mapDataStateId = `${deviceRoot}.map.mapData`;
+		// The one channel that says a zone edit actually landed; see `awaitMapZoneConfirmation`.
+		const mapZonesStateId = `${deviceRoot}.${MAP_ZONE_CONFIRM_STATE}`;
 		const q10StatusStateId = `${deviceRoot}.deviceStatus.status`;
 		const q10CleaningInfoStateId = `${deviceRoot}.deviceStatus.cleaning_info`;
 		const q10CurrentCleanRoomIdsStateId = `${deviceRoot}.deviceStatus.current_clean_room_ids`;
@@ -1215,6 +1249,7 @@ export class MapEngine {
 			q10CurrentCleanRoomIdsStateId,
 			connectionPreferredStateId,
 			liveTrackStateId,
+			mapZonesStateId,
 			...statusKeyByStateId.keys()
 		];
 
@@ -1313,6 +1348,10 @@ export class MapEngine {
 						console.error("Failed to parse map data JSON:", state.val, e);
 						this.showError(this.t("ui_command_failed", "Command failed: %s", this.errorText(e)));
 					}
+					break;
+
+				case mapZonesStateId:
+					this.checkMapZoneConfirmation(state.val);
 					break;
 
 				case q10StatusStateId:
@@ -3049,13 +3088,12 @@ export class MapEngine {
 			t: (key: string, fallback: string) => this.t(key, fallback),
 			onSelect: (key: string | null) => this.selectMapZone(key),
 			onDelete: (key: string) => this.deleteMapZone(key),
-			// Only the zone being placed can be moved: an existing one would have to be removed and
-			// added again, which is two `save_map` cycles with a fresh read in between, and whether
-			// the second read already shows the first write is not decidable from the code. See the
-			// note in `PROJECT_STATE.md`.
-			moveDrag: this.mapZoneDraft ? this.mapZoneMoveDrag() : undefined,
-			scaleDrag: this.mapZoneDraft ? this.mapZoneScaleDrag() : undefined,
-			rotateDrag: this.mapZoneDraft ? this.mapZoneRotateDrag() : undefined,
+			// Available on the selected zone whether it is new or already on the robot. Grabbing a
+			// handle on an existing one turns it into a draft first, so nothing is sent until the
+			// user saves - one rewrite of the robot's set per editing session, not per drag.
+			moveDrag: this.mapZoneMoveDrag(),
+			scaleDrag: this.mapZoneScaleDrag(),
+			rotateDrag: this.mapZoneRotateDrag(),
 		});
 	}
 
@@ -3114,6 +3152,10 @@ export class MapEngine {
 		if (!box) return false;
 
 		this.mapZoneDraft = { kind: zone.kind, box, origin: zone };
+		// Redrawn at once so the zone is marked unsaved from the first millimetre of the gesture.
+		// Safe in the middle of one: the draft keeps the zone's key, so the data join reuses the
+		// very element the pointer is on rather than replacing it.
+		this.drawMapZones();
 		this.publishMapZoneModel();
 		return true;
 	}
@@ -3221,7 +3263,10 @@ export class MapEngine {
 	private mapZoneMoveDrag(): d3.DragBehavior<SVGGElement, MapZoneShape, unknown> {
 		return d3
 			.drag<SVGGElement, MapZoneShape>()
-			.on("start", (event: any) => event.sourceEvent?.stopPropagation?.())
+			.on("start", (event: any) => {
+				event.sourceEvent?.stopPropagation?.();
+				this.beginMapZoneEdit();
+			})
 			.on("drag", (event: any) => {
 				this.editMapZoneDraft((shape) => ({ ...shape, cx: shape.cx + event.dx, cy: shape.cy + event.dy }));
 			});
@@ -3238,7 +3283,10 @@ export class MapEngine {
 	private mapZoneScaleDrag(): d3.DragBehavior<SVGGElement, MapZoneShape, unknown> {
 		return d3
 			.drag<SVGGElement, MapZoneShape>()
-			.on("start", (event: any) => event.sourceEvent?.stopPropagation?.())
+			.on("start", (event: any) => {
+				event.sourceEvent?.stopPropagation?.();
+				this.beginMapZoneEdit();
+			})
 			.on("drag", (event: any) => {
 				this.editMapZoneDraft((shape) => {
 					const radians = (shape.angleDeg * Math.PI) / 180;
@@ -3278,6 +3326,7 @@ export class MapEngine {
 			.container(() => this.mainGroup.node() as any)
 			.on("start", (event: any, shape: MapZoneShape) => {
 				event.sourceEvent?.stopPropagation?.();
+				this.beginMapZoneEdit();
 				const pointer = Math.atan2(event.y - shape.cy, event.x - shape.cx);
 				grabOffset = pointer - (shape.angleDeg * Math.PI) / 180;
 			})
@@ -3607,9 +3656,9 @@ export class MapEngine {
 	 */
 	public selectMapZone(key: string | null): void {
 		if (this.selectedMapZoneKey === key) return;
-		// Selecting a saved zone while one is being placed would leave the draft on the map with no
-		// way back to it, so the draft wins and the click is spent on dropping it.
-		if (this.mapZoneDraft && key !== MAP_ZONE_DRAFT_KEY) return;
+		// Selecting something else while a draft is unsaved would leave it on the map with no way
+		// back to it, so the draft keeps the selection and the click is spent on nothing.
+		if (this.mapZoneDraft && key !== this.mapZoneDraftKey()) return;
 
 		this.selectedMapZoneKey = key;
 		this.drawMapZones();
@@ -3651,13 +3700,19 @@ export class MapEngine {
 				halfHeight: kind === "wall" ? 0 : MAP_ZONE_DEFAULT_HALF_MM,
 				angle: 0,
 			},
+			origin: null,
 		};
 		this.selectedMapZoneKey = MAP_ZONE_DRAFT_KEY;
 		this.drawMapZones();
 		this.publishMapZoneModel();
 	}
 
-	/** Drops the zone being placed without sending anything. */
+	/**
+	 * Drops the draft without sending anything.
+	 *
+	 * A zone that was being changed simply reappears where the robot has it, because the change only
+	 * ever lived in the browser.
+	 */
 	public cancelMapZone(): void {
 		if (!this.mapZoneDraft) return;
 		this.mapZoneDraft = null;
@@ -3667,7 +3722,14 @@ export class MapEngine {
 	}
 
 	/**
-	 * Sends the zone being placed to the robot.
+	 * Sends the draft to the robot: one command, whether it is a new zone or a changed one.
+	 *
+	 * A changed zone goes as `update_map_zone` rather than as a removal followed by an addition.
+	 * That is not a shortcut: those would be two complete rewrites of the robot's set of walls and
+	 * zones, the zone would be absent between them, and the second would read a map that may not
+	 * show the first write yet. It also carries `from` - the coordinates the zone had when the user
+	 * started - so the adapter refuses instead of writing over a zone that has meanwhile become a
+	 * different one.
 	 *
 	 * The payload is checked with `parseZoneInput` first - the adapter's own parser, shared through
 	 * `src/common/mapZoneKinds.ts`. Without that the tab would have no way of learning that a
@@ -3679,42 +3741,61 @@ export class MapEngine {
 		if (!draft || !this.currentRobotDuid) return;
 
 		const points = boxPoints(draft.kind, draft.box);
-		let payload: number[];
+		let command: string;
+		let value: unknown;
 		try {
-			payload = parseZoneInput(draft.kind, zoneAddPayload(draft.kind, points));
+			// Validated exactly as an `add_...` would be, so a shape that could not be created
+			// cannot be moved into either.
+			parseZoneInput(draft.kind, zoneAddPayload(draft.kind, points));
+			if (draft.origin) {
+				command = MAP_ZONE_UPDATE_COMMAND;
+				value = zoneUpdatePayload(draft.origin, points);
+			} else {
+				command = MAP_ZONE_ADD_COMMANDS[draft.kind];
+				value = zoneAddPayload(draft.kind, points);
+			}
 		} catch (e: unknown) {
 			this.showError(this.errorText(e));
 			return;
 		}
 
-		// The draft goes as soon as the command is accepted. It must not stay on the map next to the
-		// zone the robot now holds, which would read as two.
+		// The draft goes as soon as the command is on its way. It must not stay on the map beside
+		// the zone the robot now holds, which would read as two.
 		this.mapZoneDraft = null;
 		this.selectedMapZoneKey = null;
 		this.drawMapZones();
 		this.publishMapZoneModel();
 
+		// Armed before the send, so a confirmation that arrives quickly cannot be missed.
+		this.awaitMapZoneConfirmation({
+			kind: draft.kind,
+			zone: zoneAddPayload(draft.kind, points),
+			present: true,
+		});
+
 		await this.sendCommand("set_state", {
 			duid: this.currentRobotDuid,
 			folder: MAP_ZONE_COMMAND_FOLDER,
-			command: MAP_ZONE_ADD_COMMANDS[draft.kind],
+			command,
 			// A `type: "json"` command state takes a string: `coerceCommandValue` stringifies
 			// whatever it is given (`socketHandler.ts:580-582`), so an array would arrive as
 			// "0,0,100,100" and be refused.
-			value: JSON.stringify(payload),
+			value: JSON.stringify(value),
 		});
 	}
 
 	/**
 	 * Removes one wall or zone from the robot's map.
 	 *
-	 * The index is the position within its own kind, which is what `remove_map_zone` counts. The
-	 * coordinates travel with it so an adapter that compares them can refuse a stale index rather
-	 * than delete the neighbour; today's adapter ignores the extra key.
+	 * The index is the position within its own kind, which is what `remove_map_zone` counts, and the
+	 * coordinates travel with it so the adapter can refuse a stale index rather than delete the
+	 * neighbour - the map may have changed since this list was read.
 	 * @param key `kind:index` of the zone, as the layer reports it.
 	 */
 	public async deleteMapZone(key: string): Promise<void> {
-		if (key === MAP_ZONE_DRAFT_KEY) {
+		// The delete handle of a draft means "drop it", not "remove something from the robot": a
+		// draft has nothing on the robot to remove.
+		if (this.mapZoneDraft && key === this.mapZoneDraftKey()) {
 			this.cancelMapZone();
 			return;
 		}
@@ -3722,12 +3803,91 @@ export class MapEngine {
 		if (!zone || !this.currentRobotDuid) return;
 
 		this.selectedMapZoneKey = null;
+		this.awaitMapZoneConfirmation({
+			kind: zone.kind,
+			zone: zoneAddPayload(zone.kind, zone.points),
+			// A removal is confirmed by the zone being gone from the published set.
+			present: false,
+		});
+
 		await this.sendCommand("set_state", {
 			duid: this.currentRobotDuid,
 			folder: MAP_ZONE_COMMAND_FOLDER,
 			command: MAP_ZONE_REMOVE_COMMAND,
 			value: JSON.stringify(zoneRemovalPayload(zone)),
 		});
+	}
+
+	/**
+	 * Waits for the robot to confirm a zone edit, and says so when it does not.
+	 *
+	 * **Why this is needed at all.** `set_state` answers `{result:"ok"}` the moment the value is
+	 * written into the command state - before the robot has been asked anything
+	 * (`src/lib/socketHandler.ts:436-443`). Everything that can go wrong afterwards happens in the
+	 * adapter: the map cannot be fetched, the index no longer matches, the robot never confirms the
+	 * deferred call. All of it lands in the adapter log, where nobody is looking. Without this, a
+	 * user moves a zone, the interface agrees, and nothing has happened - the same fault class as
+	 * the water level "Extreme".
+	 *
+	 * **Why `mapEdit.zones` is the right channel.** The adapter republishes it only once the robot
+	 * has confirmed (`MapEditService.ts:1483-1487`, after `pollUntilConfirmed`). The expectation is
+	 * checked against its **content** rather than against the fact that it changed, because the same
+	 * state is also written before the edit, with the set the robot holds at that moment.
+	 * @param expectation What the published set has to show for the edit to have landed.
+	 */
+	private awaitMapZoneConfirmation(expectation: MapZoneExpectation): void {
+		this.clearMapZoneConfirmation();
+		this.pendingMapZoneEdit = expectation;
+		this.mapZoneConfirmTimeout = window.setTimeout(() => {
+			this.mapZoneConfirmTimeout = null;
+			this.pendingMapZoneEdit = null;
+			this.showError(
+				this.t(
+					"ui_map_zone_unconfirmed",
+					"The robot has not confirmed the change to the walls and zones. Nothing may have been changed - check the map and the adapter log."
+				)
+			);
+		}, MAP_ZONE_CONFIRM_TIMEOUT_MS);
+	}
+
+	/**
+	 * Reads a `mapEdit.zones` publication and closes the pending edit when it shows the change.
+	 * @param raw Value of the state.
+	 */
+	private checkMapZoneConfirmation(raw: unknown): void {
+		const pending = this.pendingMapZoneEdit;
+		if (!pending) return;
+
+		let published: unknown;
+		try {
+			published = typeof raw === "string" ? JSON.parse(raw) : raw;
+		} catch {
+			return;
+		}
+		if (!published || typeof published !== "object") return;
+
+		const list = (published as Record<string, unknown>)[pending.kind];
+		if (!Array.isArray(list)) return;
+
+		const holds = list.some(
+			(entry) =>
+				Array.isArray(entry) &&
+				entry.length === pending.zone.length &&
+				entry.every((value, index) => Number(value) === pending.zone[index])
+		);
+
+		// An addition and a move are confirmed by the zone being there, a removal by it being gone.
+		if (holds !== pending.present) return;
+		this.clearMapZoneConfirmation();
+	}
+
+	/** Drops a pending expectation and its timer; also called on unload and on a robot switch. */
+	private clearMapZoneConfirmation(): void {
+		if (this.mapZoneConfirmTimeout !== null) {
+			clearTimeout(this.mapZoneConfirmTimeout);
+			this.mapZoneConfirmTimeout = null;
+		}
+		this.pendingMapZoneEdit = null;
 	}
 
 	/** Why the adapter would refuse to edit this map's zones, already translated, or null. */
@@ -3766,6 +3926,7 @@ export class MapEngine {
 			selectedKey: this.selectedMapZoneKey,
 			selectedKind: this.mapZoneDraft ? this.mapZoneDraft.kind : (selected?.kind ?? null),
 			drafting: this.mapZoneDraft !== null,
+			editing: this.mapZoneDraft?.origin != null,
 			// Q10 and B01 maps carry none of these blocks and place their overlays through a
 			// different pipeline; offering the controls there would promise something that cannot
 			// work.

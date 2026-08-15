@@ -359,5 +359,7 @@
   "ui_map_zones_malformed": "Blok '%s' tej mapy nie został zrozumiany, więc jej ścian i stref nie można tu zmieniać.",
   "ui_map_zones_no_map": "Mapa nie została jeszcze odczytana; ścian i stref nie można tu zmieniać.",
   "ui_map_zones_unreproducible": "Ta mapa zawiera warstwę '%s', której adapter nie potrafi zapisać z powrotem, więc jej ścian i stref nie można tu zmieniać.",
-  "ui_zone_handle_rotate": "Obróć strefę"
+  "ui_zone_handle_rotate": "Obróć strefę",
+  "ui_map_zone_unconfirmed": "Robot nie potwierdził zmiany ścian i stref. Możliwe, że nic się nie zmieniło — sprawdź mapę i dziennik adaptera.",
+  "ui_map_zone_edit_hint": "Przeciągnij, zmień rozmiar lub obróć na mapie. Nic nie trafi do robota przed zapisaniem."
 }
