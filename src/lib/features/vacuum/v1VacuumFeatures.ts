@@ -35,6 +35,18 @@ import { APP_GET_LOCALE, GET_SERIAL_NUMBER, V1DeviceIdentityService } from "./v1
 import { GET_MULTI_MAPS_LIST, V1MapInventoryService } from "./v1MapInventory";
 import { CLOSE_VALLEY_TIMER, GET_VALLEY_TIMER, SET_VALLEY_TIMER, V1OffPeakChargingService } from "./v1OffPeakCharging";
 import {
+	GET_SMART_WASH_PARAMS,
+	GET_WASH_TOWEL_MODE,
+	SET_SMART_WASH_PARAMS,
+	SET_WASH_TOWEL_MODE,
+	V1MopWashSettingsService
+} from "./v1MopWashSettings";
+import {
+	APP_GET_CARPET_DEEP_CLEAN_STATUS,
+	APP_SET_CARPET_DEEP_CLEAN_STATUS,
+	V1CarpetDeepCleanService
+} from "./v1CarpetDeepClean";
+import {
 	APP_RC_END,
 	APP_RC_MOVE,
 	APP_RC_START,
@@ -149,6 +161,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected deviceIdentityService: V1DeviceIdentityService;
 	protected mapInventoryService: V1MapInventoryService;
 	protected offPeakService: V1OffPeakChargingService;
+	protected mopWashSettingsService: V1MopWashSettingsService;
+	protected carpetDeepCleanService: V1CarpetDeepCleanService;
 
 	/**
 	 * Asks the robot which commands it knows, once per adapter run.
@@ -206,6 +220,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.deviceIdentityService = new V1DeviceIdentityService(this.deps, this.duid);
 		this.mapInventoryService = new V1MapInventoryService(this.deps, this.duid);
 		this.offPeakService = new V1OffPeakChargingService(this.deps, this.duid);
+		this.mopWashSettingsService = new V1MopWashSettingsService(this.deps, this.duid);
+		this.carpetDeepCleanService = new V1CarpetDeepCleanService(this.deps, this.duid);
 		// Splitting or merging rooms renumbers the segments, so everything the adapter holds about
 		// them is stale the moment the robot confirms; the service asks for a refresh at that point.
 		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex(), async () => {
@@ -766,6 +782,22 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			// reorder what it was sent, `close_*` says nothing about which window it switched off,
 			// and none of it appears in the status packet.
 			void this.readProbedValue(GET_VALLEY_TIMER, [], (r) => this.offPeakService.applyResponse(r));
+		} else if (finalMethod === GET_WASH_TOWEL_MODE) {
+			await this.mopWashSettingsService.applyWashTowelModeResponse(response);
+		} else if (finalMethod === SET_WASH_TOWEL_MODE) {
+			// Read back for the reason the two dock settings are: neither wash setting appears in the
+			// status packet, so the robot is the only authority on what it really took - and the
+			// picker offers three of five values, so a robot that holds one of the other two would
+			// otherwise keep showing the value that was written rather than the one it has.
+			void this.readProbedValue(GET_WASH_TOWEL_MODE, {}, (r) => this.mopWashSettingsService.applyWashTowelModeResponse(r));
+		} else if (finalMethod === GET_SMART_WASH_PARAMS) {
+			await this.mopWashSettingsService.applySmartWashResponse(response);
+		} else if (finalMethod === SET_SMART_WASH_PARAMS) {
+			void this.readProbedValue(GET_SMART_WASH_PARAMS, {}, (r) => this.mopWashSettingsService.applySmartWashResponse(r));
+		} else if (finalMethod === APP_GET_CARPET_DEEP_CLEAN_STATUS) {
+			await this.carpetDeepCleanService.applyResponse(response);
+		} else if (finalMethod === APP_SET_CARPET_DEEP_CLEAN_STATUS) {
+			void this.readProbedValue(APP_GET_CARPET_DEEP_CLEAN_STATUS, {}, (r) => this.carpetDeepCleanService.applyResponse(r));
 		} else if (finalMethod === GET_MULTI_MAPS_LIST && this.hasFeature(Feature.MapInventory)) {
 			// Guarded on the feature because `V1MapService` asks for the same list on its own and
 			// its answer travels the same path; a robot that was never offered the inventory must
@@ -970,6 +1002,14 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		if (this.offPeakService.handles(method)) {
 			return this.offPeakService.buildCommandParams(method, params);
+		}
+
+		if (this.mopWashSettingsService.handles(method)) {
+			return this.mopWashSettingsService.buildCommandParams(method, params);
+		}
+
+		if (this.carpetDeepCleanService.handles(method)) {
+			return this.carpetDeepCleanService.buildCommandParams(method, params);
 		}
 
 		if (method === "reset_consumable" && id) {
@@ -1791,16 +1831,25 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	 * | Obstacle avoidance | wrapper builds `{status}`, switch computes `on ? 1 : 0` | A65:230180-230192, A65:837660-837680 |
 	 * | Empty mode | picker keys 0/1/2/**4** reach `{mode}` unchanged | A65:438312-438375, A65:230399-230410 |
 	 * | Drying | wrapper composes `{on:{dry_time}, status}`, three call sites agree | A65:230351-230370 |
+	 * | Mop wash mode | wrapper builds `{wash_mode}`, picker keys read one by one | A65:231019-231030, A65:438032-438155 |
+	 * | Mop wash frequency | wrapper builds `{smart_wash, wash_interval}`, four call sites agree | A65:230757-230770 |
+	 * | Deep carpet cleaning | wrapper passes through, **caller** builds `{status: on ? 1 : 0}` | A65:230030-230039, A65:902697-902712 |
 	 * | Time zone, estimate | read-only, nothing is written | — |
 	 *
 	 * The measurement showed the a65 answers all five getters although the adapter offered four of
 	 * the commands to the a179 alone and the empty mode to nobody
 	 * (`_appanalysis/19-geraetefaehigkeiten.md` §4, `_appanalysis/22-einstellungsblock.md`).
 	 *
-	 * Still deliberately absent although the a65 answers their getters: the carpet deep clean status,
-	 * the smart wash parameters and the mop wash mode. Their setters pass their argument straight
-	 * through in the app, so the payload is unread. `get_wash_towel_mode` yes / `get_wash_towel_params`
-	 * no is the standing warning that even neighbours differ.
+	 * **A correction, because this comment used to say the opposite.** It claimed the last three were
+	 * left out because "their setters pass their argument straight through in the app, so the payload
+	 * is unread". That is true of exactly one of them, `app_set_carpet_deep_clean_status`
+	 * (A65:230030-230039). The other two build their payload inside the wrapper and always did, and
+	 * the reason held both of them back for nothing. What was really missing was the **value range**,
+	 * not the payload shape - see `v1MopWashSettings.ts` for the picker each value is read from, and
+	 * `v1CarpetDeepClean.ts` for the caller that had to supply what its wrapper does not.
+	 *
+	 * `get_wash_towel_mode` yes / `get_wash_towel_params` no remains the standing warning that even
+	 * neighbours differ, which is why each of the three is unlocked by its own getter.
 	 */
 	protected override async detectProbedCapabilities(): Promise<void> {
 		await this.probeAndApply(GET_TIMEZONE, [], Feature.RobotTimezone, GET_TIMEZONE);
@@ -1814,6 +1863,51 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		await this.probeAndApply(GET_SERIAL_NUMBER, [], Feature.DeviceIdentity, GET_SERIAL_NUMBER);
 		await this.probeAndApply(GET_MULTI_MAPS_LIST, [], Feature.MapInventory, GET_MULTI_MAPS_LIST);
 		await this.probeAndApply(GET_VALLEY_TIMER, [], Feature.OffPeakCharging, SET_VALLEY_TIMER);
+		// All three send `{}` rather than `[]`, read off their own wrappers - A65:229273-229282,
+		// A65:229016-229025 and A65:228301-228310.
+		await this.probeAndApply(GET_WASH_TOWEL_MODE, {}, Feature.WashTowelMode, SET_WASH_TOWEL_MODE);
+		await this.probeAndApply(GET_SMART_WASH_PARAMS, {}, Feature.SmartWash, SET_SMART_WASH_PARAMS);
+		await this.probeAndApply(APP_GET_CARPET_DEEP_CLEAN_STATUS, {}, Feature.CarpetDeepClean, APP_SET_CARPET_DEEP_CLEAN_STATUS);
+	}
+
+	/**
+	 * Publishes how thoroughly the dock washes the mop, and reads its current position once.
+	 *
+	 * Read at start-up because the mode is in no status packet: a picker showing its first entry on
+	 * a robot set to something else is the same lie as a dead switch. Which values are offered, and
+	 * why two of the five are not, is in `v1MopWashSettings.ts`.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.WashTowelMode)
+	public async initWashTowelMode(): Promise<void> {
+		this.mopWashSettingsService.registerWashTowelModeCommands((name, spec, group) => this.addCommand(name, spec, group));
+		void this.readProbedValue(GET_WASH_TOWEL_MODE, {}, (response) => this.mopWashSettingsService.applyWashTowelModeResponse(response));
+	}
+
+	/**
+	 * Publishes how often the robot returns to wash the mop, and reads it once.
+	 *
+	 * One service holds both wash settings but registers them separately, and that has to stay that
+	 * way: `probeAndApply` skips a capability whose command is already registered, so a shared
+	 * registration would let the mode's probe swallow this one - the frequency would never be asked
+	 * about and would silently never appear. It is also the honest split, since a robot can answer
+	 * one of the two getters and not the other.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.SmartWash)
+	public async initSmartWash(): Promise<void> {
+		this.mopWashSettingsService.registerSmartWashCommands((name, spec, group) => this.addCommand(name, spec, group));
+		void this.readProbedValue(GET_SMART_WASH_PARAMS, {}, (response) => this.mopWashSettingsService.applySmartWashResponse(response));
+	}
+
+	/**
+	 * Publishes the deep carpet cleaning switch and reads its position once.
+	 *
+	 * The switch is not in the status packet either, and a switch that shows "off" on a robot that
+	 * has it on would invite the user to turn on what is already running.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.CarpetDeepClean)
+	public async initCarpetDeepClean(): Promise<void> {
+		this.carpetDeepCleanService.registerCommands((name, spec, group) => this.addCommand(name, spec, group));
+		void this.readProbedValue(APP_GET_CARPET_DEEP_CLEAN_STATUS, {}, (response) => this.carpetDeepCleanService.applyResponse(response));
 	}
 
 	/**

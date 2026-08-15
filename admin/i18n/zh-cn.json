@@ -402,5 +402,10 @@
   "ui_segment_edit_warning": "合并分割后，与所选区域相关配置和定时失效",
   "ui_map_room_split": "房间拆分",
   "ui_map_room_merge": "房间合并",
-  "ui_rooms_merge_needs_two": "在地图上至少选择 %s 个房间才能合并。"
+  "ui_rooms_merge_needs_two": "在地图上至少选择 %s 个房间才能合并。",
+  "ui_clean_order": "清扫顺序",
+  "ui_clean_order_none": "未设置——由扫地机决定。",
+  "ui_clean_order_set": "使用所选顺序",
+  "ui_clean_order_clear": "清空",
+  "ui_clean_order_needs_rooms": "在地图上按希望的清扫顺序依次选择房间。"
 }

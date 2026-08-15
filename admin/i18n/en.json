@@ -402,5 +402,10 @@
   "ui_segment_edit_warning": "After combining or dividing rooms, all related settings and schedules become invalid.",
   "ui_map_room_split": "Divide",
   "ui_map_room_merge": "Combine",
-  "ui_rooms_merge_needs_two": "Pick at least %s rooms on the map to combine them."
+  "ui_rooms_merge_needs_two": "Pick at least %s rooms on the map to combine them.",
+  "ui_clean_order": "Cleaning order",
+  "ui_clean_order_none": "None set - the robot decides.",
+  "ui_clean_order_set": "Use the selection",
+  "ui_clean_order_clear": "Clear",
+  "ui_clean_order_needs_rooms": "Pick the rooms on the map, in the order they should be cleaned."
 }

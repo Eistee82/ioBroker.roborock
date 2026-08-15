@@ -37,6 +37,12 @@ export enum Feature {
 	DeviceIdentity = "DeviceIdentity", // Adds the serial number and the locale block, read-only
 	MapInventory = "MapInventory", // Adds which map is loaded and what backups exist, read-only
 	OffPeakCharging = "OffPeakCharging", // Adds the window in which the robot may fully charge
+	// The dock's two mop wash settings. Two features and not one, because the measurement showed
+	// neighbouring commands of the same function group answer differently on the same robot -
+	// `get_wash_towel_mode` yes, `get_wash_towel_params` no. Each is unlocked by its own getter.
+	WashTowelMode = "WashTowelMode", // Adds how thoroughly the dock washes the mop
+	SmartWash = "SmartWash", // Adds how often the robot returns to wash the mop
+	CarpetDeepClean = "CarpetDeepClean", // Adds the switch for re-cleaning carpets after a room clean
 	// Not a probe: the four `app_rc_*` calls are all actions, and a capability probe may only send a
 	// `get_*` (capabilityProbe.ts). The robot reports this one itself, as firmware feature 125 - the
 	// same number the app reads in `isRemoteSupported()`. See lib/features/vacuum/remoteControl.ts.

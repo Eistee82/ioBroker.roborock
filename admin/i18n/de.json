@@ -402,5 +402,10 @@
   "ui_segment_edit_warning": "Nach dem Kombinieren oder Aufteilen von Räumen werden alle zugehörigen Einstellungen und Zeitpläne ungültig.",
   "ui_map_room_split": "Unterteilen",
   "ui_map_room_merge": "Zusammenführen",
-  "ui_rooms_merge_needs_two": "Mindestens %s Räume auf der Karte auswählen, um sie zu kombinieren."
+  "ui_rooms_merge_needs_two": "Mindestens %s Räume auf der Karte auswählen, um sie zu kombinieren.",
+  "ui_clean_order": "Reinigungsreihenfolge",
+  "ui_clean_order_none": "Keine festgelegt — der Roboter entscheidet.",
+  "ui_clean_order_set": "Auswahl übernehmen",
+  "ui_clean_order_clear": "Löschen",
+  "ui_clean_order_needs_rooms": "Die Räume auf der Karte in der Reihenfolge auswählen, in der sie gereinigt werden sollen."
 }

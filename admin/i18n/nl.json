@@ -402,5 +402,10 @@
   "ui_segment_edit_warning": "Na het samenvoegen of opsplitsen van kamers worden alle gerelateerde instellingen en planningen ongeldig.",
   "ui_map_room_split": "Opsplitsen",
   "ui_map_room_merge": "Samenvoegen",
-  "ui_rooms_merge_needs_two": "Selecteer minstens %s kamers op de kaart om ze samen te voegen."
+  "ui_rooms_merge_needs_two": "Selecteer minstens %s kamers op de kaart om ze samen te voegen.",
+  "ui_clean_order": "Schoonmaakvolgorde",
+  "ui_clean_order_none": "Niet ingesteld — de robot beslist.",
+  "ui_clean_order_set": "Selectie gebruiken",
+  "ui_clean_order_clear": "Wissen",
+  "ui_clean_order_needs_rooms": "Selecteer de kamers op de kaart in de volgorde waarin ze moeten worden schoongemaakt."
 }

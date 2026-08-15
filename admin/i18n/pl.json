@@ -402,5 +402,10 @@
   "ui_segment_edit_warning": "Po połączeniu lub podzieleniu pomieszczeń wszystkie powiązane ustawienia i harmonogramy staną się nieważne.",
   "ui_map_room_split": "Podziel",
   "ui_map_room_merge": "Scal",
-  "ui_rooms_merge_needs_two": "Wybierz na mapie co najmniej %s pokoje, aby je połączyć."
+  "ui_rooms_merge_needs_two": "Wybierz na mapie co najmniej %s pokoje, aby je połączyć.",
+  "ui_clean_order": "Kolejność sprzątania",
+  "ui_clean_order_none": "Nie ustawiono — decyduje robot.",
+  "ui_clean_order_set": "Użyj zaznaczenia",
+  "ui_clean_order_clear": "Wyczyść",
+  "ui_clean_order_needs_rooms": "Wybierz pokoje na mapie w kolejności, w jakiej mają być sprzątane."
 }

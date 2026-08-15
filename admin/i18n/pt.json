@@ -402,5 +402,10 @@
   "ui_segment_edit_warning": "Após a combinação ou divisão de divisões, todas as definições e programações relacionadas deixam de ser válidas.",
   "ui_map_room_split": "Dividir",
   "ui_map_room_merge": "Juntar",
-  "ui_rooms_merge_needs_two": "Selecione pelo menos %s divisões no mapa para as combinar."
+  "ui_rooms_merge_needs_two": "Selecione pelo menos %s divisões no mapa para as combinar.",
+  "ui_clean_order": "Ordem de limpeza",
+  "ui_clean_order_none": "Nenhuma definida — o robô decide.",
+  "ui_clean_order_set": "Usar a seleção",
+  "ui_clean_order_clear": "Limpar",
+  "ui_clean_order_needs_rooms": "Selecione as divisões no mapa pela ordem em que devem ser limpas."
 }

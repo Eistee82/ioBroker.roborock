@@ -402,5 +402,10 @@
   "ui_segment_edit_warning": "Dopo avere combinato o diviso delle stanze, tutte le impostazioni e i programmi relativi non saranno più validi.",
   "ui_map_room_split": "Dividi",
   "ui_map_room_merge": "Unisci",
-  "ui_rooms_merge_needs_two": "Seleziona almeno %s stanze sulla mappa per combinarle."
+  "ui_rooms_merge_needs_two": "Seleziona almeno %s stanze sulla mappa per combinarle.",
+  "ui_clean_order": "Ordine di pulizia",
+  "ui_clean_order_none": "Nessuno impostato: decide il robot.",
+  "ui_clean_order_set": "Usa la selezione",
+  "ui_clean_order_clear": "Cancella",
+  "ui_clean_order_needs_rooms": "Seleziona le stanze sulla mappa nell'ordine in cui devono essere pulite."
 }

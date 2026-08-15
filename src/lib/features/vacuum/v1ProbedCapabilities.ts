@@ -423,7 +423,7 @@ function unwrapPayload(response: unknown): unknown {
  * @param value Raw value.
  * @returns 1 for on, 0 for off.
  */
-function toBooleanFlag(value: unknown): number {
+export function toBooleanFlag(value: unknown): number {
 	if (typeof value === "string") {
 		const text = value.trim().toLowerCase();
 		if (text === "" || text === "false" || text === "0" || text === "off" || text === "no") return 0;
