@@ -197,6 +197,25 @@ das geschieht in der Roborock-App unter *Bodenbelag bearbeiten*. Der Schalter hi
 Verhalten ein; die Richtungen kann er nicht setzen, weil die beiden Werte, die jener Befehl trägt,
 nicht belegt sind.
 
+Die **Lautstärke** der Roboterstimme ist im selben Feld ein Schieberegler, und ein Knopf daneben im
+Ordner `commands` lässt den Roboter einmal sprechen, damit sich die Einstellung hören lässt.
+Erwähnenswert ist, woher der Bereich kommt: Der Regler der Roborock-App ist enger als der Befehl
+zulässt, und wie eng, hängt vom Modell ab — beim Testgerät läuft er von 30 bis 90 in Schritten von
+5. Der Adapter bietet stattdessen **0 bis 100** an, denn das ist der Bereich, den die App auf ihrem
+Zahleneingabeweg selbst prüft, bevor sie sendet. Das modellabhängige Fenster wird bewusst nicht
+übernommen — einen Wertebereich an einen Modellnamen zu binden ist genau das Kriterium, das dieser
+Adapter abbaut. Lehnt ein Roboter einen Wert außerhalb seines eigenen Fensters ab, meldet er das,
+und die Kommandoprüfung schreibt es auf.
+
+Unter **Geräteinformationen** erscheinen die **Seriennummer** des Roboters und sein **Regionsblock**,
+beides rein lesend und beides nur bei einem Roboter, der darauf antwortet: das verwendete
+Sprachpaket, Roborocks `bom`-Zeichenkette, die Region, die Sprache seiner Stimme und die Zeitzone,
+in der er seine Uhr führt. Zwei Dinge sind Absicht. Das `bom` steht unter diesem Namen und nicht als
+„Firmware-Version", denn das Testgerät meldet Firmware `V02.26.80` **und** `bom: A.03.0309` — zwei
+verschiedene Zeichenketten für einen Roboter, und nichts belegt, welche Roborock als Version meint.
+Und die Seriennummer taucht in keiner Logzeile auf, auch nicht auf Debug-Ebene: sie bezeichnet genau
+eine Maschine.
+
 Unter **Reinigungsinformationen** liegt außerdem die **Restschätzung** des Roboters: geschätzte
 Gesamt- und Restfläche, Gesamt- und Restdauer, Fortschritt in Prozent, der für die Restfläche
 erwartete Akkuverbrauch sowie Zeit und Akku je Quadratmeter. Diese Werte ergeben nur während eines
