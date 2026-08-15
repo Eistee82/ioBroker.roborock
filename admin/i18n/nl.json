@@ -390,5 +390,9 @@
   "ui_remote_back_left": "Achteruit links",
   "ui_remote_back_right": "Achteruit rechts",
   "clean_sequence": "Schoonmaakvolgorde in de robot (segment-ID's, leeg betekent dat de robot beslist)",
-  "ui_floor_active": "robot is hier"
+  "ui_floor_active": "robot is hier",
+  "ui_map2d": "2D-kaart",
+  "ui_map3d": "3D-kaart",
+  "ui_map3d_loading": "3D-weergave wordt geladen…",
+  "ui_map3d_failed": "De 3D-weergave kon niet starten; de 2D-kaart wordt getoond."
 }

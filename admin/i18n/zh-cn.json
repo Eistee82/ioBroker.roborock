@@ -390,5 +390,9 @@
   "ui_remote_back_left": "左后",
   "ui_remote_back_right": "右后",
   "clean_sequence": "扫地机保存的清扫顺序（房间 ID，为空表示由扫地机决定）",
-  "ui_floor_active": "机器人在此"
+  "ui_floor_active": "机器人在此",
+  "ui_map2d": "二维地图",
+  "ui_map3d": "三维地图",
+  "ui_map3d_loading": "正在加载三维视图…",
+  "ui_map3d_failed": "三维视图无法启动，显示二维地图。"
 }

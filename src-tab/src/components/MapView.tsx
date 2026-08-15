@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Box, MenuItem, Snackbar, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, MenuItem, Snackbar, Stack, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography, useTheme } from "@mui/material";
+import ViewInArIcon from "@mui/icons-material/ViewInAr";
+import MapIcon from "@mui/icons-material/Map";
 import { I18n, type AdminConnection } from "@iobroker/adapter-react-v5";
 import { MapEngine } from "../engine/MapEngine";
 import { EMPTY_DOCK_ACTIVITY } from "../engine/dockActivity";
@@ -39,6 +41,11 @@ import { CommandFeedbackSource } from "../feedback/commandFeedbackSource";
 import { formatFeedbackMessage } from "../feedback/commandFeedback";
 import type { CommandFeedbackSeverity } from "../feedback/commandFeedback";
 import { ActiveFloorSource } from "../map/activeFloorSource";
+import { Map3DSource } from "../map3d/map3dSource";
+import { Map3DView } from "../map3d/Map3DView";
+import { isWebGLAvailable } from "../map3d/webgl";
+import type { Map3DModel } from "../map3d/map3dModel";
+import type { ScenePalette } from "../map3d/scene";
 import { RemotePad } from "./RemotePad";
 import { EMPTY_REMOTE, RemoteDriver } from "../remote/remoteDriver";
 import type { RemoteDriverModel } from "../remote/remoteDriver";
@@ -115,6 +122,7 @@ function createEngineConnection(socket: AdminConnection): EngineConnection {
 export function MapView({ socket, instanceId, language }: MapViewProps): React.JSX.Element {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const engineRef = useRef<MapEngine | null>(null);
+	const theme = useTheme();
 
 	const [robots, setRobots] = useState<RobotEntry[]>([]);
 	const [selectedRobot, setSelectedRobot] = useState<string>("");
@@ -156,6 +164,9 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [remote, setRemote] = useState<RemoteDriverModel>(EMPTY_REMOTE);
 	// Which floor the robot itself is on; null when it does not report one.
 	const [activeFloor, setActiveFloor] = useState<number | null>(null);
+	// The 3D view: whether it is on, and what it would draw. `null` means nothing drawable yet.
+	const [show3D, setShow3D] = useState(false);
+	const [map3d, setMap3d] = useState<Map3DModel | null>(null);
 
 	const connection = useMemo(() => createEngineConnection(socket), [socket]);
 	const historySourceRef = useRef<CleaningHistorySource | null>(null);
@@ -163,6 +174,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const feedbackSourceRef = useRef<CommandFeedbackSource | null>(null);
 	const remoteDriverRef = useRef<RemoteDriver | null>(null);
 	const activeFloorRef = useRef<ActiveFloorSource | null>(null);
+	const map3dRef = useRef<Map3DSource | null>(null);
 
 	/** Everything the tab itself could not do; always an error, never an open question. */
 	const showError = useCallback((message: string) => {
@@ -347,6 +359,45 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 		void activeFloorRef.current?.setDevice(instanceId, selectedRobot);
 	}, [connection, instanceId, selectedRobot]);
 
+	/*
+	 * The 3D view reads the same two map states the engine does; see `map3d/map3dSource.ts`. It runs
+	 * whether or not 3D is switched on, which costs one more subscriber and nothing else, and means
+	 * the button knows in advance whether it would have anything to show.
+	 */
+	useEffect(() => {
+		const source = new Map3DSource(connection, { onModel: setMap3d });
+		map3dRef.current = source;
+
+		return () => {
+			source.destroy();
+			map3dRef.current = null;
+		};
+	}, [connection]);
+
+	useEffect(() => {
+		void map3dRef.current?.setDevice(instanceId, selectedRobot);
+	}, [connection, instanceId, selectedRobot]);
+
+	/** Back to 2D, with the reason in the snackbar; see `Map3DView` for what can fail. */
+	const on3DUnavailable = useCallback((reason: string) => {
+		setShow3D(false);
+		showError(`${I18n.t("ui_map3d_failed")} ${reason}`);
+	}, [showError]);
+
+	/**
+	 * Colours for the 3D scene.
+	 *
+	 * Taken from the same MUI theme the rest of the page uses rather than from the map's own colour
+	 * scheme: the floor already carries the map's colours as its texture, and everything around it -
+	 * background, walls, markers - belongs to the admin's light or dark mode.
+	 */
+	const scenePalette = useMemo<ScenePalette>(() => ({
+		background: theme.palette.background.default,
+		wall: theme.palette.mode === "dark" ? "#5a6270" : "#b8bec9",
+		robot: theme.palette.primary.main,
+		charger: theme.palette.mode === "dark" ? "#8f96a3" : "#7c8494"
+	}), [theme]);
+
 	const writeSetting = useCallback((write: SettingWrite) => {
 		void settingsSourceRef.current?.apply(write);
 	}, []);
@@ -363,7 +414,19 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			<Box
 				className="rr-map-host"
 				ref={hostRef}
+				// Hidden rather than unmounted while 3D is showing: the engine holds the D3 selection,
+				// the zoom transform and every subscription, and tearing it down for a view change
+				// would rebuild all of it - and lose the zoom - on the way back.
+				sx={show3D ? { visibility: "hidden" } : undefined}
 			/>
+
+			{show3D && map3d ? (
+				<Map3DView
+					model={map3d}
+					palette={scenePalette}
+					onUnavailable={on3DUnavailable}
+				/>
+			) : null}
 
 			{!hasMap ? (
 				<Box
@@ -461,7 +524,40 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				 * painted by the adapter in the app's palette, is the only one there is. A key
 				 * explaining colours nobody can see would be its own kind of wrong.
 				 */}
-				<FloatingSurface sx={{ ml: "auto" }}>
+				{/*
+				 * Top right, next to the status: 2D or 3D.
+				 *
+				 * Only offered when there is something to show and the browser can show it. A robot
+				 * without a map has no 3D view either, and on a browser without WebGL the button
+				 * would lead to a black rectangle - so it is absent rather than disabled, the same
+				 * rule every other control on this page follows.
+				 */}
+				{map3d && isWebGLAvailable() ? (
+					<FloatingSurface sx={{ ml: "auto" }}>
+						<ToggleButtonGroup
+							size="small"
+							exclusive
+							value={show3D ? "3d" : "2d"}
+							onChange={(_event, next) => {
+								if (next === "2d" || next === "3d") setShow3D(next === "3d");
+							}}
+							sx={{ p: 0.5 }}
+						>
+							<ToggleButton value="2d" aria-label={I18n.t("ui_map2d")}>
+								<Tooltip title={I18n.t("ui_map2d")}>
+									<MapIcon fontSize="small" />
+								</Tooltip>
+							</ToggleButton>
+							<ToggleButton value="3d" aria-label={I18n.t("ui_map3d")}>
+								<Tooltip title={I18n.t("ui_map3d")}>
+									<ViewInArIcon fontSize="small" />
+								</Tooltip>
+							</ToggleButton>
+						</ToggleButtonGroup>
+					</FloatingSurface>
+				) : null}
+
+				<FloatingSurface sx={map3d && isWebGLAvailable() ? undefined : { ml: "auto" }}>
 					<StatusStrip
 						status={status}
 						onResetZoom={() => engineRef.current?.resetZoom()}

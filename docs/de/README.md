@@ -222,6 +222,28 @@ Zahleneingabeweg selbst prüft, bevor sie sendet. Das modellabhängige Fenster w
 Adapter abbaut. Lehnt ein Roboter einen Wert außerhalb seines eigenen Fensters ab, meldet er das,
 und die Kommandoprüfung schreibt es auf.
 
+### Die 3D-Karte
+
+Ein Schalter oben rechts kippt die Karte: **2D** ist das Bild, das der Adapter seit jeher zeichnet,
+**3D** dieselbe Karte als Boden mit aufgestellten Wänden. Ziehen dreht, Scrollen oder Aufziehen
+zoomt, zwei Finger verschieben.
+
+Was zu sehen ist, bleibt ehrlich gegenüber dem, was die Daten hergeben. Der Boden **ist** die
+2D-Karte, flach gelegt und als Textur verwendet — genau das tut auch die Roborock-App. Die Wände
+sind je ein Quader auf jeder Zelle, die der Roboter als belegt kartiert hat, alle 500 mm hoch; das
+ist die feste Höhe der App. Der Roboter misst nicht, wie hoch eine Wand ist, also kann es hier
+niemand. Roboter und Station stehen als einfache Körper an ihrer gemeldeten Position. Möbel, Zonen
+und der Fahrweg sind noch nicht dabei.
+
+Zwei Dinge sind erwähnenswert:
+
+- **Es kostet nichts, solange man es nicht benutzt.** Die 3D-Bibliothek wird erst beim ersten Druck
+  auf den Schalter geladen und vorher nie. Eine Installation, die bei 2D bleibt, lädt rund 12 KB
+  mehr als bisher, nicht 700.
+- **Der Schalter erscheint nur, wenn er funktionieren kann.** Ein Browser ohne WebGL — verbreitet in
+  Kiosk-Aufbauten und in Containern ohne GPU-Zugriff — bekommt keinen Schalter statt einer schwarzen
+  Fläche. Scheitert die Ansicht trotzdem beim Start, kehrt der Tab zu 2D zurück und sagt warum.
+
 Bei einem Roboter mit mehreren Karten **markiert die Etagenauswahl jetzt die Etage, auf der der
 Roboter tatsächlich steht**. Beides fällt auseinander, sobald man den Keller ansieht, während der
 Roboter das Erdgeschoss reinigt — und bisher sagte nichts, was was ist. Daneben veröffentlicht der

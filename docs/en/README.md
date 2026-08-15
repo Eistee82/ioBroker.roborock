@@ -208,6 +208,27 @@ model-dependent window is deliberately not copied, because binding a range to a 
 exactly the criterion this adapter has been removing. A robot that refuses a value outside its own
 comfort window says so, and the command check reports it.
 
+### The 3D map
+
+A switch at the top right turns the map on its side: **2D** is the picture the adapter has always
+drawn, **3D** is the same map as a floor with the walls standing on it. Drag to orbit, pinch or
+scroll to zoom, two fingers to pan.
+
+What it shows is honest about what the data supports. The floor **is** the 2D map, laid flat and
+used as a texture — exactly what the Roborock app does. The walls are one box per cell the robot
+mapped as occupied, all of them 500 mm tall, which is the app's own fixed height; the robot does not
+measure how high a wall is, so nothing here can. Robot and dock appear as simple bodies at their
+reported positions. Furniture, zones and the cleaning path are not in it yet.
+
+Two things are worth knowing:
+
+- **It costs nothing until you use it.** The 3D library is fetched the first time you press the
+  button and never before, so an installation that stays in 2D downloads about 12 KB more than
+  before, not 700.
+- **The button only appears when it can work.** A browser without WebGL — common in kiosk setups
+  and in containers without GPU access — gets no button rather than a black rectangle. If the view
+  fails while starting anyway, the tab returns to 2D and says why.
+
 On a robot with more than one map, **the floor selector now marks the floor the robot is actually
 on**. Those two things come apart the moment you look at the cellar while the robot cleans the
 ground floor, and until now nothing said which was which. Beside it, under **map inventory**, the

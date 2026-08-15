@@ -390,5 +390,9 @@
   "ui_remote_back_left": "Назад влево",
   "ui_remote_back_right": "Назад вправо",
   "clean_sequence": "Порядок уборки в роботе (ID сегментов, пусто — робот решает сам)",
-  "ui_floor_active": "робот здесь"
+  "ui_floor_active": "робот здесь",
+  "ui_map2d": "2D-карта",
+  "ui_map3d": "3D-карта",
+  "ui_map3d_loading": "Загрузка 3D-вида…",
+  "ui_map3d_failed": "3D-вид не запустился; показана 2D-карта."
 }

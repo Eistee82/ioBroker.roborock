@@ -390,5 +390,9 @@
   "ui_remote_back_left": "Back left",
   "ui_remote_back_right": "Back right",
   "clean_sequence": "Cleaning order the robot holds (segment IDs, empty means the robot decides)",
-  "ui_floor_active": "robot is here"
+  "ui_floor_active": "robot is here",
+  "ui_map2d": "2D map",
+  "ui_map3d": "3D map",
+  "ui_map3d_loading": "Loading the 3D view…",
+  "ui_map3d_failed": "The 3D view could not start; showing the 2D map."
 }

@@ -390,5 +390,9 @@
   "ui_remote_back_left": "Reculer à gauche",
   "ui_remote_back_right": "Reculer à droite",
   "clean_sequence": "Ordre de nettoyage enregistré dans le robot (ID de segments, vide = le robot décide)",
-  "ui_floor_active": "le robot est ici"
+  "ui_floor_active": "le robot est ici",
+  "ui_map2d": "Carte 2D",
+  "ui_map3d": "Carte 3D",
+  "ui_map3d_loading": "Chargement de la vue 3D…",
+  "ui_map3d_failed": "La vue 3D n'a pas pu démarrer ; la carte 2D est affichée."
 }

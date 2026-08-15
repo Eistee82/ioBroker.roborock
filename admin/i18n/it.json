@@ -390,5 +390,9 @@
   "ui_remote_back_left": "Indietro a sinistra",
   "ui_remote_back_right": "Indietro a destra",
   "clean_sequence": "Ordine di pulizia memorizzato nel robot (ID dei segmenti, vuoto significa che decide il robot)",
-  "ui_floor_active": "il robot è qui"
+  "ui_floor_active": "il robot è qui",
+  "ui_map2d": "Mappa 2D",
+  "ui_map3d": "Mappa 3D",
+  "ui_map3d_loading": "Caricamento della vista 3D…",
+  "ui_map3d_failed": "La vista 3D non è partita; viene mostrata la mappa 2D."
 }

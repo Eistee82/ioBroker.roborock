@@ -390,5 +390,9 @@
   "ui_remote_back_left": "Rückwärts links",
   "ui_remote_back_right": "Rückwärts rechts",
   "clean_sequence": "Reinigungsreihenfolge des Roboters (Segment-IDs, leer heißt der Roboter entscheidet)",
-  "ui_floor_active": "Roboter ist hier"
+  "ui_floor_active": "Roboter ist hier",
+  "ui_map2d": "2D-Karte",
+  "ui_map3d": "3D-Karte",
+  "ui_map3d_loading": "3D-Ansicht wird geladen …",
+  "ui_map3d_failed": "Die 3D-Ansicht konnte nicht starten; es wird die 2D-Karte gezeigt."
 }
