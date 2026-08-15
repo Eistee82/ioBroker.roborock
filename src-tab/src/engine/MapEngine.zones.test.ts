@@ -153,3 +153,46 @@ describe("the handles under a zoom", () => {
 		expect(handles.style.display).toBe("");
 	});
 });
+
+/**
+ * Where the zone layer sits among the others.
+ *
+ * SVG paints in document order, so the group order in `MapEngine.setupSvg` decides what covers
+ * what. This was wrong in the field: a no-go zone read off the map was painted over the rectangle
+ * the user had drawn on top of it.
+ *
+ * The order is asserted here rather than left to the reading of one `append` chain, because the
+ * consequence is not cosmetic - the handles sit outside the rectangle, and any group drawn later
+ * takes their clicks.
+ */
+describe("layer order", () => {
+	/** Class names of the engine's own groups, in the order they are painted. */
+	function layerOrder(): string[] {
+		const main = document.querySelector("svg g") as SVGGElement | null;
+		if (!main) return [];
+		return Array.from(main.children)
+			.filter(child => child.tagName === "g")
+			.map(child => child.getAttribute("class") ?? "");
+	}
+
+	it("puts the drawn zones last, above the no-go zones read off the map", async () => {
+		await startEngine();
+		const order = layerOrder();
+
+		expect(order).toContain("zones");
+		expect(order).toContain("zones-overlay");
+		expect(order.indexOf("zones")).toBeGreaterThan(order.indexOf("zones-overlay"));
+	});
+
+	it("leaves nothing on top of the zones that could take a handle's click", async () => {
+		await startEngine();
+		const order = layerOrder();
+
+		// Not "above these three" but "above everything": a layer added later would silently end up
+		// over the handles again, and this is the assertion that notices.
+		expect(order[order.length - 1]).toBe("zones");
+		for (const covered of ["robot", "live-robot-marker", "pins", "room-names", "obstacles", "charger"]) {
+			expect(order.indexOf(covered)).toBeLessThan(order.indexOf("zones"));
+		}
+	});
+});

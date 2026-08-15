@@ -774,13 +774,28 @@ export class MapEngine {
 
 		this.chargerGroup = this.mainGroup.append("g").attr("class", "charger");
 		this.obstacleGroup = this.mainGroup.append("g").attr("class", "obstacles");
-		this.zoneGroup = this.mainGroup.append("g").attr("class", "zones");
 		this.zonesOverlayGroup = this.mainGroup.append("g").attr("class", "zones-overlay");
 		this.robotGroup = this.mainGroup.append("g").attr("class", "robot");
 		// Directly above the map's own robot, which is hidden while a live position exists.
 		this.liveRobotGroup = this.mainGroup.append("g").attr("class", "live-robot-marker");
 		this.pinGroup = this.mainGroup.append("g").attr("class", "pins");
 		this.roomNameGroup = this.mainGroup.append("g").attr("class", "room-names");
+
+		// The zones the user draws go last, and therefore on top of everything else.
+		//
+		// SVG has no z-index: what is painted last wins, and the group order here *is* that order.
+		// The zones used to sit below `zones-overlay`, so a no-go zone read off the map covered the
+		// rectangle drawn over it - reported from the field as "die zonen rahmen liegen unter den
+		// sperrzonen".
+		//
+		// Being on top is not cosmetic here. This is the only group the user manipulates: the body
+		// takes a drag, and the three handles sit *outside* the rectangle, where any later group
+		// would swallow the click before it arrives. A handle that cannot be hit is a handle that
+		// does not exist, so the layer that is operated has to be the layer nothing covers.
+		//
+		// The cost is that a room label under a zone is no longer clickable. That is the right way
+		// round: where a zone lies, the zone is what the user means.
+		this.zoneGroup = this.mainGroup.append("g").attr("class", "zones");
 
 		this.pinGroup
 			.append("image")
