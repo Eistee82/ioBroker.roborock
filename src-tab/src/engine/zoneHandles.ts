@@ -137,6 +137,24 @@ export const ZONE_HANDLE_GLYPHS: Record<ZoneHandleKind, string> = {
 	move: "M10 9h4V6h3l-5-5-5 5h3zm-1 1H6V7l-5 5 5 5v-3h3zm14 2-5-5v3h-3v4h3v3zm-9 3h-4v3H7l5 5 5-5h-3z",
 };
 
+/**
+ * Rotation of each glyph inside its own 24 × 24 box, in degrees.
+ *
+ * `OpenInFull` is drawn along the bottom-left/top-right diagonal, but the scale handle sits on the
+ * bottom-**right** corner, where the diagonal runs the other way - the arrows pointed across the
+ * corner they belong to instead of along it. A quarter turn puts them on the corner's own
+ * diagonal, which is also the one the `nwse-resize` cursor shows.
+ *
+ * Rotating beats a second path string: the glyph stays the Material icon that
+ * `zoneHandles.icons.test.tsx` compares against, so a package update still fails a test instead
+ * of silently leaving the map behind.
+ */
+export const ZONE_HANDLE_GLYPH_ROTATION: Record<ZoneHandleKind, number> = {
+	delete: 0,
+	scale: 90,
+	move: 0,
+};
+
 /** Translation key of each handle's tooltip. */
 export const ZONE_HANDLE_LABEL_KEYS: Record<ZoneHandleKind, string> = {
 	delete: "ui_zone_handle_delete",
@@ -265,8 +283,13 @@ export function renderZoneHandles<Datum extends ZoneHandleRect>(
 				.attr("class", "zone-handle-glyph")
 				.attr("d", ZONE_HANDLE_GLYPHS[kind])
 				// The Material box is 24 × 24 with its origin in the corner; the handle group has
-				// its origin in the centre.
-				.attr("transform", `translate(${-ZONE_HANDLE_ICON_PX / 2}, ${-ZONE_HANDLE_ICON_PX / 2})`);
+				// its origin in the centre. The rotation below is applied first (it is written
+				// last), so it turns the glyph about its own middle rather than about the corner.
+				.attr(
+					"transform",
+					`translate(${-ZONE_HANDLE_ICON_PX / 2}, ${-ZONE_HANDLE_ICON_PX / 2})` +
+						(ZONE_HANDLE_GLYPH_ROTATION[kind] ? ` rotate(${ZONE_HANDLE_GLYPH_ROTATION[kind]} 12 12)` : "")
+				);
 		}
 
 		// Delete is a click. The pointer press has to stop here, or it would reach the zone group

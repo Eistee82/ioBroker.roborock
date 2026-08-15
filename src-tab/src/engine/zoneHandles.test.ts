@@ -14,6 +14,7 @@ import zhCn from "@i18n/zh-cn.json";
 import {
 	layoutZoneHandles,
 	renderZoneHandles,
+	ZONE_HANDLE_GLYPH_ROTATION,
 	ZONE_HANDLE_HIT_PX,
 	ZONE_HANDLE_ICON_PX,
 	ZONE_HANDLE_LEASH_PX,
@@ -209,9 +210,13 @@ describe("renderZoneHandles", () => {
 			expect(handle).not.toBeNull();
 			expect(handle.querySelector("circle.zone-handle-hit")?.getAttribute("r")).toBe(String(ZONE_HANDLE_HIT_PX / 2));
 			expect(handle.querySelector("path.zone-handle-glyph")?.getAttribute("d")).toBeTruthy();
-			// The glyph is drawn in Material's 24 × 24 box and shifted onto the group's centre.
+			// The glyph is drawn in Material's 24 × 24 box and shifted onto the group's centre,
+			// plus the per-glyph rotation - the scale arrows have to run along the corner they sit
+			// on, not across it.
+			const rotation = ZONE_HANDLE_GLYPH_ROTATION[kind as keyof typeof ZONE_HANDLE_GLYPH_ROTATION];
 			expect(handle.querySelector("path.zone-handle-glyph")?.getAttribute("transform")).toBe(
-				`translate(${-ZONE_HANDLE_ICON_PX / 2}, ${-ZONE_HANDLE_ICON_PX / 2})`,
+				`translate(${-ZONE_HANDLE_ICON_PX / 2}, ${-ZONE_HANDLE_ICON_PX / 2})` +
+					(rotation ? ` rotate(${rotation} 12 12)` : ""),
 			);
 		}
 	});

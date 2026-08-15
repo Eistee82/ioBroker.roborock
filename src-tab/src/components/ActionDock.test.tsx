@@ -31,7 +31,6 @@ function renderDock(phase: RobotPhase, overrides: Partial<ActionDockProps> = {})
 		onDock: vi.fn(),
 		onToggleGoTo: vi.fn(),
 		onAddZone: vi.fn(),
-		onRemoveZone: vi.fn(),
 		onCleanRooms: vi.fn(),
 		onClearRooms: vi.fn(),
 		...overrides,
@@ -293,9 +292,11 @@ describe("ActionDock secondary controls", () => {
 		expect(screen.getByRole("button", { name: I18n.t("ui_add_zone") }).hasAttribute("disabled")).toBe(true);
 	});
 
-	it("blocks removing a zone while there is none", () => {
-		renderDock("idle", { zones: { count: 0, max: 5, atLimit: false } });
-		expect(screen.getByRole("button", { name: I18n.t("ui_remove_zone") }).hasAttribute("disabled")).toBe(true);
+	it("offers no remove button at all - the zone carries its own delete handle", () => {
+		// The dock's button always removed the zone added last, which cannot say which zone it
+		// means. The handle on the rectangle can, so the ambiguous one is gone.
+		renderDock("idle", { zones: { count: 3, max: 5, atLimit: false } });
+		expect(screen.queryByRole("button", { name: I18n.t("ui_remove_zone") })).toBeNull();
 	});
 
 	it("switches the go-to control between starting and cancelling", () => {

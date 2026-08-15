@@ -350,7 +350,6 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 						onDock={() => engineRef.current?.dock()}
 						onToggleGoTo={() => engineRef.current?.toggleGoTo()}
 						onAddZone={() => engineRef.current?.addZone()}
-						onRemoveZone={() => engineRef.current?.removeZone()}
 						onCleanRooms={() => engineRef.current?.cleanSelectedRooms()}
 						onClearRooms={() => engineRef.current?.clearRooms()}
 					/>

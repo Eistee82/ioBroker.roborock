@@ -7,7 +7,6 @@ import HomeIcon from "@mui/icons-material/Home";
 import PlaceIcon from "@mui/icons-material/Place";
 import CloseIcon from "@mui/icons-material/Close";
 import AddIcon from "@mui/icons-material/Add";
-import RemoveIcon from "@mui/icons-material/Remove";
 import BackspaceIcon from "@mui/icons-material/Backspace";
 import { I18n } from "@iobroker/adapter-react-v5";
 import type { RobotPhase, RoomSelectionModel, ZoneModel } from "../engine/types";
@@ -25,7 +24,6 @@ interface ActionDockProps {
 	onDock: () => void;
 	onToggleGoTo: () => void;
 	onAddZone: () => void;
-	onRemoveZone: () => void;
 	/** Starts a segment run for the rooms picked in the map. */
 	onCleanRooms: () => void;
 	onClearRooms: () => void;
@@ -207,17 +205,12 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 					</IconButton>
 				</span>
 			</Tooltip>
-			<Tooltip title={I18n.t("ui_remove_zone")}>
-				<span>
-					<IconButton
-						aria-label={I18n.t("ui_remove_zone")}
-						onClick={props.onRemoveZone}
-						disabled={zones.count === 0}
-					>
-						<RemoveIcon />
-					</IconButton>
-				</span>
-			</Tooltip>
+			{/*
+			 * No "remove zone" button here any more. Every zone carries its own delete handle now,
+			 * and that one removes the zone it sits on - while this button always removed the one
+			 * added last, which is a different action wearing the same name. Two ways to delete,
+			 * one of them unable to say which zone it means, is one too many.
+			 */}
 
 			<Divider
 				orientation="vertical"
