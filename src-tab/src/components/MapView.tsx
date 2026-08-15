@@ -26,7 +26,6 @@ import { ConsumablesPanel } from "./ConsumablesPanel";
 import { DockPanel } from "./DockPanel";
 import { MapZonesPanel } from "./MapZonesPanel";
 import { RoomsPanel } from "./RoomsPanel";
-import { LiveTrackLegend } from "./LiveTrackLegend";
 import { ObstacleDialog } from "./ObstacleDialog";
 import { HistoryPanel } from "./HistoryPanel";
 import { HistoryDialog } from "./HistoryDialog";
@@ -135,8 +134,6 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [consumables, setConsumables] = useState<ConsumablePartModel[]>([]);
 	const [dock, setDock] = useState<DockModel>({ controls: [], status: [], faulty: false, activity: EMPTY_DOCK_ACTIVITY });
 	const [hasMap, setHasMap] = useState(false);
-	// Only true while the robot actually reports a live track; the colour key follows it.
-	const [hasLiveTrack, setHasLiveTrack] = useState(false);
 	const [goToActive, setGoToActive] = useState(false);
 	const [error, setError] = useState<string>("");
 	/**
@@ -209,7 +206,6 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			onConsumables: setConsumables,
 			onDock: setDock,
 			onMapPresence: setHasMap,
-			onLiveTrack: setHasLiveTrack,
 			onGoToMode: setGoToActive,
 			onError: showError,
 			onObstaclePhoto: setPhoto
@@ -459,13 +455,12 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 					</Stack>
 				</FloatingSurface>
 
-				{/* Only while there is a track to explain - see LiveTrackLegend. */}
-				{hasLiveTrack ? (
-					<FloatingSurface>
-						<LiveTrackLegend present={hasLiveTrack} />
-					</FloatingSurface>
-				) : null}
-
+				{/*
+				 * No live-track legend any more. It existed to explain two colours the overlay
+				 * invented, and the overlay no longer draws a track at all - the map's own path,
+				 * painted by the adapter in the app's palette, is the only one there is. A key
+				 * explaining colours nobody can see would be its own kind of wrong.
+				 */}
 				<FloatingSurface sx={{ ml: "auto" }}>
 					<StatusStrip
 						status={status}

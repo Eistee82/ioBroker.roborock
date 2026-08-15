@@ -20,16 +20,8 @@ import { chargerLayout } from "./chargerGraphic";
 import type { ChargerGraphic } from "./chargerGraphic";
 import { getMapOverlayColors } from "./mapOverlayColors";
 import type { MapOverlayColors } from "./mapOverlayColors";
-import {
-	LIVE_ROBOT_COLORS,
-	LIVE_ROBOT_SIZE,
-	LIVE_TRACK_COLORS,
-	LIVE_TRACK_WIDTH,
-	liveRobotHeadingPoints,
-	liveTrackPathD,
-	type LiveRobotPose,
-	type LiveTrackSegment,
-} from "./liveTrack";
+import { LIVE_ROBOT_COLORS, LIVE_ROBOT_SIZE, liveRobotHeadingPoints } from "./liveTrack";
+import type { LiveRobotPose } from "./liveTrack";
 
 /**
  * Size the room name is drawn at, in SVG user units.
@@ -848,69 +840,6 @@ export class SVGMapRenderer implements IMapRenderer {
 		}
 	}
 
-	/**
-	 * Draws the live driven/mopped track.
-	 *
-	 * Every run is painted twice: a dark casing first, the colour on top. That is what makes the
-	 * overlay independent of what lies underneath it - the map bitmap does not follow the admin
-	 * theme, and the historic white path may run right along the same stretch.
-	 *
-	 * The runs are drawn in the order they arrive, so a mopped run that follows a driven one covers
-	 * the shared point between them rather than the other way round. All casings go down before any
-	 * colour, otherwise the casing of a later run would cut into the colour of an earlier one.
-	 *
-	 * The layer is cleared on every call. This is a live channel: a snapshot supersedes its
-	 * predecessor completely, and merging the two would accumulate a track that no longer matches
-	 * what the robot reports.
-	 *
-	 * @param segments The runs, already in SVG user units.
-	 */
-	drawLiveTrack(segments: LiveTrackSegment[]): void {
-		const g = this.opts.groups.liveTrackGroup;
-		if (!g) return;
-		g.selectAll("*").remove();
-		if (!segments.length) return;
-
-		const runs = segments
-			.map(segment => ({ mopped: segment.mopped, d: liveTrackPathD(segment.points) }))
-			.filter(run => run.d !== "");
-		if (!runs.length) return;
-
-		for (const run of runs) {
-			g.append("path")
-				.attr("class", "live-track-casing")
-				.attr("d", run.d)
-				.style("fill", "none")
-				.style("stroke", LIVE_TRACK_COLORS.casing)
-				.style("stroke-width", `${LIVE_TRACK_WIDTH.track + LIVE_TRACK_WIDTH.casingExtra}px`)
-				.style("stroke-linecap", "round")
-				.style("stroke-linejoin", "round");
-		}
-
-		for (const run of runs) {
-			g.append("path")
-				.attr("class", run.mopped ? "live-track live-track-mopped" : "live-track live-track-driven")
-				.attr("d", run.d)
-				.style("fill", "none")
-				.style("stroke", run.mopped ? LIVE_TRACK_COLORS.mopped : LIVE_TRACK_COLORS.driven)
-				.style("stroke-width", `${LIVE_TRACK_WIDTH.track}px`)
-				.style("stroke-linecap", "round")
-				.style("stroke-linejoin", "round");
-		}
-	}
-
-	/**
-	 * Draws the live position marker: a disc with a heading wedge.
-	 *
-	 * This is a marker of its own rather than a second use of {@link drawRobot}, because the live
-	 * position and the map's `ROBOT_POSITION` are two independent channels that arrive at different
-	 * times. Sharing one element would let whichever redrew last win, and the map's zoom handler
-	 * re-applies the map's position on every wheel tick - the stale value would snap back the
-	 * moment the user zoomed.
-	 *
-	 * @param pose The marker, or null to clear the layer - which is what a snapshot without a
-	 *             position means, and it must not leave a stale robot behind.
-	 */
 	drawLiveRobot(pose: LiveRobotPose | null): void {
 		const g = this.opts.groups.liveRobotGroup;
 		if (!g) return;

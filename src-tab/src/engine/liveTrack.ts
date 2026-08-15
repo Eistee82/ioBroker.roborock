@@ -74,19 +74,20 @@ export const LIVE_SNAPSHOT_FIELDS = Object.freeze(["position", "path", "mopFlags
 export const LIVE_TRACK_STATE = "map.liveTrack";
 
 /**
- * Colours of the two track kinds, and the casing drawn under both.
+ * The colours the live track used to be drawn in. **Kept only as the record of a mistake.**
  *
- * The surface under the track is the map bitmap, and the tab has no say in how that is painted:
- * it is rendered in the adapter, where a light and a dark set exist side by side
- * (`LEGACY_COLORS` / `DARK_MAP_COLORS` in `src/common/mapDrawing/constants.ts`) and the adapter
- * option `map_color_scheme` decides which one is used. Theming these two track colours from the
- * browser would therefore not adapt them to their background - the background follows a setting
- * this page does not read.
+ * Amber for driven and light blue for mopped were argued from contrast and colour blindness and
+ * never read out of the app. They were wrong on their own terms: the app paints its driven path
+ * **white** and its mopped stretch **white at low alpha** (a65 control plugin, `pathColor`
+ * `#FFFFFFff` and `mopPathColor` `#FFFFFF66` at A65:303345, `#FFFFFF99` / `#e5e5e54c` at
+ * A65:313188), which is exactly what the adapter already paints into the map bitmap. Reported from
+ * use as two stripes that belong to no Roborock app.
  *
- * What does the theme-proofing is the casing: a dark, semi-transparent line drawn wider and
- * underneath. It separates both tracks from a light surface as well as from a dark one, so the
- * overlay stays readable no matter what the bitmap or a future theme puts behind it. Amber against
- * light blue also survives the common forms of colour blindness, which two similar hues would not.
+ * The track is no longer drawn at all - see {@link MapEngine.drawLiveOverlay} for why recolouring
+ * it would have been worse than removing it. These values stay here, unused, so nobody argues the
+ * same way twice.
+ *
+ * @deprecated Nothing draws with these. Do not reintroduce them; read the app's table instead.
  */
 export const LIVE_TRACK_COLORS = Object.freeze({
 	/** Driven, not mopped. */
@@ -172,6 +173,13 @@ export const MOP_ACTIVE_BIT = 0x02;
 
 /**
  * Whether a path point counts as mopped.
+ *
+ * **Nothing draws with this today.** The live overlay stopped drawing a track when its two invented
+ * colours were removed, so no caller in the tab asks the question any more. It is kept, and kept
+ * documented, on purpose: the finding below cost two measured runs at the real device and is the
+ * one thing anybody needs the moment somebody draws the mopped **area** - which is how the app
+ * shows it, and the obvious next step. Deleting it would mean measuring it again, and the naive
+ * reading it corrects is the one a fresh pair of eyes reaches for first.
  *
  * **This is the only place in the tab that interprets a mop value.** The reading rests on two
  * measured runs of the test device (S7 Max Ultra), not on the app's source:

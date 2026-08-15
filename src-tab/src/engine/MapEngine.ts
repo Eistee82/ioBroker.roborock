@@ -13,7 +13,6 @@ import { ROBOT_STATES, dockActivity, robotPhase } from "./robotStates";
 import {
 	LIVE_TRACK_STATE,
 	buildLiveRobotPose,
-	buildLiveTrackSegments,
 	parseLiveSnapshot,
 	type LiveSnapshot,
 } from "./liveTrack";
@@ -674,8 +673,6 @@ export class MapEngine {
 
 	/** Latest `get_dynamic_data` snapshot, or null while the device publishes none. */
 	private liveSnapshot: LiveSnapshot | null = null;
-	/** Last value handed to `onLiveTrack`, so the callback only fires on a real change. */
-	private lastLiveTrackPresence: boolean | null = null;
 
 	/** True once the user panned/zoomed by hand; a resize then keeps their view. */
 	private userAdjustedView = false;
@@ -2036,7 +2033,7 @@ export class MapEngine {
 	}
 
 	/**
-	 * Draws the live track and the live position marker, or clears both.
+	 * Draws the live position marker, or clears it.
 	 *
 	 * Called from two directions: when a new snapshot arrives, and when the map underneath was
 	 * redrawn. Both have to go through here, because the overlay only means anything together with
@@ -2048,35 +2045,54 @@ export class MapEngine {
 	 * for the user to tell which is real. As soon as the live position is gone the map's robot is
 	 * shown again, so a device without the live channel is unchanged.
 	 *
+	 * ## Why only the position, and no live track any more
+	 *
+	 * The overlay used to draw the driven path in amber and the mopped stretches in blue. Those two
+	 * colours were **invented** - argued from contrast, never read out of the app - and the map
+	 * underneath them is painted by the adapter in the app's own palette, so the result looked like
+	 * nothing Roborock ships. Reported from use: "die spuren die du in gelb und blau eingebaut hast
+	 * bitte wieder entfernen und das so wie in der app darstellen".
+	 *
+	 * Reading the app's own table settles it, and settles it against having a live track at all
+	 * (a65 control plugin, A65:303345 light / A65:313188 dark):
+	 *
+	 * | | light | dark |
+	 * | --- | --- | --- |
+	 * | `pathColor` | `#FFFFFFff` | `#FFFFFF99` |
+	 * | `mopPathColor` | `#FFFFFF66` | `#e5e5e54c` |
+	 *
+	 * The driven path is **white**, and the mopped stretch is **white at low alpha** - a wide
+	 * translucent band, an area rather than a coloured line. That is exactly what the adapter
+	 * already paints into the map bitmap (`drawMapV1.ts:196-227`: the mop band at 6.5 × the block
+	 * width and 18 % opacity, the driven line thin and white).
+	 *
+	 * So a live track in the app's colours would be **indistinguishable from the path already on the
+	 * map**, and worse: where the two overlap, two translucent white bands stack into a brighter
+	 * seam that marks nothing. The honest answer is not to recolour it but to drop it. The map's own
+	 * path arrives every few seconds and is complete; the live channel keeps doing the one thing it
+	 * is better at, which is the robot's position.
+	 *
 	 * A Q10 map places its robot in its own overlay pipeline and reports no `get_dynamic_data`, so
 	 * nothing is drawn there; the guard is `getMapParams()` returning the geometry either way.
 	 */
 	private drawLiveOverlay(): void {
 		// Before `init()` there is nothing to draw into; the reset path can reach this first.
-		if (this.liveTrackGroup.empty() || this.liveRobotGroup.empty()) return;
+		if (this.liveRobotGroup.empty()) return;
 
 		// V1 geometry only. `getMapParams()` also answers for a Q10 map, but that pipeline places
-		// everything through `Q10MapGeometry` instead - converting the live track with the V1
+		// everything through `Q10MapGeometry` instead - converting the live position with the V1
 		// formula would put it on the map at the wrong spot rather than not at all. Those devices
 		// do not answer `get_dynamic_data` in the first place, so nothing is lost by refusing.
 		const params = this.map && isQ10MapData(this.map) ? null : this.getMapParams();
 		const toSvg = params ? (point: Point): Point => this.robotToSvg(point, params) : null;
 
-		const segments = toSvg ? buildLiveTrackSegments(this.liveSnapshot, toSvg) : [];
 		const pose = toSvg ? buildLiveRobotPose(this.liveSnapshot, toSvg) : null;
 
 		const renderer = this.createSvgRenderer(this.assetBaseUrl(), params);
-		renderer.drawLiveTrack(segments);
 		renderer.drawLiveRobot(pose);
 
 		if (pose) this.robotGroup.style("display", "none");
 		else this.robotGroup.style("display", null);
-
-		const present = segments.length > 0 || pose !== null;
-		if (present !== this.lastLiveTrackPresence) {
-			this.lastLiveTrackPresence = present;
-			this.host.onLiveTrack?.(present);
-		}
 	}
 
 	/**
