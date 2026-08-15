@@ -19,11 +19,16 @@ import { DeviceStateWriter } from "../deviceStateWriter";
  * (`_appanalysis/geraetefaehigkeiten-1786790619395.json`) and both answer:
  *
  * ```
- * get_serial_number  [{"serial_number":"R50EED42502639"}]
+ * get_serial_number  [{"serial_number":"R5………………"}]   (redacted - see below)
  * app_get_locale     [{"name":"custom_A.03.0309_CE","bom":"A.03.0309","location":"de",
  *                      "language":"en","wifiplan":"","timezone":"Europe/Berlin",
  *                      "logserver":"awsde0.fds.api.xiaomi.com","featureset":3}]
  * ```
+ *
+ * The serial is redacted above on purpose. `package.json` ships `src/` to every user, so a real
+ * device identifier written into a comment here travels to all of them - and this adapter's own
+ * code takes care never to put a serial into a log line. The measurement file it comes from stays
+ * out of git.
  *
  * ## Which fields are published, and which are not
  *

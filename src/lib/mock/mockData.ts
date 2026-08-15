@@ -1,5 +1,5 @@
 export const MOCK_ROBOT_DATA = {
-	duid: "52E5XuBOSFE0s2oEmQWxPd",
+	duid: "mockDuidNotARealDevice",
 	model: "roborock.vacuum.a147",
 	firmwareFeatures: [111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125],
 	properties: {

@@ -9,7 +9,7 @@ describe("MockRobot", () => {
 	});
 
 	it("should initialize with default data", () => {
-		expect(robot.duid).to.equal("52E5XuBOSFE0s2oEmQWxPd");
+		expect(robot.duid).to.equal("mockDuidNotARealDevice");
 		expect(robot.state.battery).to.equal(100);
 		expect(robot.state.dss).to.equal(2728);
 	});
