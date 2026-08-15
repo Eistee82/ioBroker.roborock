@@ -62,6 +62,10 @@ export interface ScenePalette {
 	robot: string;
 	/** The dock marker. */
 	charger: string;
+	/** Furniture of a known type. */
+	furniture: string;
+	/** Furniture of a type this build does not know - see {@link Map3DModel.furniture}. */
+	furnitureUnknown: string;
 }
 
 /** What {@link buildScene} produced, so the caller can drive and dispose of it. */
@@ -200,6 +204,36 @@ export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, pa
 		scene.add(walls);
 		scene.add(caps);
 		disposables.push(walls, caps);
+	}
+
+	// --- Furniture ------------------------------------------------------------------------------
+	//
+	// One box per piece, sized and turned by the map itself; only the height is chosen - see
+	// {@link FURNITURE_HEIGHTS_MM}. Solid rather than translucent, because a piece of furniture is
+	// a thing standing in the room and not a boundary, and because a see-through sofa in front of a
+	// see-through wall stops being readable.
+	//
+	// A separate mesh each: there are a handful of pieces, not thousands, and each needs its own
+	// size and rotation. Instancing would buy nothing here and cost the per-piece material.
+	for (const piece of model.furniture) {
+		const geometry = new three.BoxGeometry(piece.width, piece.height, piece.depth);
+		const material = new three.MeshStandardMaterial({
+			color: piece.known ? palette.furniture : palette.furnitureUnknown,
+			roughness: 0.75,
+			metalness: 0,
+			// A stand-in body says so by being faint. It must still be visible - a piece the robot
+			// reports is a piece the user can trip over, so it may not be left out.
+			transparent: !piece.known,
+			opacity: piece.known ? 1 : 0.55
+		});
+		const mesh = new three.Mesh(geometry, material);
+		mesh.position.set(piece.x, piece.height / 2, piece.z);
+		// The map's angle turns clockwise in a y-down picture; three.js turns counter-clockwise about
+		// +Y. Picture x maps to world x and picture y to world z, so the two conventions differ by a
+		// sign and by nothing else.
+		mesh.rotation.y = (-piece.angle * Math.PI) / 180;
+		scene.add(mesh);
+		disposables.push(geometry, material);
 	}
 
 	// --- Robot and dock -------------------------------------------------------------------------

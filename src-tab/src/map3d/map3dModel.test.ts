@@ -79,6 +79,28 @@ describe("building the model", () => {
 		expect(model?.walls).toEqual([{ x0: 0, y0: 2, x1: 3, y1: 2 }]);
 	});
 
+	it("carries the furniture through, in the same flipped frame as the walls", () => {
+		// One cell, raw column 0 and raw row 1, on a grid three cells high. Its corners are grid
+		// lines, so raw row 1 spans 1…2 and comes out as picture 2…1 - centre 1.5, the centre of
+		// picture row 1. That is the same flip the walls get; if the two ever disagree, the sofa
+		// stands in the wrong room.
+		const furnished = {
+			IMAGE: WITH_WALL.IMAGE,
+			FURNITURES: [{ x1: 500, y1: 1050, x2: 550, y2: 1050, x3: 550, y3: 1100, x4: 500, y4: 1100, type: 46, subType: 2 }]
+		};
+		const model = buildMap3DModel(furnished, IMAGE);
+
+		expect(model?.furniture).toHaveLength(1);
+		expect(model?.furniture[0].known).toBe(true);
+		expect(model?.furniture[0].x).toBeCloseTo(0.5);
+		expect(model?.furniture[0].z).toBeCloseTo(1.5);
+	});
+
+	it("says the furniture list is empty rather than leaving it undefined", () => {
+		// The scene iterates it unconditionally; `undefined` would take the whole view down.
+		expect(buildMap3DModel(WITH_WALL, IMAGE)?.furniture).toEqual([]);
+	});
+
 	it("does not extrude cells that never form a run", () => {
 		// Three cells, none of them touching another. The app requires a chain of more than one cell,
 		// so nothing is drawn - part of what made the view stop looking like gravel.

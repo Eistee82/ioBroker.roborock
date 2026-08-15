@@ -34,12 +34,14 @@ interface Recorded {
 	matrices: Instance[];
 	planes: Array<[number, number]>;
 	materials: Array<Record<string, unknown>>;
+	/** Every plain `Mesh`, in construction order, so position and rotation can be read back. */
+	meshes: Array<{ position: { x: number; y: number; z: number }; rotation: { x: number; y: number; z: number } }>;
 	lights: Array<{ kind: string; intensity: number }>;
 	added: number;
 }
 
 function stubThree(): { three: ThreeLike; log: Recorded } {
-	const log: Recorded = { boxes: [], instanced: [], matrices: [], planes: [], materials: [], lights: [], added: 0 };
+	const log: Recorded = { boxes: [], instanced: [], matrices: [], planes: [], materials: [], meshes: [], lights: [], added: 0 };
 
 	class Vec {
 		public x = 0;
@@ -118,7 +120,12 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 			public constructor(public parameters: Record<string, unknown>) {}
 			public dispose(): void {}
 		},
-		Mesh: class extends Obj {},
+		Mesh: class extends Obj {
+			public constructor() {
+				super();
+				log.meshes.push(this);
+			}
+		},
 		InstancedMesh: class extends Obj {
 			public instanceMatrix = { needsUpdate: false };
 			private readonly id: number;
@@ -145,7 +152,14 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 	return { three, log };
 }
 
-const PALETTE: ScenePalette = { background: "#101010", wall: "#b8bec9", robot: "#3f7", charger: "#888" };
+const PALETTE: ScenePalette = {
+	background: "#101010",
+	wall: "#b8bec9",
+	robot: "#3f7",
+	charger: "#888",
+	furniture: "#c2ab93",
+	furnitureUnknown: "#a9aeb8"
+};
 
 /**
  * Two runs: a horizontal one four cells wide along the top edge, and a single cell further down.
@@ -162,6 +176,7 @@ function model(over: Partial<Map3DModel> = {}): Map3DModel {
 		height: 3,
 		walls: [...WALLS],
 		wallCellCount: 5,
+		furniture: [],
 		imageSrc: "data:image/png;base64,AAAA",
 		robot: { x: 2.5, y: 0.5, angle: 90 },
 		charger: { x: 1.5, y: 1.5, angle: 0 },
@@ -245,6 +260,59 @@ describe("the walls", () => {
 
 		expect(log.instanced).toEqual([]);
 		expect(built.wallCount).toBe(0);
+	});
+});
+
+describe("the furniture", () => {
+	const SOFA = { x: 6, z: 26, width: 6, depth: 4, height: 16, angle: 0, type: 46, known: true };
+	const STRANGE = { x: 2, z: 2, width: 3, depth: 2, height: 8, angle: 90, type: 99, known: false };
+
+	it("stands each piece on the floor at its own size", () => {
+		const { three, log } = stubThree();
+		buildScene(three, model({ furniture: [SOFA] }), {}, PALETTE);
+
+		// width x height x depth, and standing on the ground rather than sunk halfway into it.
+		expect(log.boxes).toContainEqual([6, 16, 4]);
+		const sofa = log.meshes[1]; // [0] is the floor plane
+		expect([sofa.position.x, sofa.position.y, sofa.position.z]).toEqual([6, 8, 26]);
+	});
+
+	it("turns it the way the map says, with the sign the two frames differ by", () => {
+		// The map's angle is clockwise in a y-down picture; three.js turns counter-clockwise about
+		// +Y. Same magnitude, opposite sign - and nothing else. A missing minus here mirrors every
+		// turned piece across its own centre, which on a sofa against a wall looks almost right.
+		const { three, log } = stubThree();
+		buildScene(three, model({ furniture: [STRANGE] }), {}, PALETTE);
+
+		expect(log.meshes[1].rotation.y).toBeCloseTo(-Math.PI / 2);
+	});
+
+	it("is solid when the type is known and faint when it is not", () => {
+		// A stand-in says so by being faint. It may not be left out: a piece the robot reports is a
+		// piece somebody can trip over.
+		const { three, log } = stubThree();
+		buildScene(three, model({ furniture: [SOFA, STRANGE] }), {}, PALETTE);
+
+		const furnitureMaterials = log.materials.filter((m) => m.color === PALETTE.furniture || m.color === PALETTE.furnitureUnknown);
+		expect(furnitureMaterials).toHaveLength(2);
+		expect(furnitureMaterials[0]).toMatchObject({ color: PALETTE.furniture, transparent: false, opacity: 1 });
+		expect(furnitureMaterials[1]).toMatchObject({ color: PALETTE.furnitureUnknown, transparent: true });
+		expect(furnitureMaterials[1].opacity).toBeLessThan(1);
+	});
+
+	it("draws nothing at all when the map carries no furniture", () => {
+		const { three, log } = stubThree();
+		buildScene(three, model({ furniture: [] }), {}, PALETTE);
+
+		expect(log.materials.some((m) => m.color === PALETTE.furniture)).toBe(false);
+	});
+
+	it("hands its geometry and material to the teardown", () => {
+		const { three } = stubThree();
+		const withOne = buildScene(three, model({ furniture: [SOFA] }), {}, PALETTE);
+		const without = buildScene(three, model({ furniture: [] }), {}, PALETTE);
+
+		expect(withOne.disposables.length).toBe(without.disposables.length + 2);
 	});
 });
 

@@ -37,6 +37,8 @@
 import { robotToPixel } from "@adapter/common/coordTransformation";
 import { clearedCells, extractWalls } from "./walls";
 import type { WallSegment } from "./walls";
+import { buildFurnitureBoxes } from "./furniture3d";
+import type { FurnitureBox } from "./furniture3d";
 
 /** Millimetres one map cell covers. */
 export const MM_PER_CELL = 50;
@@ -66,6 +68,8 @@ export interface Map3DModel {
 	walls: WallSegment[];
 	/** How many occupied cells went into those runs. Kept so the view can report the reduction. */
 	wallCellCount: number;
+	/** Furniture as plain bodies; empty when the map carries none. */
+	furniture: FurnitureBox[];
 	/** The finished map picture, ready to use as a texture. */
 	imageSrc: string;
 	robot: Placed | null;
@@ -188,6 +192,7 @@ export function buildMap3DModel(rawMapData: unknown, imageSrc: unknown): Map3DMo
 		height,
 		walls: extracted.segments.map(flipRow.bind(null, height)),
 		wallCellCount: extracted.cellCount,
+		furniture: buildFurnitureBoxes(parsed.FURNITURES, left, top, height),
 		imageSrc,
 		robot: readPlaced(parsed.ROBOT_POSITION, left, top, height),
 		charger: readPlaced(parsed.CHARGER_LOCATION, left, top, height)

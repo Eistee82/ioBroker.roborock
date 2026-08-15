@@ -395,7 +395,10 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 		background: theme.palette.background.default,
 		wall: theme.palette.mode === "dark" ? "#5a6270" : "#b8bec9",
 		robot: theme.palette.primary.main,
-		charger: theme.palette.mode === "dark" ? "#8f96a3" : "#7c8494"
+		charger: theme.palette.mode === "dark" ? "#8f96a3" : "#7c8494",
+		// Warmer than the walls, so a sofa reads as a thing in the room rather than as a boundary.
+		furniture: theme.palette.mode === "dark" ? "#7a6a5c" : "#c2ab93",
+		furnitureUnknown: theme.palette.mode === "dark" ? "#6b6f78" : "#a9aeb8"
 	}), [theme]);
 
 	const writeSetting = useCallback((write: SettingWrite) => {
