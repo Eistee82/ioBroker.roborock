@@ -3,7 +3,7 @@ import { Box, CircularProgress, Typography } from "@mui/material";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { buildScene } from "./scene";
 import type { BuiltScene, ScenePalette } from "./scene";
-import type { Map3DModel } from "./map3dModel";
+import type { CellPoint, Map3DModel } from "./map3dModel";
 
 /**
  * The 3D map: a canvas, a dynamically loaded three.js, and a way back to 2D when it cannot run.
@@ -29,12 +29,20 @@ import type { Map3DModel } from "./map3dModel";
 interface Map3DViewProps {
 	model: Map3DModel;
 	palette: ScenePalette;
+	/**
+	 * Where the robot is right now, in cell coordinates, or null while the live channel is quiet.
+	 *
+	 * Deliberately not part of the model: it arrives every second or two, and the model rebuilds the
+	 * whole scene. See {@link BuiltScene.robot}.
+	 */
+	livePosition: CellPoint | null;
 	/** Called when the view cannot run after all; the shell then returns to 2D. */
 	onUnavailable: (reason: string) => void;
 }
 
-export function Map3DView({ model, palette, onUnavailable }: Map3DViewProps): React.JSX.Element {
+export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3DViewProps): React.JSX.Element {
 	const hostRef = useRef<HTMLDivElement | null>(null);
+	const builtRef = useRef<BuiltScene | null>(null);
 	const [loading, setLoading] = useState(true);
 
 	useEffect(() => {
@@ -78,6 +86,7 @@ export function Map3DView({ model, palette, onUnavailable }: Map3DViewProps): Re
 				texture.needsUpdate = true;
 
 				built = buildScene(three, model, texture, palette);
+				builtRef.current = built;
 
 				renderer = new three.WebGLRenderer({ antialias: true, alpha: false });
 				renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -123,6 +132,7 @@ export function Map3DView({ model, palette, onUnavailable }: Map3DViewProps): Re
 
 		return () => {
 			cancelled = true;
+			builtRef.current = null;
 			if (frame) cancelAnimationFrame(frame);
 			observer?.disconnect();
 			controls?.dispose?.();
@@ -134,6 +144,23 @@ export function Map3DView({ model, palette, onUnavailable }: Map3DViewProps): Re
 			if (renderer?.domElement?.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
 		};
 	}, [model, palette, onUnavailable]);
+
+	/**
+	 * Moves the robot body when the live channel reports a new position.
+	 *
+	 * Nothing is rebuilt and nothing is re-rendered on purpose: the animation loop is already running
+	 * for the orbit damping, so it picks the new position up on its next frame. That also means the
+	 * body slides with the camera rather than jumping in a frame of its own.
+	 *
+	 * Without a live position the body stays where the map put it. That is the honest state - the map
+	 * is where the robot was when the map was made - and it is what the 2D view does too.
+	 */
+	useEffect(() => {
+		const robot = builtRef.current?.robot;
+		if (!robot || !livePosition) return;
+		robot.position.x = livePosition.x;
+		robot.position.z = livePosition.y;
+	}, [livePosition, model]);
 
 	return (
 		<Box sx={{ position: "absolute", inset: 0, overflow: "hidden" }}>

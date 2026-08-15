@@ -39,12 +39,14 @@ import { clearedCells, extractWalls } from "./walls";
 import type { WallSegment } from "./walls";
 import { buildFurnitureBoxes } from "./furniture3d";
 import type { FurnitureBox } from "./furniture3d";
+import { buildZones3D } from "./zones3d";
+import type { VirtualWall3D, Zone3D } from "./zones3d";
 
-/** Millimetres one map cell covers. */
-export const MM_PER_CELL = 50;
+// Imported for use here **and** re-exported, because every existing caller reaches for these two
+// through this module. A bare `export … from` would not bring them into this file's own scope.
+import { MM_PER_CELL } from "./units";
 
-/** Wall height in cells; the app's own constant (A65 `C4192OooO0oo.java:174`). */
-export const WALL_HEIGHT_CELLS = 10;
+export { MM_PER_CELL, WALL_HEIGHT_CELLS } from "./units";
 
 /** A point in cell coordinates, the unit the whole 3D scene works in. */
 export interface CellPoint {
@@ -64,12 +66,20 @@ export interface Map3DModel {
 	width: number;
 	/** Grid height in cells. */
 	height: number;
+	/** Grid offset in cells, `IMAGE.position.left`. Kept so the live channel can convert too. */
+	left: number;
+	/** Grid offset in cells, `IMAGE.position.top`. */
+	top: number;
 	/** Straight wall runs, merged out of the occupied cells the way the app does it. */
 	walls: WallSegment[];
 	/** How many occupied cells went into those runs. Kept so the view can report the reduction. */
 	wallCellCount: number;
 	/** Furniture as plain bodies; empty when the map carries none. */
 	furniture: FurnitureBox[];
+	/** No-go and no-mop zones, to look at - the editing lives in the 2D view. */
+	zones: Zone3D[];
+	/** Virtual walls. */
+	virtualWalls: VirtualWall3D[];
 	/** The finished map picture, ready to use as a texture. */
 	imageSrc: string;
 	robot: Placed | null;
@@ -85,6 +95,9 @@ interface RawMapData {
 	};
 	ROBOT_POSITION?: { position?: unknown; angle?: unknown };
 	CHARGER_LOCATION?: { position?: unknown; angle?: unknown };
+	FORBIDDEN_ZONES?: unknown;
+	NO_MOP_ZONE?: unknown;
+	VIRTUAL_WALLS?: unknown;
 	FURNITURES?: unknown;
 	OBSTACLES?: unknown;
 	OBSTACLES2?: unknown;
@@ -186,13 +199,18 @@ export function buildMap3DModel(rawMapData: unknown, imageSrc: unknown): Map3DMo
 		objects: [...readObjectPositions(parsed.OBSTACLES), ...readObjectPositions(parsed.OBSTACLES2)]
 	});
 	const extracted = extractWalls(width, height, obstacles, floor, cleared);
+	const zones = buildZones3D(parsed.FORBIDDEN_ZONES, parsed.NO_MOP_ZONE, parsed.VIRTUAL_WALLS, left, top, height);
 
 	return {
 		width,
 		height,
+		left,
+		top,
 		walls: extracted.segments.map(flipRow.bind(null, height)),
 		wallCellCount: extracted.cellCount,
 		furniture: buildFurnitureBoxes(parsed.FURNITURES, left, top, height),
+		zones: zones.zones,
+		virtualWalls: zones.virtualWalls,
 		imageSrc,
 		robot: readPlaced(parsed.ROBOT_POSITION, left, top, height),
 		charger: readPlaced(parsed.CHARGER_LOCATION, left, top, height)

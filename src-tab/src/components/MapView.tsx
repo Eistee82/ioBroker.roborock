@@ -36,6 +36,7 @@ import type { CleaningHistoryModel, CleaningRunModel } from "../history/historyT
 import { SettingsPanel } from "./SettingsPanel";
 import { RobotSettingsSource } from "../settings/robotSettingsSource";
 import type { RobotSettingsModel, SettingWrite } from "../settings/robotSettings";
+import { getMapOverlayColors } from "../engine/mapOverlayColors";
 import type { MapColorScheme } from "../engine/mapOverlayColors";
 import { CommandFeedbackSource } from "../feedback/commandFeedbackSource";
 import { formatFeedbackMessage } from "../feedback/commandFeedback";
@@ -44,7 +45,7 @@ import { ActiveFloorSource } from "../map/activeFloorSource";
 import { Map3DSource } from "../map3d/map3dSource";
 import { Map3DView } from "../map3d/Map3DView";
 import { isWebGLAvailable } from "../map3d/webgl";
-import type { Map3DModel } from "../map3d/map3dModel";
+import type { CellPoint, Map3DModel } from "../map3d/map3dModel";
 import type { ScenePalette } from "../map3d/scene";
 import { RemotePad } from "./RemotePad";
 import { EMPTY_REMOTE, RemoteDriver } from "../remote/remoteDriver";
@@ -167,6 +168,8 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	// The 3D view: whether it is on, and what it would draw. `null` means nothing drawable yet.
 	const [show3D, setShow3D] = useState(false);
 	const [map3d, setMap3d] = useState<Map3DModel | null>(null);
+	/** Live robot position for the 3D body, kept out of the model so a live tick costs no rebuild. */
+	const [map3dLive, setMap3dLive] = useState<CellPoint | null>(null);
 
 	const connection = useMemo(() => createEngineConnection(socket), [socket]);
 	const historySourceRef = useRef<CleaningHistorySource | null>(null);
@@ -365,7 +368,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	 * the button knows in advance whether it would have anything to show.
 	 */
 	useEffect(() => {
-		const source = new Map3DSource(connection, { onModel: setMap3d });
+		const source = new Map3DSource(connection, { onModel: setMap3d, onLiveRobot: setMap3dLive });
 		map3dRef.current = source;
 
 		return () => {
@@ -398,8 +401,14 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 		charger: theme.palette.mode === "dark" ? "#8f96a3" : "#7c8494",
 		// Warmer than the walls, so a sofa reads as a thing in the room rather than as a boundary.
 		furniture: theme.palette.mode === "dark" ? "#7a6a5c" : "#c2ab93",
-		furnitureUnknown: theme.palette.mode === "dark" ? "#6b6f78" : "#a9aeb8"
-	}), [theme]);
+		furnitureUnknown: theme.palette.mode === "dark" ? "#6b6f78" : "#a9aeb8",
+		// The zone colours are the 2D view's own, taken from the app's `theme.displayZones`. Two
+		// tables for one pair of zones is how the two views end up disagreeing about which red means
+		// "do not go here"; the alpha is applied by the material, see `scene.ts`.
+		forbiddenZone: getMapOverlayColors(mapColorScheme).noGoStroke,
+		noMopZone: getMapOverlayColors(mapColorScheme).noMopStroke,
+		virtualWall: getMapOverlayColors(mapColorScheme).wallStroke
+	}), [theme, mapColorScheme]);
 
 	const writeSetting = useCallback((write: SettingWrite) => {
 		void settingsSourceRef.current?.apply(write);
@@ -427,6 +436,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				<Map3DView
 					model={map3d}
 					palette={scenePalette}
+					livePosition={map3dLive}
 					onUnavailable={on3DUnavailable}
 				/>
 			) : null}

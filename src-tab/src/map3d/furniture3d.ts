@@ -27,7 +27,7 @@
 
 import { FURNITURE_TYPES, furnitureRect } from "../engine/furniture";
 import type { FurniturePoint } from "../engine/furniture";
-import { MM_PER_CELL } from "./map3dModel";
+import { MM_PER_CELL } from "./units";
 import type { CellPoint } from "./map3dModel";
 
 /**

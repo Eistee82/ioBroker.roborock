@@ -140,7 +140,9 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 			public dispose(): void {}
 		},
 		Object3D: Obj,
-		Group: Obj,
+		Group: class extends Obj {
+			public add(): void {}
+		},
 		Texture: class {
 			public constructor(public image: unknown) {}
 			public dispose(): void {}
@@ -158,7 +160,10 @@ const PALETTE: ScenePalette = {
 	robot: "#3f7",
 	charger: "#888",
 	furniture: "#c2ab93",
-	furnitureUnknown: "#a9aeb8"
+	furnitureUnknown: "#a9aeb8",
+	forbiddenZone: "#FF5E4A",
+	noMopZone: "#65ACFA",
+	virtualWall: "#FF5E4A"
 };
 
 /**
@@ -174,9 +179,13 @@ function model(over: Partial<Map3DModel> = {}): Map3DModel {
 	return {
 		width: 4,
 		height: 3,
+		left: 10,
+		top: 20,
 		walls: [...WALLS],
 		wallCellCount: 5,
 		furniture: [],
+		zones: [],
+		virtualWalls: [],
 		imageSrc: "data:image/png;base64,AAAA",
 		robot: { x: 2.5, y: 0.5, angle: 90 },
 		charger: { x: 1.5, y: 1.5, angle: 0 },
@@ -313,6 +322,79 @@ describe("the furniture", () => {
 		const without = buildScene(three, model({ furniture: [] }), {}, PALETTE);
 
 		expect(withOne.disposables.length).toBe(without.disposables.length + 2);
+	});
+});
+
+describe("zones and virtual walls", () => {
+	const ZONE = { kind: "forbidden" as const, x: 6, z: 26, width: 6, depth: 4, angle: 0 };
+	const WALL = { x: 6, z: 26, length: 9, angle: 0 };
+
+	it("builds a zone as a floor patch and four sides, and no lid", () => {
+		// The app draws exactly that (`C4192OooO0oo.java:125-152`). A closed box would double the
+		// alpha along the top edge and read as a solid block instead of a barrier.
+		const { three, log } = stubThree();
+		buildScene(three, model({ zones: [ZONE] }), {}, PALETTE);
+
+		const zoneBoxes = log.boxes.filter((b) => b[1] === 0.2 || b[1] === WALL_HEIGHT_CELLS);
+		// One patch of height 0.2 plus four sides of the wall height - the wall geometry itself is a
+		// unit box, so it is not in this filter.
+		expect(zoneBoxes.filter((b) => b[1] === 0.2)).toHaveLength(1);
+		expect(zoneBoxes.filter((b) => b[1] === WALL_HEIGHT_CELLS && b[0] !== 1)).toHaveLength(4);
+	});
+
+	it("stands a zone as tall as the map walls", () => {
+		const { three, log } = stubThree();
+		buildScene(three, model({ zones: [ZONE] }), {}, PALETTE);
+
+		for (const box of log.boxes.filter((b) => b[0] === ZONE.width && b[1] !== 0.2)) {
+			expect(box[1]).toBe(WALL_HEIGHT_CELLS);
+		}
+	});
+
+	it("colours the two kinds apart, at the app's own alpha", () => {
+		const { three, log } = stubThree();
+		buildScene(three, model({ zones: [ZONE, { ...ZONE, kind: "noMop" }] }), {}, PALETTE);
+
+		const zoneMaterials = log.materials.filter((m) => m.color === PALETTE.forbiddenZone || m.color === PALETTE.noMopZone);
+		// One material per zone, shared by its five boxes.
+		expect(zoneMaterials).toHaveLength(2);
+		expect(zoneMaterials[0]).toMatchObject({ color: PALETTE.forbiddenZone, transparent: true });
+		expect(zoneMaterials[1]).toMatchObject({ color: PALETTE.noMopZone, transparent: true });
+		expect(zoneMaterials[0].opacity).toBeCloseTo(0x66 / 255);
+	});
+
+	it("draws a virtual wall as one slab of the wall height", () => {
+		const { three, log } = stubThree();
+		buildScene(three, model({ virtualWalls: [WALL] }), {}, PALETTE);
+
+		expect(log.boxes).toContainEqual([9, WALL_HEIGHT_CELLS, 1]);
+		expect(log.materials.some((m) => m.color === PALETTE.virtualWall)).toBe(true);
+	});
+
+	it("draws nothing when the map carries neither", () => {
+		const { three, log } = stubThree();
+		buildScene(three, model(), {}, PALETTE);
+
+		expect(log.materials.some((m) => m.color === PALETTE.forbiddenZone || m.color === PALETTE.noMopZone)).toBe(false);
+	});
+});
+
+describe("the robot body", () => {
+	it("is handed back so the live channel can move it without a rebuild", () => {
+		// The map tick is minutes apart, the live tick seconds. Rebuilding 299 wall boxes, the floor
+		// texture and every piece of furniture at the live rate would stutter and would throw the
+		// user's camera away with each update.
+		const { three } = stubThree();
+		const built = buildScene(three, model(), {}, PALETTE);
+
+		expect(built.robot).toBeTruthy();
+		expect(built.robot.position.x).toBe(2.5);
+		expect(built.robot.position.z).toBe(0.5);
+	});
+
+	it("is null when the map places no robot", () => {
+		const { three } = stubThree();
+		expect(buildScene(three, model({ robot: null }), {}, PALETTE).robot).toBeNull();
 	});
 });
 

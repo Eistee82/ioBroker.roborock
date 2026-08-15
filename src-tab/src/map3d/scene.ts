@@ -23,8 +23,9 @@
  * on the integer would straddle four of them.
  */
 
-import { WALL_HEIGHT_CELLS } from "./map3dModel";
+import { WALL_HEIGHT_CELLS } from "./units";
 import type { Map3DModel } from "./map3dModel";
+import { VIRTUAL_WALL_THICKNESS, ZONE_FLOOR_HEIGHT, ZONE_HEIGHT, ZONE_WALL_THICKNESS } from "./zones3d";
 
 /**
  * The parts of the three.js namespace this module uses.
@@ -66,6 +67,12 @@ export interface ScenePalette {
 	furniture: string;
 	/** Furniture of a type this build does not know - see {@link Map3DModel.furniture}. */
 	furnitureUnknown: string;
+	/** No-go zones; the 2D view's own `noGoStroke`. */
+	forbiddenZone: string;
+	/** No-mop zones; the 2D view's own `noMopStroke`. */
+	noMopZone: string;
+	/** Virtual walls; the 2D view's own `wallStroke`. */
+	virtualWall: string;
 }
 
 /** What {@link buildScene} produced, so the caller can drive and dispose of it. */
@@ -78,6 +85,15 @@ export interface BuiltScene {
 	centre: { x: number; z: number };
 	/** How many wall segments were extruded. Reported so the caller can say so, and asserted in tests. */
 	wallCount: number;
+	/**
+	 * The robot body, or null when the map does not place one.
+	 *
+	 * Handed back so the live channel can move it without rebuilding the scene. The map tick is
+	 * minutes apart, the live tick is seconds; rebuilding 299 wall boxes, the floor texture and every
+	 * piece of furniture at the live rate would be visible as a stutter and would throw away the
+	 * user's camera position on top.
+	 */
+	robot: any | null;
 }
 
 /**
@@ -103,6 +119,16 @@ const WALL_CAP_OPACITY = 0.7;
 
 /** Thickness of the cap, and where it sits. The app puts its plate at 10.15 (`C4192OooO0oo.java:185`). */
 const WALL_CAP_THICKNESS = 0.3;
+
+/**
+ * How solid a zone is.
+ *
+ * The colours come from the tab's own overlay table, which already carries the app's `66` alpha in
+ * the hex string - but a three.js material takes the alpha as a separate number, and a `#RRGGBBAA`
+ * string would have its last two digits quietly dropped. So the alpha is set here, at the value the
+ * app writes: `0x66 / 255`.
+ */
+const ZONE_OPACITY = 0x66 / 255;
 
 /**
  * The light rig, taken from the app rather than invented.
@@ -236,18 +262,85 @@ export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, pa
 		disposables.push(geometry, material);
 	}
 
+	// --- Zones and virtual walls ------------------------------------------------------------------
+	//
+	// Shapes taken from the native renderer, see {@link buildZones3D}: a zone is a floor patch plus
+	// four sides and **no lid**, a virtual wall is a thin slab. Both stand as tall as the map walls,
+	// which is what makes a zone read as a barrier rather than as a rug.
+	//
+	// Look only. The handles, the dragging and the confirmation path all live in the 2D editor; a
+	// second way to move a no-go zone is a second way to get it wrong.
+	for (const zone of model.zones) {
+		const colour = zone.kind === "forbidden" ? palette.forbiddenZone : palette.noMopZone;
+		const material = new three.MeshStandardMaterial({
+			color: colour,
+			roughness: 0.9,
+			metalness: 0,
+			transparent: true,
+			opacity: ZONE_OPACITY,
+			side: three.DoubleSide
+		});
+		disposables.push(material);
+
+		const group = new three.Group();
+		group.position.set(zone.x, 0, zone.z);
+		group.rotation.y = (-zone.angle * Math.PI) / 180;
+
+		// The floor patch, at the app's own 0.1 above the ground so it does not fight the map texture
+		// for the same depth value.
+		const floorGeometry = new three.BoxGeometry(zone.width, ZONE_FLOOR_HEIGHT, zone.depth);
+		const floorMesh = new three.Mesh(floorGeometry, material);
+		floorMesh.position.set(0, 0.1, 0);
+		group.add(floorMesh);
+		disposables.push(floorGeometry);
+
+		// Four sides. The app draws faces without thickness; a face has no volume in three.js either,
+		// but a slab reads better at a grazing angle and costs nothing.
+		const sides: Array<[number, number, number, number, number]> = [
+			[zone.width, ZONE_WALL_THICKNESS, 0, (zone.depth - ZONE_WALL_THICKNESS) / 2, 0],
+			[zone.width, ZONE_WALL_THICKNESS, 0, -(zone.depth - ZONE_WALL_THICKNESS) / 2, 0],
+			[ZONE_WALL_THICKNESS, zone.depth, (zone.width - ZONE_WALL_THICKNESS) / 2, 0, 0],
+			[ZONE_WALL_THICKNESS, zone.depth, -(zone.width - ZONE_WALL_THICKNESS) / 2, 0, 0]
+		];
+		for (const [sideWidth, sideDepth, offsetX, offsetZ] of sides) {
+			const geometry = new three.BoxGeometry(sideWidth, ZONE_HEIGHT, sideDepth);
+			const mesh = new three.Mesh(geometry, material);
+			mesh.position.set(offsetX, ZONE_HEIGHT / 2, offsetZ);
+			group.add(mesh);
+			disposables.push(geometry);
+		}
+		scene.add(group);
+	}
+
+	for (const wall of model.virtualWalls) {
+		const geometry = new three.BoxGeometry(wall.length, ZONE_HEIGHT, VIRTUAL_WALL_THICKNESS);
+		const material = new three.MeshStandardMaterial({
+			color: palette.virtualWall,
+			roughness: 0.9,
+			metalness: 0,
+			transparent: true,
+			opacity: ZONE_OPACITY
+		});
+		const mesh = new three.Mesh(geometry, material);
+		mesh.position.set(wall.x, ZONE_HEIGHT / 2, wall.z);
+		mesh.rotation.y = (-wall.angle * Math.PI) / 180;
+		scene.add(mesh);
+		disposables.push(geometry, material);
+	}
+
 	// --- Robot and dock -------------------------------------------------------------------------
 	//
 	// Plain bodies, not models. The app's 3D robot is a `.g3db` file from the APK assets, and those
 	// may not be shipped with this adapter (§3.4, §8.5) - the same line the project already drew at
 	// the dock artwork. A cylinder for the robot and a low box for the dock say where each one is,
 	// which is the whole job here.
+	let robot: any = null;
 	if (model.robot) {
 		const geometry = new three.CylinderGeometry(3.5, 3.5, 3, 24);
 		const material = new three.MeshStandardMaterial({ color: palette.robot, roughness: 0.5, metalness: 0.1 });
-		const mesh = new three.Mesh(geometry, material);
-		mesh.position.set(model.robot.x, 1.5, model.robot.y);
-		scene.add(mesh);
+		robot = new three.Mesh(geometry, material);
+		robot.position.set(model.robot.x, 1.5, model.robot.y);
+		scene.add(robot);
 		disposables.push(geometry, material);
 	}
 
@@ -280,5 +373,5 @@ export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, pa
 	camera.position.set(centre.x, span * 0.9, centre.z + span * 0.8);
 	camera.lookAt(centre.x, 0, centre.z);
 
-	return { scene, camera, disposables, centre, wallCount: model.walls.length };
+	return { scene, camera, disposables, centre, wallCount: model.walls.length, robot };
 }
