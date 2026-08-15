@@ -249,8 +249,25 @@ interface DockStatusRow {
 }
 
 const UI_CONSTANTS = {
-	ROBOT_SIZE_BASE: 5,
-	CHARGER_SIZE_BASE: 3,
+	/**
+	 * Robot and dock, in map cells - which is to say, to scale.
+	 *
+	 * A cell is 50 mm: the map's own coordinate conversion multiplies cell indices by 50 to get
+	 * the robot's millimetres. So a size given here in cells is a size in centimetres times two,
+	 * and the two symbols can be drawn as large as the things they stand for really are.
+	 *
+	 * That matters because the mop trail is drawn to scale as well - it is the path the robot
+	 * took. A robot symbol smaller than its own trail reads as if the trail were too wide, and a
+	 * dock at half its size sits oddly beside both. The previous values (5 and 3) were neither
+	 * measured nor derived: 25 cm and 15 cm, against a machine of 35 cm and a station of 43.
+	 *
+	 * The figures are the S7 Max Ultra's, which the range agrees with closely enough - Roborock's
+	 * round models run 32 to 35 cm and their stations 40 to 45 cm wide. Per-model measurements
+	 * would need a table that no plugin carries; being within a few centimetres beats being off
+	 * by a third.
+	 */
+	ROBOT_SIZE_BASE: 7,
+	CHARGER_SIZE_BASE: 8.5,
 	OBSTACLE_RADIUS_BASE: 3,
 	/**
 	 * Edge weight of a cleaning zone, divided by the zoom so it stays constant on screen.
