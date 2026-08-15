@@ -15,17 +15,31 @@ import type { Map3DModel } from "./map3dModel";
  * drawn and **where** they stand.
  */
 
+type Triple = [number, number, number];
+
+interface Placement {
+	position: Triple;
+	scale: Triple;
+}
+
+/** A placement plus which instanced mesh it went into, since the two are filled side by side. */
+interface Instance extends Placement {
+	mesh: number;
+}
+
 interface Recorded {
-	boxes: Array<[number, number, number]>;
+	boxes: Triple[];
 	instanced: Array<{ count: number }>;
-	matrices: Array<[number, number, number]>;
+	/** One entry per `setMatrixAt`, tagged with the mesh it belongs to. */
+	matrices: Instance[];
 	planes: Array<[number, number]>;
+	materials: Array<Record<string, unknown>>;
 	lights: Array<{ kind: string; intensity: number }>;
 	added: number;
 }
 
 function stubThree(): { three: ThreeLike; log: Recorded } {
-	const log: Recorded = { boxes: [], instanced: [], matrices: [], planes: [], lights: [], added: 0 };
+	const log: Recorded = { boxes: [], instanced: [], matrices: [], planes: [], materials: [], lights: [], added: 0 };
 
 	class Vec {
 		public x = 0;
@@ -41,9 +55,13 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 	class Obj {
 		public position = new Vec();
 		public rotation = new Vec();
-		public matrix = { position: [0, 0, 0] as [number, number, number] };
+		public scale = new Vec();
+		public matrix: Placement = { position: [0, 0, 0], scale: [1, 1, 1] };
 		public updateMatrix(): void {
-			this.matrix = { position: [this.position.x, this.position.y, this.position.z] };
+			this.matrix = {
+				position: [this.position.x, this.position.y, this.position.z],
+				scale: [this.scale.x, this.scale.y, this.scale.z]
+			};
 		}
 	}
 
@@ -91,7 +109,9 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 			public dispose(): void {}
 		},
 		MeshStandardMaterial: class {
-			public constructor(public parameters: Record<string, unknown>) {}
+			public constructor(public parameters: Record<string, unknown>) {
+				log.materials.push(parameters);
+			}
 			public dispose(): void {}
 		},
 		MeshBasicMaterial: class {
@@ -101,12 +121,14 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 		Mesh: class extends Obj {},
 		InstancedMesh: class extends Obj {
 			public instanceMatrix = { needsUpdate: false };
+			private readonly id: number;
 			public constructor(_geometry: unknown, _material: unknown, count: number) {
 				super();
+				this.id = log.instanced.length;
 				log.instanced.push({ count });
 			}
-			public setMatrixAt(_index: number, matrix: { position: [number, number, number] }): void {
-				log.matrices.push([...matrix.position]);
+			public setMatrixAt(_index: number, matrix: Placement): void {
+				log.matrices.push({ mesh: this.id, position: [...matrix.position], scale: [...matrix.scale] });
 			}
 			public dispose(): void {}
 		},
@@ -125,11 +147,21 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 
 const PALETTE: ScenePalette = { background: "#101010", wall: "#b8bec9", robot: "#3f7", charger: "#888" };
 
+/**
+ * Two runs: a horizontal one four cells wide along the top edge, and a single cell further down.
+ * Enough to see both the merged case and the degenerate one.
+ */
+const WALLS = [
+	{ x0: 0, y0: 0, x1: 3, y1: 0 },
+	{ x0: 2, y0: 2, x1: 2, y1: 2 }
+];
+
 function model(over: Partial<Map3DModel> = {}): Map3DModel {
 	return {
 		width: 4,
 		height: 3,
-		obstacles: [0, 5, 11],
+		walls: [...WALLS],
+		wallCellCount: 5,
 		imageSrc: "data:image/png;base64,AAAA",
 		robot: { x: 2.5, y: 0.5, angle: 90 },
 		charger: { x: 1.5, y: 1.5, angle: 0 },
@@ -150,40 +182,66 @@ describe("the floor", () => {
 });
 
 describe("the walls", () => {
-	it("draws one box per occupied cell, in a single instanced mesh", () => {
-		// The test device has 3 468 occupied cells. As separate meshes that is 3 468 draw calls and
-		// visibly slow on a tablet; as one instanced mesh it is one.
+	it("draws one box per merged run, body and cap, two instanced meshes in all", () => {
+		// One box per *run*, not per cell - that is the whole point of `extractWalls`. Two instanced
+		// meshes and two geometries no matter how large the flat: 3 468 separate meshes were visibly
+		// slow on a tablet, and 541 would be no better a habit.
 		const { three, log } = stubThree();
 		const built = buildScene(three, model(), {}, PALETTE);
 
-		expect(log.instanced).toEqual([{ count: 3 }]);
-		expect(built.wallCount).toBe(3);
+		expect(log.instanced).toEqual([{ count: 2 }, { count: 2 }]);
+		expect(built.wallCount).toBe(2);
 	});
 
-	it("uses the app's wall height and a footprint of exactly one cell", () => {
+	it("uses the app's wall height and a unit footprint it scales per run", () => {
 		const { three, log } = stubThree();
 		buildScene(three, model(), {}, PALETTE);
 
 		expect(log.boxes[0]).toEqual([1, WALL_HEIGHT_CELLS, 1]);
 	});
 
-	it("stands each box on the floor, centred on its own cell", () => {
-		// Centre of the cell, not its corner: the grid names cells, and a box on the integer would
-		// straddle four of them. Half the height, because a box is centred on its origin.
+	it("stretches each box over its run and stands it on the floor", () => {
+		// Both ends of a run are inclusive, so 0..3 is four cells wide and its centre is at 2, not at
+		// 1.5. Getting that wrong shortens every wall in the view by one cell.
 		const { three, log } = stubThree();
 		buildScene(three, model(), {}, PALETTE);
 
 		const y = WALL_HEIGHT_CELLS / 2;
-		expect(log.matrices).toEqual([
-			[0.5, y, 0.5], // cell 0  -> (0,0)
-			[1.5, y, 1.5], // cell 5  -> (1,1)
-			[3.5, y, 2.5] // cell 11 -> (3,2)
+		const bodies = log.matrices.filter((entry) => entry.mesh === 0).map(({ position, scale }) => ({ position, scale }));
+		expect(bodies).toEqual([
+			{ position: [2, y, 0.5], scale: [4, 1, 1] }, // run (0,0)..(3,0)
+			{ position: [2.5, y, 2.5], scale: [1, 1, 1] } // single cell (2,2)
 		]);
+	});
+
+	it("puts the cap on top of the body, not inside it", () => {
+		const { three, log } = stubThree();
+		buildScene(three, model(), {}, PALETTE);
+
+		// The app's plate sits at 10.15 over a wall of height 10 (`C4192OooO0oo.java:185`). Here the
+		// cap is a slab rather than a plate, and half its thickness above a 10-high wall lands on the
+		// same 10.15 - which is a pleasant check that the two are talking about the same geometry.
+		const caps = log.matrices.filter((entry) => entry.mesh === 1);
+		expect(caps).toHaveLength(2);
+		expect(caps[0].position).toEqual([2, 10.15, 0.5]);
+		expect(caps[0].scale).toEqual([4, 1, 1]);
+	});
+
+	it("makes the walls translucent, with the values read out of the app", () => {
+		// `C4192OooO0oo.java:107-113`: the body is white at alpha 0.5, the cap white at alpha 0.7,
+		// both with ordinary SRC_ALPHA / ONE_MINUS_SRC_ALPHA blending. Only the alpha is copied - the
+		// colour comes from the palette, because this view has a dark theme and the app does not.
+		const { three, log } = stubThree();
+		buildScene(three, model(), {}, PALETTE);
+
+		const [body, cap] = log.materials;
+		expect(body).toMatchObject({ color: PALETTE.wall, transparent: true, opacity: 0.5 });
+		expect(cap).toMatchObject({ color: PALETTE.wall, transparent: true, opacity: 0.7 });
 	});
 
 	it("builds no instanced mesh at all when nothing is occupied", () => {
 		const { three, log } = stubThree();
-		const built = buildScene(three, model({ obstacles: [] }), {}, PALETTE);
+		const built = buildScene(three, model({ walls: [], wallCellCount: 0 }), {}, PALETTE);
 
 		expect(log.instanced).toEqual([]);
 		expect(built.wallCount).toBe(0);
@@ -197,7 +255,7 @@ describe("robot and dock", () => {
 
 		// Floor, walls and the lights - and nothing standing for a robot nobody located.
 		expect(built.scene).toBeTruthy();
-		expect(built.wallCount).toBe(3);
+		expect(built.wallCount).toBe(2);
 	});
 });
 

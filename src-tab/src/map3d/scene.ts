@@ -23,7 +23,7 @@
  * on the integer would straddle four of them.
  */
 
-import { WALL_HEIGHT_CELLS, cellOf } from "./map3dModel";
+import { WALL_HEIGHT_CELLS } from "./map3dModel";
 import type { Map3DModel } from "./map3dModel";
 
 /**
@@ -72,9 +72,33 @@ export interface BuiltScene {
 	disposables: Array<{ dispose: () => void }>;
 	/** Centre of the map in world coordinates; where the camera looks. */
 	centre: { x: number; z: number };
-	/** How many cells were extruded. Reported so the caller can say so, and asserted in tests. */
+	/** How many wall segments were extruded. Reported so the caller can say so, and asserted in tests. */
 	wallCount: number;
 }
+
+/**
+ * Transparency of the walls, read out of the app rather than chosen.
+ *
+ * `com/roborock/smart/react/mapv2/view/C4192OooO0oo.java:107-113` builds exactly two materials for
+ * the wall geometry and uses them at `:174` (the body) and `:184` (the cap):
+ *
+ * ```java
+ * new C5472OooO0Oo(o000.OooO0O0.OooO0Oo(new com.badlogic.gdx.graphics.OooO0O0(1.0f, 1.0f, 1.0f, 0.5f)));
+ * c5472OooO0Oo.OooOO0(new o000.OooO00o(true, 770, 771, 1.0f));   // blend SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+ * ```
+ *
+ * So: white at **alpha 0.5** for the sides, white at **alpha 0.7** for the top plate, both with
+ * ordinary alpha blending. The alpha carries over unchanged; the colour comes from the palette
+ * instead of being hard-coded white, because this view has a dark theme and the app does not.
+ *
+ * `depthWrite` stays at the three.js default (`true`), which is what libGDX does here too - the
+ * blending attribute changes the colour maths, not the depth buffer.
+ */
+const WALL_OPACITY = 0.5;
+const WALL_CAP_OPACITY = 0.7;
+
+/** Thickness of the cap, and where it sits. The app puts its plate at 10.15 (`C4192OooO0oo.java:185`). */
+const WALL_CAP_THICKNESS = 0.3;
 
 /**
  * The light rig, taken from the app rather than invented.
@@ -121,27 +145,61 @@ export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, pa
 	scene.add(floor);
 	disposables.push(floorGeometry, floorMaterial);
 
-	// --- The walls: one box per occupied cell, in a single draw call ----------------------------
+	// --- The walls: one box per merged run, plus a cap, in two draw calls -----------------------
 	//
-	// The test device has 3 468 of them. As separate meshes that is 3 468 draw calls and visibly
-	// slow on a tablet; as one `InstancedMesh` it is one, and the geometry exists once.
+	// One box per run, not per cell: 541 instead of 3 468 on the test device, and - the point the
+	// user actually raised - the picture reads as walls around rooms instead of gravel. See
+	// {@link extractWalls} for where the runs come from.
+	//
+	// Both layers are `InstancedMesh` with a unit box scaled per instance, so the whole wall set is
+	// two draw calls and two geometries no matter how large the flat is. That was the right call for
+	// 3 468 boxes on a tablet and stays the right one for 541.
 	const wallGeometry = new three.BoxGeometry(1, WALL_HEIGHT_CELLS, 1);
-	const wallMaterial = new three.MeshStandardMaterial({ color: palette.wall, roughness: 0.9, metalness: 0 });
-	disposables.push(wallGeometry, wallMaterial);
+	const wallMaterial = new three.MeshStandardMaterial({
+		color: palette.wall,
+		roughness: 0.9,
+		metalness: 0,
+		transparent: true,
+		opacity: WALL_OPACITY
+	});
+	const capGeometry = new three.BoxGeometry(1, WALL_CAP_THICKNESS, 1);
+	const capMaterial = new three.MeshStandardMaterial({
+		color: palette.wall,
+		roughness: 0.9,
+		metalness: 0,
+		transparent: true,
+		opacity: WALL_CAP_OPACITY
+	});
+	disposables.push(wallGeometry, wallMaterial, capGeometry, capMaterial);
 
-	if (model.obstacles.length > 0) {
-		const walls = new three.InstancedMesh(wallGeometry, wallMaterial, model.obstacles.length);
+	if (model.walls.length > 0) {
+		const walls = new three.InstancedMesh(wallGeometry, wallMaterial, model.walls.length);
+		const caps = new three.InstancedMesh(capGeometry, capMaterial, model.walls.length);
 		const dummy = new three.Object3D();
-		for (let i = 0; i < model.obstacles.length; i++) {
-			const cell = cellOf(model.obstacles[i], model.width);
+		for (let i = 0; i < model.walls.length; i++) {
+			const segment = model.walls[i];
+			// Both ends are inclusive, so a run from 4 to 7 is four cells wide, and its centre sits
+			// half a cell past the last one.
+			const spanX = segment.x1 - segment.x0 + 1;
+			const spanZ = segment.y1 - segment.y0 + 1;
+			const centreX = segment.x0 + spanX / 2;
+			const centreZ = segment.y0 + spanZ / 2;
+
+			dummy.scale.set(spanX, 1, spanZ);
 			// Half the height, because a box is centred on its origin and this one stands on the floor.
-			dummy.position.set(cell.x + 0.5, WALL_HEIGHT_CELLS / 2, cell.y + 0.5);
+			dummy.position.set(centreX, WALL_HEIGHT_CELLS / 2, centreZ);
 			dummy.updateMatrix();
 			walls.setMatrixAt(i, dummy.matrix);
+
+			dummy.position.set(centreX, WALL_HEIGHT_CELLS + WALL_CAP_THICKNESS / 2, centreZ);
+			dummy.updateMatrix();
+			caps.setMatrixAt(i, dummy.matrix);
 		}
 		walls.instanceMatrix.needsUpdate = true;
+		caps.instanceMatrix.needsUpdate = true;
 		scene.add(walls);
-		disposables.push(walls);
+		scene.add(caps);
+		disposables.push(walls, caps);
 	}
 
 	// --- Robot and dock -------------------------------------------------------------------------
@@ -188,5 +246,5 @@ export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, pa
 	camera.position.set(centre.x, span * 0.9, centre.z + span * 0.8);
 	camera.lookAt(centre.x, 0, centre.z);
 
-	return { scene, camera, disposables, centre, wallCount: model.obstacles.length };
+	return { scene, camera, disposables, centre, wallCount: model.walls.length };
 }

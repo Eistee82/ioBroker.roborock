@@ -26,13 +26,17 @@
  *
  * The wall height is the app's own constant: `10` world units at one unit per cell, and a cell is
  * 50 mm, so 500 mm (`21-3d-kartenansicht.md` §3.1, from
- * `com/roborock/smart/react/mapv2/view/C4192OooO0oo.java:170-186`). The app extrudes wall
- * *segments* it gets from block 55; the a65 does not deliver that block, and the app then falls
- * back to plain rectangles too. Here every obstacle cell becomes one box, which is the same picture
- * arrived at from the data this adapter really has.
+ * `com/roborock/smart/react/mapv2/view/C4192OooO0oo.java:170-186`).
+ *
+ * The cells are **not** extruded one by one. The app groups them, throws away the groups that sit
+ * enclosed inside a room, and merges the rest into straight runs before extruding - which is why
+ * its 3D view shows outlines and this one first showed gravel. That algorithm lives in
+ * {@link extractWalls}, together with its measurement: 3 468 cells become 541 wall segments.
  */
 
 import { robotToPixel } from "@adapter/common/coordTransformation";
+import { clearedCells, extractWalls } from "./walls";
+import type { WallSegment } from "./walls";
 
 /** Millimetres one map cell covers. */
 export const MM_PER_CELL = 50;
@@ -58,8 +62,10 @@ export interface Map3DModel {
 	width: number;
 	/** Grid height in cells. */
 	height: number;
-	/** Indices of the occupied cells, as the adapter published them. */
-	obstacles: number[];
+	/** Straight wall runs, merged out of the occupied cells the way the app does it. */
+	walls: WallSegment[];
+	/** How many occupied cells went into those runs. Kept so the view can report the reduction. */
+	wallCellCount: number;
 	/** The finished map picture, ready to use as a texture. */
 	imageSrc: string;
 	robot: Placed | null;
@@ -71,10 +77,13 @@ interface RawMapData {
 	IMAGE?: {
 		position?: { left?: unknown; top?: unknown };
 		dimensions?: { width?: unknown; height?: unknown };
-		pixels?: { obstacle?: unknown };
+		pixels?: { obstacle?: unknown; floor?: unknown };
 	};
 	ROBOT_POSITION?: { position?: unknown; angle?: unknown };
 	CHARGER_LOCATION?: { position?: unknown; angle?: unknown };
+	FURNITURES?: unknown;
+	OBSTACLES?: unknown;
+	OBSTACLES2?: unknown;
 }
 
 /** Reads a positive integer, or null. */
@@ -165,24 +174,107 @@ export function buildMap3DModel(rawMapData: unknown, imageSrc: unknown): Map3DMo
 
 	// Only indices that can name a cell of this grid. A stray value would place a box outside the
 	// floor, where it would look like a wall in mid-air rather than like the bad datum it is.
-	const cells = parsed.IMAGE.pixels?.obstacle;
-	const obstacles: number[] = [];
-	if (Array.isArray(cells)) {
-		const limit = width * height;
-		for (const raw of cells) {
-			const index = Number(raw);
-			if (Number.isInteger(index) && index >= 0 && index < limit) obstacles.push(index);
-		}
-	}
+	const obstacles = cellIndices(parsed.IMAGE.pixels?.obstacle, width * height);
+	const floor = cellIndices(parsed.IMAGE.pixels?.floor, width * height);
+	const cleared = clearedCells(width, height, left, top, {
+		furniture: readFurnitureCorners(parsed.FURNITURES),
+		dock: readPointMm(parsed.CHARGER_LOCATION?.position),
+		objects: [...readObjectPositions(parsed.OBSTACLES), ...readObjectPositions(parsed.OBSTACLES2)]
+	});
+	const extracted = extractWalls(width, height, obstacles, floor, cleared);
 
 	return {
 		width,
 		height,
-		obstacles,
+		walls: extracted.segments.map(flipRow.bind(null, height)),
+		wallCellCount: extracted.cellCount,
 		imageSrc,
 		robot: readPlaced(parsed.ROBOT_POSITION, left, top, height),
 		charger: readPlaced(parsed.CHARGER_LOCATION, left, top, height)
 	};
+}
+
+/**
+ * Turns a wall run from grid rows into the row order of the rendered picture.
+ *
+ * **The map PNG is upside down with respect to the cell indices.** The adapter draws cell `i` at
+ * `y = height - row(i) - 1` (`src/common/mapDrawing/coordHelpers.ts:31-36`), and `robotToPixel`
+ * flips the robot the same way, so the two agree in the 2D view. The cell lists, however, are in
+ * plain row order.
+ *
+ * The 3D view uses that PNG as its floor texture and places the robot through `robotToPixel`, so
+ * anything derived straight from a cell index has to be flipped to match. Without this the walls
+ * stand mirrored front to back over their own floor - which the first version of this view did,
+ * unnoticed, because 3 468 boxes of gravel covered the whole floor anyway and this flat's outline
+ * is roughly symmetric.
+ *
+ * @param height Grid height in cells.
+ * @param segment A run in grid rows.
+ * @returns The same run in picture rows.
+ */
+function flipRow(height: number, segment: WallSegment): WallSegment {
+	return { x0: segment.x0, x1: segment.x1, y0: height - 1 - segment.y1, y1: height - 1 - segment.y0 };
+}
+
+/** Reads `[x, y]` in millimetres out of a published position, or null. */
+function readPointMm(value: unknown): CellPoint | null {
+	if (!Array.isArray(value) || value.length < 2) return null;
+	const x = finite(value[0]);
+	const y = finite(value[1]);
+	return x === null || y === null ? null : { x, y };
+}
+
+/**
+ * The four corners of every piece of furniture, in millimetres.
+ *
+ * `MapParser.getFurnitures` publishes them as `{x1, y1, … x4, y4, type, subType, …}` with the
+ * corners in robot coordinates (`src/lib/map/v1/types.ts:20-27`). Only the corners are needed here:
+ * the piece is blanked out by its bounding rectangle, so its rotation does not matter.
+ */
+function readFurnitureCorners(value: unknown): CellPoint[][] {
+	if (!Array.isArray(value)) return [];
+	const out: CellPoint[][] = [];
+	for (const raw of value) {
+		if (!raw || typeof raw !== "object") continue;
+		const piece = raw as Record<string, unknown>;
+		const corners: CellPoint[] = [];
+		for (const n of [1, 2, 3, 4]) {
+			const x = finite(piece[`x${n}`]);
+			const y = finite(piece[`y${n}`]);
+			if (x !== null && y !== null) corners.push({ x, y });
+		}
+		if (corners.length > 0) out.push(corners);
+	}
+	return out;
+}
+
+/**
+ * Positions of the detected objects, in millimetres.
+ *
+ * `MapParser.extractObstacles` publishes each one as an array whose first two entries are the
+ * coordinates (`src/lib/map/v1/MapParser.ts:608-620`). Both `OBSTACLES` and `OBSTACLES2` are read:
+ * the app takes its list from block 13, the test device sends its objects in block 15, and the two
+ * have the same shape.
+ */
+function readObjectPositions(value: unknown): CellPoint[] {
+	if (!Array.isArray(value)) return [];
+	const out: CellPoint[] = [];
+	for (const raw of value) {
+		const point = readPointMm(raw);
+		if (point) out.push(point);
+	}
+	return out;
+}
+
+/** Keeps the entries of a published cell list that can actually name a cell of the grid. */
+function cellIndices(value: unknown, limit: number): number[] {
+	if (!Array.isArray(value)) return [];
+	const out: number[] = [];
+	for (const raw of value) {
+		const index = Number(raw);
+		if (Number.isInteger(index) && index >= 0 && index < limit) out.push(index);
+	}
+	return out;
 }
 
 /** Turns a cell index into its coordinates in the grid. */
