@@ -264,6 +264,47 @@ export function startingSplitLine(view: RasterView, blockId: number, through: Ra
 	return { left: { x: column, y: minRow }, right: { x: column, y: maxRow } };
 }
 
+/** Cells one arrow-key press moves an end of the line. One cell is 50 mm. */
+export const NUDGE_CELLS = 1;
+
+/** Cells a press with Shift moves it. */
+export const NUDGE_CELLS_FAST = 10;
+
+/**
+ * Moves an end of the line by a key press.
+ *
+ * The reason this exists is the reason rooms get divided at all: a doorway is one or two cells
+ * wide, and putting a line exactly in one by dragging is fiddly with a mouse and impossible to do
+ * repeatably. It also makes the line reachable without a pointing device.
+ *
+ * **The y axis flips here, and only here.** Everything else in this file is in raster cells, where
+ * `y` counts down the array and up the robot's own axis. The *screen* is the other way round - the
+ * map is drawn with `py = height - row`, which is why a larger row sits higher up. So "up" on the
+ * keyboard has to *increase* the row. Getting this backwards would move the line the wrong way in
+ * a control whose whole point is precision, and it would look like a bug in the drag rather than
+ * in the key.
+ * @param point The end being moved, in raster cells.
+ * @param key `KeyboardEvent.key`.
+ * @param fast Whether Shift was held.
+ * @returns The moved point, or `null` when the key was not an arrow.
+ */
+export function nudgeSplitPoint(point: RasterPoint, key: string, fast: boolean): RasterPoint | null {
+	const step = fast ? NUDGE_CELLS_FAST : NUDGE_CELLS;
+
+	switch (key) {
+		case "ArrowLeft":
+			return { x: point.x - step, y: point.y };
+		case "ArrowRight":
+			return { x: point.x + step, y: point.y };
+		case "ArrowUp":
+			return { x: point.x, y: point.y + step };
+		case "ArrowDown":
+			return { x: point.x, y: point.y - step };
+		default:
+			return null;
+	}
+}
+
 /**
  * Rooms a robot without `NewFeatureStrBit.MaxZoneOpened` may hold before a split is refused.
  * The app's two-stage gate; see {@link splitPreconditions}.

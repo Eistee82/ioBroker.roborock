@@ -39,6 +39,16 @@ export interface SplitLineLayerInput {
 	endDrag?: d3.DragBehavior<SVGGElement, "a" | "b", unknown>;
 	/** Gesture for the band along the line. */
 	lineDrag?: d3.DragBehavior<SVGGElement, unknown, unknown>;
+	/**
+	 * A key was pressed on a focused grip.
+	 *
+	 * Arrow keys are what make the line placeable in a doorway - one or two cells wide, which is
+	 * fiddly to hit by dragging and impossible to repeat. Making the grips focusable for that also
+	 * makes the whole control reachable without a pointing device.
+	 */
+	onEndKey?: (end: "a" | "b", event: KeyboardEvent) => void;
+	/** Accessible name for each grip, already translated. */
+	endLabels?: { a: string; b: string };
 }
 
 /** Radius of an end grip in screen pixels, before the zoom is divided out. */
@@ -109,8 +119,18 @@ export function drawSplitLine(input: SplitLineLayerInput): void {
 			.append("g")
 			.attr("class", "split-line-grip")
 			.attr("data-end", end)
+			// Focusable, so the arrow keys have somewhere to arrive - and so the control can be
+			// reached at all without a pointing device. A bare `<g>` is not in the tab order.
+			.attr("tabindex", 0)
+			.attr("role", "button")
+			.attr("aria-label", input.endLabels?.[end] ?? `split-line-${end}`)
 			.datum(end)
 			.style("cursor", "grab");
+		if (input.onEndKey) {
+			grip.on("keydown", function (event: KeyboardEvent, datum: "a" | "b") {
+				input.onEndKey?.(datum, event);
+			});
+		}
 		grip
 			.append("circle")
 			.attr("cx", point.x)

@@ -416,5 +416,7 @@
   "ui_split_room_too_small": "Questa stanza è di soli %s m². L'app non divide nulla sotto %s m².",
   "ui_split_too_many_rooms": "La mappa ha già %s stanze e il limite è %s. Unisci prima due stanze.",
   "ui_segment_edit_sequence_is": "L'ordine memorizzato: %s",
-  "ui_segment_edit_sequence_none": "Nessun ordine di pulizia impostato, qui non si perde nulla."
+  "ui_segment_edit_sequence_none": "Nessun ordine di pulizia impostato, qui non si perde nulla.",
+  "ui_split_grip_a": "Linea di divisione, un'estremità",
+  "ui_split_grip_b": "Linea di divisione, altra estremità"
 }

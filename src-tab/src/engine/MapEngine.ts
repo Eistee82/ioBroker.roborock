@@ -51,7 +51,7 @@ import type { Furniture, SegmentInfo } from "@adapter/lib/map/v1/types";
 import type { SegmentRaster } from "@adapter/common/segmentRaster";
 import { decodeRasterRuns, SQUARE_METRES_PER_CELL } from "@adapter/common/segmentRaster";
 import type { RasterPoint, RasterView, SplitLineResult } from "@adapter/common/splitLine";
-import { MIN_SPLIT_AREA_SQM, previewSplitHalves, snapSplitLine, splitPayload, splitPreconditions, startingSplitLine } from "@adapter/common/splitLine";
+import { MIN_SPLIT_AREA_SQM, nudgeSplitPoint, previewSplitHalves, snapSplitLine, splitPayload, splitPreconditions, startingSplitLine } from "@adapter/common/splitLine";
 import { drawSplitLine } from "./splitLineLayer";
 
 /**
@@ -3213,7 +3213,40 @@ export class MapEngine {
 			colour: getMapOverlayColors(this.mapColorScheme).zoneStroke,
 			endDrag: this.splitEndDrag(params),
 			lineDrag: this.splitLineDrag(params),
+			onEndKey: (end, event) => this.nudgeSplitEnd(end, event),
+			endLabels: {
+				a: this.t("ui_split_grip_a", "Dividing line, one end"),
+				b: this.t("ui_split_grip_b", "Dividing line, other end"),
+			},
 		});
+	}
+
+	/**
+	 * Moves one end of the line with the keyboard.
+	 *
+	 * One cell per press, ten with Shift - a doorway is one or two cells wide, and that is where a
+	 * dividing line belongs. The redraw rebuilds the grips, so the focus is put back on the one that
+	 * was being moved; without that, the second press would go nowhere.
+	 * @param end Which grip has the focus.
+	 * @param event The key press.
+	 */
+	private nudgeSplitEnd(end: "a" | "b", event: KeyboardEvent): void {
+		if (!this.splitDragged) return;
+
+		const moved = nudgeSplitPoint(this.splitDragged[end], event.key, event.shiftKey);
+		if (!moved) return;
+
+		// Arrow keys scroll the panel behind the map otherwise, which moves the thing the user is
+		// looking at while they are trying to place a line on it.
+		event.preventDefault();
+
+		this.splitDragged = { ...this.splitDragged, [end]: moved };
+		this.resnapSplitLine();
+		this.renderSplitLine();
+		this.notifySplitChanged();
+
+		const refocused = this.splitGroup.select<SVGGElement>(`g.split-line-grip[data-end="${end}"]`).node();
+		refocused?.focus();
 	}
 
 	/**

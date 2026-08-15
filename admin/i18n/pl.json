@@ -416,5 +416,7 @@
   "ui_split_room_too_small": "To pomieszczenie ma tylko %s m². Aplikacja nie dzieli niczego poniżej %s m².",
   "ui_split_too_many_rooms": "Mapa ma już %s pomieszczeń, a limit to %s. Najpierw połącz dwa pomieszczenia.",
   "ui_segment_edit_sequence_is": "Zapisana kolejność: %s",
-  "ui_segment_edit_sequence_none": "Nie ustawiono kolejności sprzątania, więc nic tu nie przepada."
+  "ui_segment_edit_sequence_none": "Nie ustawiono kolejności sprzątania, więc nic tu nie przepada.",
+  "ui_split_grip_a": "Linia podziału, jeden koniec",
+  "ui_split_grip_b": "Linia podziału, drugi koniec"
 }

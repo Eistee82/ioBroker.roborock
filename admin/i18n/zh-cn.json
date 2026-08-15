@@ -416,5 +416,7 @@
   "ui_split_room_too_small": "该房间只有 %s m²。App 不会分割小于 %s m² 的房间。",
   "ui_split_too_many_rooms": "地图上已有 %s 个房间，上限为 %s。请先合并两个房间。",
   "ui_segment_edit_sequence_is": "当前顺序：%s",
-  "ui_segment_edit_sequence_none": "未设置清扫顺序，此处不会丢失任何内容。"
+  "ui_segment_edit_sequence_none": "未设置清扫顺序，此处不会丢失任何内容。",
+  "ui_split_grip_a": "分割线，一端",
+  "ui_split_grip_b": "分割线，另一端"
 }

@@ -416,5 +416,7 @@
   "ui_split_room_too_small": "Deze kamer is maar %s m². De app deelt niets onder %s m² op.",
   "ui_split_too_many_rooms": "De kaart heeft al %s kamers, het maximum is %s. Voeg eerst twee kamers samen.",
   "ui_segment_edit_sequence_is": "De opgeslagen volgorde: %s",
-  "ui_segment_edit_sequence_none": "Er is geen schoonmaakvolgorde ingesteld, dus hier gaat niets verloren."
+  "ui_segment_edit_sequence_none": "Er is geen schoonmaakvolgorde ingesteld, dus hier gaat niets verloren.",
+  "ui_split_grip_a": "Scheidingslijn, één uiteinde",
+  "ui_split_grip_b": "Scheidingslijn, ander uiteinde"
 }

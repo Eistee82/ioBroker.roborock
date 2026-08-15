@@ -416,5 +416,7 @@
   "ui_split_room_too_small": "Esta habitación tiene solo %s m². La aplicación no divide nada por debajo de %s m².",
   "ui_split_too_many_rooms": "El mapa ya tiene %s habitaciones y el límite es %s. Combina dos habitaciones primero.",
   "ui_segment_edit_sequence_is": "El orden guardado: %s",
-  "ui_segment_edit_sequence_none": "No hay ningún orden de limpieza definido, así que aquí no se pierde nada."
+  "ui_segment_edit_sequence_none": "No hay ningún orden de limpieza definido, así que aquí no se pierde nada.",
+  "ui_split_grip_a": "Línea divisoria, un extremo",
+  "ui_split_grip_b": "Línea divisoria, otro extremo"
 }

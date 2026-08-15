@@ -416,5 +416,7 @@
   "ui_split_room_too_small": "Dieser Raum hat nur %s m². Die App teilt nichts unter %s m².",
   "ui_split_too_many_rooms": "Die Karte hat bereits %s Räume, das Limit liegt bei %s. Lege zuerst zwei Räume zusammen.",
   "ui_segment_edit_sequence_is": "Die gespeicherte Reihenfolge: %s",
-  "ui_segment_edit_sequence_none": "Es ist keine Reinigungsreihenfolge gesetzt, hier geht also nichts verloren."
+  "ui_segment_edit_sequence_none": "Es ist keine Reinigungsreihenfolge gesetzt, hier geht also nichts verloren.",
+  "ui_split_grip_a": "Trennlinie, ein Ende",
+  "ui_split_grip_b": "Trennlinie, anderes Ende"
 }

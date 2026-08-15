@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RasterPoint, RasterView } from "./splitLine";
-import { previewSplitHalves, snapSplitLine, splitPayload, splitPreconditions, startingSplitLine } from "./splitLine";
+import { nudgeSplitPoint, previewSplitHalves, snapSplitLine, splitPayload, splitPreconditions, startingSplitLine } from "./splitLine";
+import { robotCoordsToLocalCoords } from "./coordTransformation";
 
 /**
  * The dividing line, tested against maps drawn as text.
@@ -331,6 +332,46 @@ describe("the line the app offers before the user moves anything", () => {
 		// Both probes span columns/rows 1..3 including the ring, so extents tie and the tie goes
 		// vertical - the same branch the app takes when neither direction is longer.
 		expect(startingSplitLine(ringed, ROOM, at(2, 2))).toEqual({ left: { x: 2, y: 1 }, right: { x: 2, y: 3 } });
+	});
+});
+
+describe("moving an end with the keyboard", () => {
+	const start = at(10, 20);
+
+	it("moves one cell per press, ten with Shift", () => {
+		expect(nudgeSplitPoint(start, "ArrowRight", false)).toEqual({ x: 11, y: 20 });
+		expect(nudgeSplitPoint(start, "ArrowRight", true)).toEqual({ x: 20, y: 20 });
+		expect(nudgeSplitPoint(start, "ArrowLeft", false)).toEqual({ x: 9, y: 20 });
+		expect(nudgeSplitPoint(start, "ArrowLeft", true)).toEqual({ x: 0, y: 20 });
+	});
+
+	it("sends the line up the screen when the up arrow is pressed", () => {
+		// The one direction that is not obvious, and the one a rebuild gets backwards. The map is
+		// drawn with `py = height - row`, so a *larger* row sits *higher* on screen: up must add.
+		// Checked against the conversion itself below rather than asserted from memory.
+		const up = nudgeSplitPoint(start, "ArrowUp", false);
+		const down = nudgeSplitPoint(start, "ArrowDown", false);
+
+		expect(up).toEqual({ x: 10, y: 21 });
+		expect(down).toEqual({ x: 10, y: 19 });
+
+		// The property that makes it right: converted to millimetres and then to the screen, the
+		// point moved by "up" must sit above the one moved by "down".
+		const params = { scaleFactor: 3, left: 0, topMap: 0, imageHeight: 300 * 3 };
+		const toScreen = (point: { x: number; y: number }): { x: number; y: number } =>
+			robotCoordsToLocalCoords({ x: point.x * 50, y: point.y * 50 }, params);
+		expect(toScreen(up!).y).toBeLessThan(toScreen(down!).y);
+	});
+
+	it("keeps the other coordinate untouched", () => {
+		expect(nudgeSplitPoint(start, "ArrowUp", false)!.x).toBe(start.x);
+		expect(nudgeSplitPoint(start, "ArrowLeft", false)!.y).toBe(start.y);
+	});
+
+	it("answers nothing for a key that is not an arrow", () => {
+		for (const key of ["Enter", " ", "Escape", "a", "Tab", "PageUp"]) {
+			expect(nudgeSplitPoint(start, key, false), key).toBeNull();
+		}
 	});
 });
 
