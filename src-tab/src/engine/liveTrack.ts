@@ -123,13 +123,27 @@ export const LIVE_TRACK_WIDTH = Object.freeze({
 	casingExtra: 2.2
 });
 
-/** Radius and heading wedge of the live position marker, in SVG user units. */
+/**
+ * Radius and heading wedge of the live position marker, in SVG user units.
+ *
+ * The marker replaces the map's own robot while a live position exists, so the two have to be the
+ * same size - otherwise the robot would visibly shrink the moment the live channel starts
+ * reporting. That size is the app's: `robotDiameter: 8.8` map cells, in the decompiled control
+ * plugin `roborock.vacuum.a65_control_v5208` at bundle line 342603. A cell is `VISUAL_BLOCK_SIZE`
+ * = 3 user units here, which puts the diameter at 26.4 and the radius at **13.2**.
+ *
+ * It used to be 6, a radius of 12 units against the map robot's 21 - so the robot did shrink, and
+ * the live marker was the smaller of the two the user was actually looking at.
+ *
+ * The wedge keeps its proportions to the body (11/6 and 4/6 of the radius), because those were
+ * chosen against the body and not against the map.
+ */
 export const LIVE_ROBOT_SIZE = Object.freeze({
-	radius: 6,
+	radius: 13.2,
 	/** Distance from the centre to the tip of the heading wedge. */
-	headingLength: 11,
+	headingLength: 24.2,
 	/** Half-width of the wedge at its base. */
-	headingHalfWidth: 4
+	headingHalfWidth: 8.8
 });
 
 /** One run of the track that is entirely mopped or entirely not. */

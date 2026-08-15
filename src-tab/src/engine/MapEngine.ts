@@ -269,12 +269,24 @@ const UI_CONSTANTS = {
 	 * dock at half its size sits oddly beside both. The previous values (5 and 3) were neither
 	 * measured nor derived: 25 cm and 15 cm, against a machine of 35 cm and a station of 43.
 	 *
+	 * **The robot is drawn larger than it really is, on purpose and on the app's numbers.** True
+	 * scale would be 7 cells, and reported from the field as too small to see. The app agrees: its
+	 * own size table gives `robotRadius` and `robotDiameter` as **8.8** cells - 44 cm for a machine
+	 * of 35 - in the decompiled control plugin `roborock.vacuum.a65_control_v5208`, bundle line
+	 * 342603, the same literal that carries `chargerNormal: 4.8` and `chargerRadius: 10.4` which
+	 * `chargerGraphic.ts` already builds the dock from. So the app oversizes the robot by a quarter
+	 * and nothing else, which is exactly the correction that was asked for, and it keeps the robot
+	 * below the 10.4 cells of a base station - the way round it really is.
+	 *
+	 * `CHARGER_SIZE_BASE` stays true to scale because it is now only the fallback symbol, drawn
+	 * when the app's own dock artwork is not available; the real graphic carries the app's sizes.
+	 *
 	 * The figures are the S7 Max Ultra's, which the range agrees with closely enough - Roborock's
 	 * round models run 32 to 35 cm and their stations 40 to 45 cm wide. Per-model measurements
 	 * would need a table that no plugin carries; being within a few centimetres beats being off
 	 * by a third.
 	 */
-	ROBOT_SIZE_BASE: 7,
+	ROBOT_SIZE_BASE: 8.8,
 	CHARGER_SIZE_BASE: 8.5,
 	OBSTACLE_RADIUS_BASE: 3,
 	/**
