@@ -992,14 +992,11 @@ describe("A179Features", () => {
 			val: '{"clean_time":900,"clean_area":12000000}',
 			ack: true
 		});
-		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.cleaningInfo.estimateTimeMinutes", {
-			val: 15,
-			ack: true
-		});
-		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.cleaningInfo.estimateArea", {
-			val: 12,
-			ack: true
-		});
+		// `estimateTimeMinutes` and `estimateArea` used to be asserted here, from the invented
+		// payload above. No robot sends `clean_time` / `clean_area` under this method, so the two
+		// states never appeared in practice - the assertions passed only because the payload was
+		// made up to fit them. The real answer, and what is published from it, is pinned in
+		// "publishes the clean estimate through the shared reader".
 		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.dockingStationStatus.dryerJSON", {
 			val: '{"status":1,"on":{"dry_time":1800}}',
 			ack: true
@@ -1251,6 +1248,75 @@ describe("A179Features", () => {
 
 		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.dockingStationStatus.smartWash.backWashMode", {
 			val: 2,
+			ack: true
+		});
+	});
+
+	/**
+	 * The measured answer of `app_get_clean_estimate_info`, end to end.
+	 *
+	 * Pins two things at once: that the numbers come out of the shared, vetted reader, and that
+	 * this class adds only its JSON copy on top. The payload is the one the reference robot really
+	 * sent (`_appanalysis/geraetefaehigkeiten-1786790619395.json`).
+	 */
+	it("publishes the clean estimate through the shared reader, and adds only its JSON copy", async () => {
+		const feature = new A179Features(depsMock, "duid1");
+
+		await feature.onCommandResult("app_get_clean_estimate_info", "app_get_clean_estimate_info", {
+			clean_estimate: {
+				total_area: 27070000, remaining_area: 2790000, total_battery: 13, remaining_battery: 1,
+				total_time: 1949, remaining_time: 200, resume_wait_time: 0, count: 1, percent: 0,
+				clean_time_rate: "72.00", battery_consumption_rate: "0.62"
+			}
+		}, {});
+
+		// 27070000 mm², carried through the shared reader's own rounding.
+		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.cleaningInfo.estimateTotalArea", {
+			val: 27.1,
+			ack: true
+		});
+		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.cleaningInfo.estimateTotalTime", {
+			val: 1949,
+			ack: true
+		});
+		expect(adapterMock.setStateChanged).toHaveBeenCalledWith("Devices.duid1.cleaningInfo.estimateRemainingTime", {
+			val: 200,
+			ack: true
+		});
+		// This class contributes the raw copy and nothing else.
+		const written: string[] = adapterMock.setStateChanged.mock.calls
+			.map((call: any[]) => String(call[0]))
+			.filter((id: string) => id.includes("estimate"));
+		expect(written).toContain("Devices.duid1.cleaningInfo.estimateJSON");
+		expect(written).not.toContain("Devices.duid1.cleaningInfo.estimateTimeMinutes");
+		expect(written).not.toContain("Devices.duid1.cleaningInfo.estimateArea");
+	});
+
+	/**
+	 * The regression this guards is not "the numbers are missing" - they are published, by the
+	 * inherited reader. It is the opposite: this class used to derive a *second*, differently
+	 * scaled pair of numbers from top-level `clean_time` / `clean_area`, two fields that appear in
+	 * no measured answer of this method and that no plugin reads from it.
+	 *
+	 * They never fired on a real answer, which is why the states looked merely absent. The hazard
+	 * is a firmware that does send a top-level `clean_time` meaning something else: the adapter
+	 * would then publish an estimate in minutes next to the vetted one in seconds, and the two
+	 * would disagree without anything saying which is right.
+	 */
+	it("derives no numbers of its own from fields this method never carries", async () => {
+		const feature = new A179Features(depsMock, "duid1");
+
+		await feature.onCommandResult("app_get_clean_estimate_info", "app_get_clean_estimate_info", {
+			clean_time: 1949,
+			clean_area: 27070000
+		}, {});
+
+		expect(adapterMock.setStateChanged).not.toHaveBeenCalledWith("Devices.duid1.cleaningInfo.estimateTimeMinutes", {
+			val: 32,
+			ack: true
+		});
+		expect(adapterMock.setStateChanged).not.toHaveBeenCalledWith("Devices.duid1.cleaningInfo.estimateArea", {
+			val: 27,
 			ack: true
 		});
 	});

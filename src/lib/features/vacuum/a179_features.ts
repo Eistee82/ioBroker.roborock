@@ -2452,32 +2452,44 @@ export class A179Features extends V1VacuumFeatures {
 		}
 	}
 
+	/**
+	 * Keeps the raw answer of `app_get_clean_estimate_info`. The numbers are not read here.
+	 *
+	 * This method used to look for `clean_time` and `clean_area` at the top level of the answer and
+	 * publish `cleaningInfo.estimateTimeMinutes` and `estimateArea` from them. Neither field is part
+	 * of this answer. The measured one is nested and named differently
+	 * (`_appanalysis/geraetefaehigkeiten-1786790619395.json`):
+	 *
+	 * ```json
+	 * {"clean_estimate": {"total_area": 27070000, "remaining_area": 2790000, "total_battery": 13,
+	 *   "remaining_battery": 1, "total_time": 1949, "remaining_time": 200, "resume_wait_time": 0,
+	 *   "count": 1, "percent": 0, "clean_time_rate": "72.00", "battery_consumption_rate": "0.62"}}
+	 * ```
+	 *
+	 * and the app reads exactly those nine fields out of `result.clean_estimate`
+	 * (`_appanalysis/plugins/a65_control_v5208/index.android.bundle.decompiled.js` Z. 781066-781086).
+	 * `clean_time` and `clean_area` are field names of `get_status` and of the cleaning records;
+	 * under this method they appear in no measurement and in no plugin. The two states were
+	 * therefore never written - not "sometimes", never.
+	 *
+	 * They are **not** re-derived here, because the numbers already arrive: `onCommandResult` calls
+	 * `super` first, and the V1 branch answers this same method through `parseCleanEstimateResponse`
+	 * / `applyCleanEstimateResponse`, which publish eight `cleaningInfo.estimate*` states from the
+	 * nested payload. Reading it a second time here would put a differently scaled pair next to
+	 * them - minutes beside seconds - with nothing to say which one to believe.
+	 *
+	 * **What stays unproven for this model:** the answer above was measured on an a65, and the
+	 * plugin line numbers are the a65's. This class is the Saros Z70, whose control plugin we do
+	 * not have. Whether a Z70 answers in the same shape is unknown - which is a reason to read it
+	 * in one place rather than two, not a reason to guess a second shape here. If a Z70 ever turns
+	 * out to answer differently, `parseCleanEstimateResponse` is the single place to teach.
+	 *
+	 * @param rawValue Raw robot answer.
+	 */
 	private async applyCleanEstimateStatus(rawValue: unknown): Promise<void> {
 		const normalized = this.normalizeRpcPayload(rawValue);
 		await this.cleanupLegacyPaths(["cleanEstimate"]);
 		await this.writeJsonState("cleaningInfo.estimateJSON", "Clean Estimate JSON", normalized);
-
-		if (typeof normalized !== "object" || normalized === null || Array.isArray(normalized)) {
-			return;
-		}
-
-		const cleanTimeSeconds = Number((normalized as { clean_time?: unknown }).clean_time);
-		if (Number.isFinite(cleanTimeSeconds)) {
-			await this.stateWriter.ensureAndSetValueState("cleaningInfo.estimateTimeMinutes", {
-				name: "Clean Estimate Time",
-				type: "number",
-				unit: "min"
-			}, Math.round(cleanTimeSeconds / 60));
-		}
-
-		const cleanArea = Number((normalized as { clean_area?: unknown }).clean_area);
-		if (Number.isFinite(cleanArea)) {
-			await this.stateWriter.ensureAndSetValueState("cleaningInfo.estimateArea", {
-				name: "Clean Estimate Area",
-				type: "number",
-				unit: "m²"
-			}, Math.round(cleanArea / 1000000));
-		}
 	}
 
 	private async applyCarpetDeepCleanStatus(rawValue: unknown): Promise<void> {
