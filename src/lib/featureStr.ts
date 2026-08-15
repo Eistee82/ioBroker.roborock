@@ -59,16 +59,45 @@
  * `get_status`: its status packet has 51 fields and carries neither, measured twice nearly five
  * hours apart (`_appanalysis/geraetefaehigkeiten-1786790619395.json` and `…-1786807834553.json`).
  *
- * Callers that read them out of `Devices.<duid>.deviceStatus.*` therefore find nothing on that
- * robot, because `processResultKey` only ever creates those states out of a `get_status` answer.
- * That is a live defect, tracked separately; it is recorded here so the next reader does not spend
- * the same afternoon on it. It is **not** a reason to fall back to `new_feature_info` for a bit of
- * the string - see the table above.
+ * That is why `V1VacuumFeatures.updateInitStatus` asks for {@link INIT_STATUS_METHOD} once per run
+ * and publishes {@link FEATURE_INFO_FIELDS} into `deviceStatus` itself. Without it every reader
+ * below finds nothing on that robot, because `processResultKey` otherwise only ever creates those
+ * states out of a `get_status` answer - and "nothing" is not "the bit is clear", so each of them
+ * silently fell back to its off position:
+ *
+ * | Reader | Bit | What it got before |
+ * | --- | --- | --- |
+ * | `MapEditService.isRetrySupported` | `new_feature_info` 26 | no retry envelope, though the bit is set |
+ * | `MapEditService.syncRoomsInfo` | str 67 | no Matter name sync (correct here - the bit is clear) |
+ * | `LiveMapPoller.robotAnnouncesIncrementalMap` | str 22 | no incremental map, though the bit is set |
+ * | `V1VacuumFeatures.applyShakeMopWaterMaxBit` | str 45 | water level 208 kept, though the bit is clear |
+ *
+ * A robot that does not answer the method is still left exactly as it was: unknown stays unknown.
+ * It is **not** a reason to fall back to `new_feature_info` for a bit of the string - see the table
+ * above.
  *
  * This module deliberately imports nothing. Both the map code and the vacuum services need the
  * reader, and any home inside one of them would either close an import cycle or force the other
  * side to copy the arithmetic - which is what happened before.
  */
+
+/** The only RPC that answers the two feature bitfields; `get_status` carries neither. */
+export const INIT_STATUS_METHOD = "app_get_init_status";
+
+/** Status key of the hex-string bitfield. */
+export const FEATURE_STR_FIELD = "new_feature_info_str";
+
+/** Status key of the numeric bitfield - a different meaning space, see above. */
+export const FEATURE_INFO_FIELD = "new_feature_info";
+
+/**
+ * The fields of {@link INIT_STATUS_METHOD} the adapter publishes.
+ *
+ * Only the two bitfields. The answer also carries `feature_info` (which the adapter already has
+ * from `get_fw_features` - identical `[111…125]` on the reference robot) and `local_info`, and
+ * neither has a reader; a state nobody reads is noise in the object tree.
+ */
+export const FEATURE_INFO_FIELDS = [FEATURE_INFO_FIELD, FEATURE_STR_FIELD];
 
 /**
  * Parses `new_feature_info_str` into the number it denotes.

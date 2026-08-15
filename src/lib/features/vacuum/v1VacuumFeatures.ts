@@ -68,7 +68,7 @@ import {
 	supportsPureCleanMop
 } from "./cleaningModes";
 import type { CleaningModeCapabilities } from "./cleaningModes";
-import { readFeatureStr } from "../../featureStr";
+import { FEATURE_INFO_FIELDS, FEATURE_STR_FIELD, INIT_STATUS_METHOD, readFeatureStr } from "../../featureStr";
 import { floorFolderId, groupSelectedRoomsByMapFlag, normalizeMapFlag, sortRoomIds } from "../../map/roomKey";
 import { CommandVerifier, VERIFIABLE_SET_COMMANDS } from "./commandVerification";
 import type { CommandVerificationResult } from "./commandVerification";
@@ -129,6 +129,17 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected stationService: StationService;
 	protected lastMapUpdate = 0;
 	protected detectionComplete = false;
+
+	/**
+	 * `new_feature_info_str` as {@link INIT_STATUS_METHOD} reported it, or null while unasked.
+	 *
+	 * The status packet is where the rest of the adapter expects this field, and on the reference
+	 * robot it is not in there. {@link V1VacuumFeatures.applyShakeMopWaterMaxBit} runs off the status
+	 * packet and must not become asynchronous for one field, so the answer is kept here as well as
+	 * published. Null keeps its meaning throughout: "the robot has not said", never "the bit is
+	 * clear".
+	 */
+	private initStatusFeatureStr: string | null = null;
 
 	protected mapService: V1MapService;
 	protected mapEditService: MapEditService;
@@ -269,6 +280,12 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	 * | present, bit 45 set           | level stays |
 	 * | present, bit 45 clear         | level removed |
 	 *
+	 * **The field is not in the status packet of every robot** - on the reference robot it is in
+	 * none of them, which is why the gate did nothing there for two days and the dead control stayed
+	 * on screen. {@link V1VacuumFeatures.updateInitStatus} fetches it from the one call that answers
+	 * it and leaves it in {@link V1VacuumFeatures.initStatusFeatureStr}; the status packet still
+	 * wins where it carries the field, because that is the fresher of the two.
+	 *
 	 * Only the entry this class added itself is removed - it has to still carry the label from
 	 * {@link V1VacuumFeatures.applyShakeMopWaterLabels}. A model profile that words 208 its own way
 	 * meant something by it, the same restraint the wording pass applies.
@@ -282,7 +299,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			return false;
 		}
 
-		const announced = readFeatureStr(status?.new_feature_info_str);
+		const reported = status?.[FEATURE_STR_FIELD];
+		const announced = readFeatureStr(reported === undefined ? this.initStatusFeatureStr : reported);
 		if (announced === null || ((announced >> MOP_SHAKE_WATER_MAX_BIT) & 1n) === 1n) {
 			return false;
 		}
@@ -408,7 +426,60 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		};
 	}
 
+	/**
+	 * Asks the robot for its two feature bitfields and publishes them as `deviceStatus` states.
+	 *
+	 * `new_feature_info` and `new_feature_info_str` are answered by {@link INIT_STATUS_METHOD} and,
+	 * on the reference robot, by nothing else: its `get_status` has 51 fields and carries neither,
+	 * measured twice 4 h 47 min apart. Four places in the adapter read those two states, and every
+	 * one of them read an absent state and took the answer "no" - see the table in `featureStr.ts`.
+	 *
+	 * Published rather than only cached, because three of the four readers sit in other modules and
+	 * reach the value through `getStateAsync`. `processResultKey` is the same route a `get_status`
+	 * key takes, so the states are indistinguishable from the ones the robots that *do* report the
+	 * fields in their status have always produced.
+	 *
+	 * Failure is not evidence: a robot that does not know the method, or answers something that is
+	 * not an object, leaves every reader exactly where it was. That direction is deliberate - the
+	 * one bit that takes a control away (45) may only do so on a positive answer.
+	 */
+	public async updateInitStatus(): Promise<void> {
+		let response: unknown;
+		try {
+			response = await this.deps.adapter.requestsHandler.sendRequest(this.duid, INIT_STATUS_METHOD, [], { priority: -10 });
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
+				`${INIT_STATUS_METHOD} was not answered; the feature bitfields stay unknown: ${this.deps.adapter.errorMessage(e)}`, "debug");
+			return;
+		}
+
+		// Same unwrapping as `requestAndProcess`: the answer arrives as `[{…}]`.
+		let unwrapped: unknown = response;
+		while (Array.isArray(unwrapped) && unwrapped.length === 1) {
+			unwrapped = unwrapped[0];
+		}
+		if (typeof unwrapped !== "object" || unwrapped === null || Array.isArray(unwrapped)) {
+			return;
+		}
+
+		const result = unwrapped as Record<string, unknown>;
+		const featureStr = result[FEATURE_STR_FIELD];
+		if (typeof featureStr === "string") {
+			this.initStatusFeatureStr = featureStr;
+		}
+
+		await this.deps.ensureFolder(`Devices.${this.duid}.deviceStatus`);
+		for (const field of FEATURE_INFO_FIELDS) {
+			const value = result[field];
+			if (value === undefined || value === null) continue;
+			await this.processResultKey("deviceStatus", field, value);
+		}
+	}
+
 	public override async initializeDeviceData(): Promise<void> {
+		// 0. The feature bitfields, before anything acts on them. `updateStatus` below runs the
+		//    Extreme gate, and the map poller and the map editor read the states this writes.
+		await this.updateInitStatus();
 		await this.updateMultiMapsList(); // 1. Load Floor List first (for names/metadata)
 		await this.updateStatus();        // 2. Get Status (triggers Room sync via first floor detection)
 		await this.updateMap();           // 3. Get Map Image

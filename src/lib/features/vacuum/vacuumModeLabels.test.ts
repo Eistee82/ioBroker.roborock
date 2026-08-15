@@ -20,6 +20,7 @@ function createDeps(): FeatureDependencies {
 		log: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), silly: vi.fn() },
 		translations: {},
 		rLog: vi.fn(),
+		errorMessage: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 		setStateChanged: vi.fn().mockResolvedValue(undefined),
 		extendObject: vi.fn().mockResolvedValue(undefined),
 		applyCommonUpdate: vi.fn().mockResolvedValue(undefined),
@@ -300,5 +301,107 @@ describe("the Extreme water level and feature bit 45", () => {
 
 		expect(vacuum.profile.mappings.water_box_mode[208]).toBeUndefined();
 		expect(adapter.applyCommonUpdate).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * The gate above is correct and did nothing on the reference robot, because the field it reads is
+ * not in that robot's status packet: `get_status` answers 51 fields and carries neither bitfield,
+ * measured twice 4 h 47 min apart (`_appanalysis/geraetefaehigkeiten-1786790619395.json` and
+ * `…-1786807834553.json`). Both are answered by `app_get_init_status` alone, which the adapter did
+ * not call at all - so `readFeatureStr(undefined)` returned null, the conservative branch kept the
+ * level, and the dead control stayed on screen.
+ */
+describe("where the feature bitfields come from", () => {
+	/** The reference robot's own answer, verbatim from the measurement. */
+	const A65_FEATURE_STR = "0008004056C8FFFE";
+	const A65_FEATURE_INFO = 2247395306799103;
+	const INIT_ANSWER = [{
+		local_info: { name: "custom_A.03.0309_CE", featureset: 3 },
+		feature_info: [111, 125],
+		new_feature_info: A65_FEATURE_INFO,
+		new_feature_info_str: A65_FEATURE_STR
+	}];
+
+	/**
+	 * A65 whose robot answers `app_get_init_status` with `answer` and everything else with `{}`.
+	 * @param answer What the method returns, or an Error it throws.
+	 */
+	function createVacuum(answer: unknown): { vacuum: any; deps: FeatureDependencies; sent: string[] } {
+		const deps = createDeps();
+		const adapter = deps.adapter as any;
+		const sent: string[] = [];
+
+		adapter.requestsHandler.sendRequest = vi.fn().mockImplementation(async (_duid: string, method: string) => {
+			sent.push(method);
+			if (method !== "app_get_init_status") return {};
+			if (answer instanceof Error) throw answer;
+			return answer;
+		});
+
+		return { vacuum: new A65Features(deps, "duid1") as any, deps, sent };
+	}
+
+	it("takes Extreme away on a robot whose status packet never carries the field", async () => {
+		const { vacuum } = createVacuum(INIT_ANSWER);
+
+		await vacuum.updateInitStatus();
+		// The reference robot's status: no `new_feature_info_str` anywhere in it.
+		await vacuum.processStatus({ state: 8, water_box_mode: 201 });
+
+		expect(vacuum.profile.mappings.water_box_mode).toEqual({ 201: "Mild", 202: "Standard", 203: "Intense" });
+	});
+
+	it("asks for the bitfields before the status packet that acts on them", async () => {
+		const { vacuum, sent } = createVacuum(INIT_ANSWER);
+
+		await vacuum.initializeDeviceData();
+
+		expect(sent).toContain("app_get_init_status");
+		expect(sent.indexOf("app_get_init_status")).toBeLessThan(sent.indexOf("get_prop"));
+		expect(vacuum.profile.mappings.water_box_mode[208]).toBeUndefined();
+	});
+
+	it("publishes both bitfields as deviceStatus states, which is where the other three readers look", async () => {
+		const { vacuum, deps } = createVacuum(INIT_ANSWER);
+
+		await vacuum.updateInitStatus();
+
+		const written = (deps.ensureState as any).mock.calls.map((call: any[]) => String(call[0]));
+		expect(written).toContain("Devices.duid1.deviceStatus.new_feature_info_str");
+		expect(written).toContain("Devices.duid1.deviceStatus.new_feature_info");
+
+		const setState = (deps.adapter as any).setStateChanged.mock.calls;
+		expect(setState.find((c: any[]) => String(c[0]).endsWith("new_feature_info_str"))![1].val).toBe(A65_FEATURE_STR);
+		expect(setState.find((c: any[]) => String(c[0]).endsWith(".new_feature_info"))![1].val).toBe(A65_FEATURE_INFO);
+	});
+
+	it("keeps the level when the robot does not answer the method - silence is not a denial", async () => {
+		const { vacuum } = createVacuum(new Error("unknown method"));
+
+		await vacuum.updateInitStatus();
+		await vacuum.processStatus({ state: 8, water_box_mode: 201 });
+
+		expect(vacuum.profile.mappings.water_box_mode[208]).toBe("Extreme");
+	});
+
+	it("keeps the level when the answer has no shape it can read", async () => {
+		for (const answer of [[], ["ok"], null, 5, [{ local_info: { featureset: 3 } }]]) {
+			const { vacuum } = createVacuum(answer);
+
+			await vacuum.updateInitStatus();
+			await vacuum.processStatus({ state: 8 });
+
+			expect(vacuum.profile.mappings.water_box_mode[208]).toBe("Extreme");
+		}
+	});
+
+	it("lets the status packet win where a robot does report the field there", async () => {
+		const { vacuum } = createVacuum(INIT_ANSWER);
+
+		await vacuum.updateInitStatus();
+		await vacuum.processStatus({ state: 8, new_feature_info_str: (1n << 45n).toString(16) });
+
+		expect(vacuum.profile.mappings.water_box_mode[208]).toBe("Extreme");
 	});
 });
