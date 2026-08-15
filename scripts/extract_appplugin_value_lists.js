@@ -133,6 +133,8 @@ function parseArgs(argv) {
 		else if (arg === "--out" && argv[index + 1]) options.out = path.resolve(argv[++index]);
 		else if (arg === "--translations" && argv[index + 1]) options.translations = path.resolve(argv[++index]);
 		else if (arg === "--languages" && argv[index + 1]) options.languages = argv[++index].split(",").map((l) => l.trim()).filter(Boolean);
+		else if (arg === "--hbc" && argv[index + 1]) options.hbc = path.resolve(argv[++index]);
+		else if (arg === "--disasm" && argv[index + 1]) options.disasm = path.resolve(argv[++index]);
 		else if (arg === "--quiet") options.quiet = true;
 		else if (arg === "--no-write") options.noWrite = true;
 		else if (arg === "--help" || arg === "-h") {
@@ -156,6 +158,14 @@ Options:
   --out <file>           Output file (default: lib/protocols/roborock_value_lists.json)
   --translations <file>  Label catalogue (default: lib/protocols/roborock_strings.json)
   --languages <a,b>      Languages to resolve labels into (default: ${DEFAULT_LANGUAGES.join(",")})
+  --hbc <file>           Raw index.android.bundle belonging to --bundle
+  --disasm <file>        Output of "hvm -d <bundle>"
+                         Given both, every enum is checked against the bytecode, which pairs keys
+                         and values through the NewObjectWithBuffer operands instead of trusting
+                         the decompilate's rendering. Toolchain: facebook/hermes release v0.13.0 -
+                         the first with BYTECODE_VERSION 96, which is what every Roborock plugin
+                         uses; v0.12.0 speaks 89 and refuses the file. See
+                         _appanalysis/26-pakete-zur-laufzeit.md section N.6.
   --no-write             Analyse only, write nothing
   --quiet                Reduce console output
   --help                 Show this text
@@ -342,6 +352,220 @@ function classifyValueList(table) {
 	return { dominantFamily, values, holes };
 }
 
+// --- Verifying an enum against the bytecode ----------------------------------------------------
+
+/** Hermes bytecode files start with this. */
+const HERMES_MAGIC = "c61fbc03c103191f";
+/** Every section of an HBC file starts on a four-byte boundary. */
+const alignUp4 = (value) => (value + 3) & ~3;
+
+/**
+ * Reads a Hermes bundle far enough to reach its literal buffers and string table.
+ *
+ * Deliberately self-contained: no decompiler, no native tool, no dependency. Only the header, the
+ * section layout and the strings are decoded - enough for {@link readLiteralItem}, and it works on
+ * every platform an adapter is installed on. The section order follows Hermes'
+ * `visitBytecodeSegmentsInOrder`.
+ * @param {string} filePath Path to `index.android.bundle`.
+ * @returns {object} `{ buf, header, sec, strings }`.
+ */
+function loadHermesBundle(filePath) {
+	const buf = fs.readFileSync(filePath);
+	if (buf.subarray(0, 8).toString("hex") !== HERMES_MAGIC) {
+		throw new Error(`${path.basename(filePath)} is not a Hermes bundle`);
+	}
+
+	const header = { version: buf.readUInt32LE(8) };
+	const fields = [
+		"fileLength", "globalCodeIndex", "functionCount", "stringKindCount", "identifierCount",
+		"stringCount", "overflowStringCount", "stringStorageSize", "bigIntCount", "bigIntStorageSize",
+		"regExpCount", "regExpStorageSize", "arrayBufferSize", "objKeyBufferSize", "objValueBufferSize",
+	];
+	let at = 32; // 8 magic + 4 version + 20 source hash
+	for (const field of fields) {
+		header[field] = buf.readUInt32LE(at);
+		at += 4;
+	}
+
+	let offset = 128;
+	const sec = {};
+	const take = (name, size) => {
+		offset = alignUp4(offset);
+		sec[name] = { offset, size };
+		offset += size;
+	};
+	take("functionHeaders", header.functionCount * 16);
+	take("stringKinds", header.stringKindCount * 4);
+	take("identifierHashes", header.identifierCount * 4);
+	take("smallStringTable", header.stringCount * 4);
+	take("overflowStringTable", header.overflowStringCount * 8);
+	take("stringStorage", header.stringStorageSize);
+	take("arrayBuffer", header.arrayBufferSize);
+	take("objKeyBuffer", header.objKeyBufferSize);
+	take("objValueBuffer", header.objValueBufferSize);
+
+	const strings = new Array(header.stringCount);
+	for (let index = 0; index < header.stringCount; index++) {
+		const raw = buf.readUInt32LE(sec.smallStringTable.offset + index * 4);
+		const isUtf16 = raw & 1;
+		let stringOffset = (raw >>> 1) & 0x7fffff;
+		let length = (raw >>> 24) & 0xff;
+		if (length === 0xff) {
+			const entry = sec.overflowStringTable.offset + stringOffset * 8;
+			stringOffset = buf.readUInt32LE(entry);
+			length = buf.readUInt32LE(entry + 4);
+		}
+		const from = sec.stringStorage.offset + stringOffset;
+		strings[index] = isUtf16
+			? buf.subarray(from, from + length * 2).toString("utf16le")
+			: buf.subarray(from, from + length).toString("latin1");
+	}
+
+	return { buf, header, sec, strings };
+}
+
+/**
+ * Reads one serialized literal item out of a Hermes buffer, starting at the item header.
+ *
+ * Hermes stores object literals in two buffers - keys in `objKeyBuffer`, values in
+ * `objValueBuffer` - and each item begins with a tag byte: the top nibble says what kind of value
+ * follows, the low nibble the count, and bit 7 extends the count into a second byte.
+ *
+ * **The offset has to be the item header, not the first value.** That distinction cost a wrong
+ * conclusion once already: a byte scan reported the dust collection keys at 29836, the item really
+ * begins at 29835, and the search for an instruction carrying 29836 therefore found nothing and
+ * was read as "the pairing is not recoverable". It was recoverable; the number was off by one.
+ * @param {Buffer} buf The whole bundle.
+ * @param {number} base Section offset of the buffer.
+ * @param {number} offset Item offset inside that buffer.
+ * @param {string[]} strings The bundle's string table.
+ * @returns {object|null} `{ kind, values }`, or `null` for an unreadable tag.
+ */
+function readLiteralItem(buf, base, offset, strings) {
+	const start = base + offset;
+	if (start < 0 || start >= buf.length) return null;
+
+	const tagByte = buf.readUInt8(start);
+	const tag = tagByte & 0x70;
+	const long = (tagByte & 0x80) !== 0;
+	const count = long ? (((tagByte & 0x0f) << 8) | buf.readUInt8(start + 1)) : (tagByte & 0x0f);
+	const header = long ? 2 : 1;
+	const widths = { 0x00: 0, 0x10: 0, 0x20: 0, 0x30: 8, 0x40: 4, 0x50: 2, 0x60: 1, 0x70: 4 };
+	const width = widths[tag];
+	if (width === undefined) return null;
+	if (start + header + count * width > buf.length) return null;
+
+	const values = [];
+	for (let index = 0; index < count; index++) {
+		const at = start + header + index * width;
+		if (tag === 0x70) values.push(buf.readInt32LE(at));
+		else if (tag === 0x30) values.push(buf.readDoubleLE(at));
+		else if (tag === 0x50) values.push(strings[buf.readUInt16LE(at)]);
+		else if (tag === 0x60) values.push(strings[buf.readUInt8(at)]);
+		else if (tag === 0x40) values.push(strings[buf.readUInt32LE(at)]);
+		else if (tag === 0x10) values.push(true);
+		else if (tag === 0x20) values.push(false);
+		else values.push(null);
+	}
+	return { kind: tag, values };
+}
+
+/**
+ * Collects every object literal the bytecode builds, with its keys and values already paired.
+ *
+ * This is what the decompilate cannot give. There an enum reads as
+ * `{'WashTowelModeQuick': 0, …}` and one has to trust the rendering; here the pairing comes from
+ * the instruction itself:
+ *
+ * ```
+ * NewObjectWithBuffer r1, 5, 5, 29835, 93028
+ *                            │  │      └─ offset into objValueBuffer  -> [0,1,2,3,4]
+ *                            │  └──────── offset into objKeyBuffer    -> [Smart, Quick, …]
+ *                            └─────────── number of literals
+ * ```
+ *
+ * Needs the disassembly of `hvm -d` (for the operands) **and** the raw bundle (for the buffers).
+ * The toolchain that produces it is documented in `_appanalysis/26-pakete-zur-laufzeit.md` §N.6:
+ * `facebook/hermes` release **v0.13.0**, the first whose `BYTECODE_VERSION` is 96 - the version
+ * every Roborock plugin uses. v0.12.0 speaks 89 and refuses the file outright.
+ * @param {string} hbcPath Raw `index.android.bundle`.
+ * @param {string} disasmPath Output of `hvm -d <bundle>`.
+ * @returns {object[]} `{ keys, values, keyOffset, valueOffset }` per object literal.
+ */
+function parsePairedObjects(hbcPath, disasmPath) {
+	const { buf, sec, strings } = loadHermesBundle(hbcPath);
+	const disasm = fs.readFileSync(disasmPath, "utf8");
+
+	const objects = [];
+	const pattern = /NewObjectWithBuffer(?:Long)? r\d+, \d+, (\d+), (\d+), (\d+)/g;
+	const seen = new Set();
+
+	for (const match of disasm.matchAll(pattern)) {
+		const [, literalCount, keyOffset, valueOffset] = match;
+		// The same literal pair is emitted by every call site that builds the object; one is enough.
+		const fingerprint = `${keyOffset}:${valueOffset}`;
+		if (seen.has(fingerprint)) continue;
+		seen.add(fingerprint);
+
+		const keys = readLiteralItem(buf, sec.objKeyBuffer.offset, Number(keyOffset), strings);
+		const values = readLiteralItem(buf, sec.objValueBuffer.offset, Number(valueOffset), strings);
+		if (!keys || !values) continue;
+		if (keys.values.length !== Number(literalCount)) continue;
+
+		objects.push({
+			keys: keys.values,
+			values: values.values,
+			keyOffset: Number(keyOffset),
+			valueOffset: Number(valueOffset),
+		});
+	}
+
+	return objects;
+}
+
+/**
+ * Confirms a decompilate-read enum against the bytecode, by key set rather than by name.
+ *
+ * The bytecode knows the members but not what the object was assigned to, and the decompilate
+ * knows the name; matching on the key set joins the two without either having to trust the other.
+ *
+ * A disagreement is never resolved here. It is reported, because a table that silently picks a
+ * winner is exactly the failure this whole extractor exists to prevent.
+ * @param {object} entry An enum from {@link parseNamedEnums}.
+ * @param {object[]} paired Output of {@link parsePairedObjects}.
+ * @returns {object|null} Verification result, or `null` when the bytecode has no such object.
+ */
+function verifyEnumAgainstBytecode(entry, paired) {
+	const wanted = entry.members.map((member) => member.name).join(" ");
+	const hit = paired.find((object) => object.keys.join(" ") === wanted);
+	if (!hit) return null;
+
+	const differences = [];
+	const signFixes = [];
+	entry.members.forEach((member, index) => {
+		const fromBytecode = hit.values[index];
+		if (typeof fromBytecode !== "number" || fromBytecode === member.value) return;
+
+		// Not every disagreement is one. Hermes stores integers signed; the decompilate renders
+		// them unsigned, so -1 reads as 4294967295 and the error code -10000 as 4294957296. Same
+		// 32 bits, different lens - and the signed reading is the one a robot answers with.
+		if (fromBytecode < 0 && member.value === (fromBytecode >>> 0)) {
+			signFixes.push({ name: member.name, renderedUnsigned: member.value, actual: fromBytecode });
+			return;
+		}
+		differences.push({ name: member.name, fromDecompilate: member.value, fromBytecode });
+	});
+
+	return {
+		keyOffset: hit.keyOffset,
+		valueOffset: hit.valueOffset,
+		members: hit.keys.map((name, index) => ({ name, value: hit.values[index] })),
+		agrees: differences.length === 0,
+		differences,
+		signFixes,
+	};
+}
+
 // --- Named enums ------------------------------------------------------------------------------
 
 /**
@@ -483,11 +707,18 @@ function resolveLabels(catalog, languages, key) {
  * @param {string[]} languages Languages to resolve.
  * @returns {object} `{ source, valueLists, enums, unresolved }`.
  */
-function processBundle(bundlePath, catalog, languages) {
+function processBundle(bundlePath, catalog, languages, options = {}) {
 	const bundleText = fs.readFileSync(bundlePath, "utf8");
 	const lines = bundleText.split(/\r?\n/);
 	const label = path.basename(path.dirname(bundlePath)) + "/" + path.basename(bundlePath);
 	const rpcNames = collectRpcNames(bundleText);
+
+	// Optional second source: the bytecode itself. Where it is available every enum is checked
+	// against it, because the decompilate renders a pairing it did not have to prove.
+	let paired = null;
+	if (options.hbc && options.disasm) {
+		paired = parsePairedObjects(options.hbc, options.disasm);
+	}
 
 	const valueLists = [];
 	const unresolved = [];
@@ -555,14 +786,57 @@ function processBundle(bundlePath, catalog, languages) {
 		});
 	}
 
-	const enums = parseNamedEnums(lines).map((entry) => ({
-		name: entry.name,
-		source: `${label}:${entry.line}`,
-		contiguous: entry.contiguous,
-		rpc: matchRpcForName(entry.name, rpcNames),
-		rpcMatchedBy: "name stem; verify before wiring a control to it",
-		members: entry.members,
-	}));
+	const enums = parseNamedEnums(lines).map((entry) => {
+		const record = {
+			name: entry.name,
+			source: `${label}:${entry.line}`,
+			contiguous: entry.contiguous,
+			rpc: matchRpcForName(entry.name, rpcNames),
+			rpcMatchedBy: "name stem; verify before wiring a control to it",
+			members: entry.members,
+			// "unverified" is not the same as "wrong" - it means no second source was available.
+			verifiedAgainstBytecode: paired ? "no matching object literal in the bytecode" : "not run",
+		};
+
+		if (!paired) return record;
+
+		const check = verifyEnumAgainstBytecode(entry, paired);
+		if (!check) {
+			unresolved.push({
+				what: "enum verification",
+				sources: [record.source],
+				detail: entry.name,
+				reason: "no object literal in the bytecode carries this key set; values come from the decompilate alone",
+			});
+			return record;
+		}
+
+		record.bytecodeSource = `objKeyBuffer@${check.keyOffset} objValueBuffer@${check.valueOffset}`;
+		record.verifiedAgainstBytecode = !check.agrees
+			? "CONFLICT"
+			: (check.signFixes.length > 0 ? "corrected: decompilate rendered negatives unsigned" : "confirmed");
+
+		if (check.signFixes.length > 0) {
+			// No dispute about the facts, only about the rendering - so the corrected values are
+			// published rather than merely noted, and the old reading stays visible beside them.
+			record.members = check.members;
+			record.membersFromDecompilate = entry.members;
+			record.signednessCorrections = check.signFixes;
+		}
+
+		if (!check.agrees) {
+			// Nobody wins silently. Both readings stay in the file, and the conflict is loud.
+			record.conflict = check.differences;
+			record.membersFromBytecode = check.members;
+			unresolved.push({
+				what: "enum conflict",
+				sources: [record.source, record.bytecodeSource],
+				detail: `${entry.name}: ${check.differences.map((d) => `${d.name} ${d.fromDecompilate} vs ${d.fromBytecode}`).join(", ")}`,
+				reason: "decompilate and bytecode disagree; the bytecode is the primary source, but neither value is applied automatically",
+			});
+		}
+		return record;
+	});
 
 	return {
 		source: {
@@ -626,7 +900,7 @@ function main() {
 	};
 
 	for (const bundlePath of bundles) {
-		const processed = processBundle(bundlePath, catalog, options.languages);
+		const processed = processBundle(bundlePath, catalog, options.languages, options);
 		result._meta.sources.push(processed.source);
 		result.valueLists.push(...processed.valueLists);
 		result.enums.push(...processed.enums);
@@ -655,12 +929,16 @@ module.exports = {
 	classifyValueList,
 	collectRpcNames,
 	labelFamily,
+	loadHermesBundle,
 	matchRpcForName,
 	nameTokens,
 	parseNamedEnums,
+	parsePairedObjects,
 	parseValueListTables,
 	processBundle,
+	readLiteralItem,
 	resolveLabels,
+	verifyEnumAgainstBytecode,
 };
 
 if (require.main === module) {

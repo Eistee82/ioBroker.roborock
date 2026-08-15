@@ -32,6 +32,16 @@ const extractor = require(scriptPath) as {
 	nameTokens: (name: string) => string[];
 	labelFamily: (key: string) => string;
 	collectRpcNames: (bundleText: string) => Set<string>;
+	readLiteralItem: (buf: Buffer, base: number, offset: number, strings: string[]) => { kind: number; values: unknown[] } | null;
+	verifyEnumAgainstBytecode: (
+		entry: { members: { name: string; value: number }[] },
+		paired: { keys: string[]; values: unknown[]; keyOffset: number; valueOffset: number }[]
+	) => {
+		agrees: boolean;
+		differences: { name: string; fromDecompilate: number; fromBytecode: number }[];
+		signFixes: { name: string; renderedUnsigned: number; actual: number }[];
+		members: { name: string; value: unknown }[];
+	} | null;
 };
 
 /**
@@ -260,6 +270,97 @@ describe("matchRpcForName - proposes a setter, never invents one", () => {
 	});
 });
 
+describe("readLiteralItem - the offset is the item header, not the first value", () => {
+	/**
+	 * Builds one serialized literal item: tag byte, then the values.
+	 * @param tag SLP tag (0x70 integer, 0x50 short string).
+	 * @param values The values to encode.
+	 * @returns The encoded item.
+	 */
+	function item(tag: number, values: number[]): Buffer {
+		const width = tag === 0x70 ? 4 : 2;
+		const buf = Buffer.alloc(1 + values.length * width);
+		buf.writeUInt8(tag | values.length, 0);
+		values.forEach((value, index) => {
+			if (tag === 0x70) buf.writeInt32LE(value, 1 + index * 4);
+			else buf.writeUInt16LE(value, 1 + index * 2);
+		});
+		return buf;
+	}
+
+	it("reads an integer run", () => {
+		const buf = Buffer.concat([Buffer.alloc(4), item(0x70, [0, 1, 2, 3, 4])]);
+		expect(extractor.readLiteralItem(buf, 4, 0, [])?.values).toEqual([0, 1, 2, 3, 4]);
+	});
+
+	it("reads negative integers as negative", () => {
+		// The whole point of preferring the bytecode: -10000 stays -10000 here, while the
+		// decompilate renders it 4294957296.
+		const buf = item(0x70, [-1, -10000]);
+		expect(extractor.readLiteralItem(buf, 0, 0, [])?.values).toEqual([-1, -10000]);
+	});
+
+	it("reads a short-string run through the string table", () => {
+		const buf = item(0x50, [2, 0]);
+		expect(extractor.readLiteralItem(buf, 0, 0, ["Smart", "Quick", "Daily"])?.values).toEqual(["Daily", "Smart"]);
+	});
+
+	it("returns nothing rather than nonsense when the offset points past the end", () => {
+		expect(extractor.readLiteralItem(Buffer.alloc(4), 0, 999, [])).toBeNull();
+	});
+
+	it("misreads the item when the offset is off by one - which is why it must be the header", () => {
+		// The mistake this cost once: a byte scan found the keys at 29836, the item begins at
+		// 29835, and searching for an instruction carrying 29836 therefore found nothing.
+		const buf = item(0x70, [0, 1, 2, 3, 4]);
+		expect(extractor.readLiteralItem(buf, 0, 0, [])?.values).toEqual([0, 1, 2, 3, 4]);
+		expect(extractor.readLiteralItem(buf, 0, 1, [])?.values).not.toEqual([0, 1, 2, 3, 4]);
+	});
+});
+
+describe("verifyEnumAgainstBytecode", () => {
+	const dust = {
+		keys: ["DustCollectionModeSmart", "DustCollectionModeQuick", "DustCollectionModeDaily", "DustCollectionModeStrong", "DustCollectionModeMax"],
+		values: [0, 1, 2, 3, 4],
+		keyOffset: 29835,
+		valueOffset: 93028,
+	};
+
+	it("matches by key set, not by name - the bytecode does not know the name", () => {
+		const check = extractor.verifyEnumAgainstBytecode(
+			{ members: dust.keys.map((name, index) => ({ name, value: index })) },
+			[dust]
+		);
+		expect(check?.agrees).toBe(true);
+		expect(check?.differences).toHaveLength(0);
+	});
+
+	it("calls an unsigned rendering a correction, not a conflict", () => {
+		// Same 32 bits, different lens. `mapOpErrorCode` is the real case: the decompilate says
+		// 4294957296, the bytecode says -10000, and a robot answers with -10000.
+		const check = extractor.verifyEnumAgainstBytecode(
+			{ members: [{ name: "VENDOR_ERROR_CODE", value: 4294957296 }] },
+			[{ keys: ["VENDOR_ERROR_CODE"], values: [-10000], keyOffset: 1, valueOffset: 2 }]
+		);
+		expect(check?.agrees).toBe(true);
+		expect(check?.differences).toHaveLength(0);
+		expect(check?.signFixes).toEqual([{ name: "VENDOR_ERROR_CODE", renderedUnsigned: 4294957296, actual: -10000 }]);
+	});
+
+	it("reports a real disagreement as one", () => {
+		const check = extractor.verifyEnumAgainstBytecode(
+			{ members: [{ name: "Mode", value: 3 }] },
+			[{ keys: ["Mode"], values: [7], keyOffset: 1, valueOffset: 2 }]
+		);
+		expect(check?.agrees).toBe(false);
+		expect(check?.differences).toEqual([{ name: "Mode", fromDecompilate: 3, fromBytecode: 7 }]);
+	});
+
+	it("says nothing when the bytecode has no object with that key set", () => {
+		expect(extractor.verifyEnumAgainstBytecode({ members: [{ name: "Unknown", value: 1 }] }, [dust])).toBeNull();
+	});
+});
+
 describe("the shipped lib/protocols/roborock_value_lists.json", () => {
 	const shipped = JSON.parse(fs.readFileSync(shippedPath, "utf8"));
 
@@ -313,6 +414,42 @@ describe("the shipped lib/protocols/roborock_value_lists.json", () => {
 		expect(serialized).not.toContain("_appanalysis");
 		for (const source of shipped._meta.sources) {
 			expect(source.sha256).toMatch(/^[0-9a-f]{16}$/);
+		}
+	});
+
+	it("says for every enum whether the bytecode confirmed it", () => {
+		for (const entry of shipped.enums) {
+			expect(entry.verifiedAgainstBytecode, `${entry.name} without a verdict`).toBeTruthy();
+		}
+		// 35 confirmed, 2 corrected for signedness, 2 without a matching object literal.
+		const confirmed = shipped.enums.filter((e: any) => e.verifiedAgainstBytecode === "confirmed");
+		expect(confirmed.length).toBeGreaterThanOrEqual(30);
+	});
+
+	it("carries no unresolved conflict between decompilate and bytecode", () => {
+		// A conflict is allowed to exist - it may not be hidden. If one ever appears it belongs in
+		// `unresolved` too, and this test is the reminder to look at it rather than ship it.
+		const conflicts = shipped.enums.filter((e: any) => e.verifiedAgainstBytecode === "CONFLICT");
+		for (const entry of conflicts) {
+			expect(entry.conflict, `${entry.name} marked CONFLICT without detail`).toBeTruthy();
+			expect(shipped.unresolved.some((u: any) => String(u.detail).startsWith(entry.name))).toBe(true);
+		}
+	});
+
+	it("publishes the error codes as the negative numbers a robot actually sends", () => {
+		// The single most useful thing the bytecode check produced: the decompilate rendered these
+		// unsigned, and 4294957296 would never have matched a real -10000.
+		const codes = shipped.enums.find((entry: any) => entry.name === "mapOpErrorCode");
+		expect(codes.verifiedAgainstBytecode).toContain("corrected");
+		expect(codes.members.find((m: any) => m.name === "VENDOR_ERROR_CODE").value).toBe(-10000);
+		// The superseded reading stays visible next to it.
+		expect(codes.membersFromDecompilate.find((m: any) => m.name === "VENDOR_ERROR_CODE").value).toBe(4294957296);
+	});
+
+	it("names the bytecode offsets it verified against", () => {
+		for (const entry of shipped.enums) {
+			if (!String(entry.verifiedAgainstBytecode).match(/confirmed|corrected/)) continue;
+			expect(entry.bytecodeSource, `${entry.name} without bytecode offsets`).toMatch(/^objKeyBuffer@\d+ objValueBuffer@\d+$/);
 		}
 	});
 

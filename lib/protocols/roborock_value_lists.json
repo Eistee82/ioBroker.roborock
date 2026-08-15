@@ -2008,7 +2008,8 @@
 					"name": "Sensor",
 					"value": 10
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "no matching object literal in the bytecode"
 		},
 		{
 			"name": "AvoidCollisionMode",
@@ -2029,7 +2030,9 @@
 					"name": "AvoidModeSensitive",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29885 objValueBuffer@39204"
 		},
 		{
 			"name": "BackWashModeMap",
@@ -2050,7 +2053,9 @@
 					"name": "BackWashModeLevel",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29867 objValueBuffer@39204"
 		},
 		{
 			"name": "BedSubType",
@@ -2071,7 +2076,9 @@
 					"name": "BST_DOUBLE",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@32805 objValueBuffer@39204"
 		},
 		{
 			"name": "BlockZoneType",
@@ -2100,7 +2107,9 @@
 					"name": "ZONE_CLEAN",
 					"value": 4
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@32740 objValueBuffer@93028"
 		},
 		{
 			"name": "CarPetCleanModeSettingMap",
@@ -2125,7 +2134,9 @@
 					"name": "CarpetAvoidMode",
 					"value": 0
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29824 objValueBuffer@93005"
 		},
 		{
 			"name": "CleanModeTabType",
@@ -2158,7 +2169,9 @@
 					"name": "CUSTOM",
 					"value": 5
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29953 objValueBuffer@93539"
 		},
 		{
 			"name": "CleanSettingMode",
@@ -2191,7 +2204,9 @@
 					"name": "MaxPlus",
 					"value": 108
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@33206 objValueBuffer@126339"
 		},
 		{
 			"name": "CleanTypeCode",
@@ -2224,7 +2239,9 @@
 					"name": "CLEAN_TYPE_PET_PATROL",
 					"value": 6
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@33653 objValueBuffer@127341"
 		},
 		{
 			"name": "CommandCardType",
@@ -2249,7 +2266,9 @@
 					"name": "Sort",
 					"value": 3
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@33514 objValueBuffer@7826"
 		},
 		{
 			"name": "DebugType",
@@ -2258,6 +2277,54 @@
 			"rpc": null,
 			"rpcMatchedBy": "name stem; verify before wiring a control to it",
 			"members": [
+				{
+					"name": "DEBUG_NONE",
+					"value": -1
+				},
+				{
+					"name": "DEBUG_ANONYMOUSID",
+					"value": 1
+				},
+				{
+					"name": "DEBUG_IDENTIFY",
+					"value": 2
+				},
+				{
+					"name": "DEBUG_MAP",
+					"value": 3
+				},
+				{
+					"name": "DEBUG_CARPET",
+					"value": 4
+				},
+				{
+					"name": "DEBUG_OTHER",
+					"value": 5
+				},
+				{
+					"name": "DEBUG_PLUGIN",
+					"value": 6
+				},
+				{
+					"name": "DEBUG_FIRMWARE",
+					"value": 7
+				},
+				{
+					"name": "DEBUG_EXHIBIT",
+					"value": 8
+				},
+				{
+					"name": "DEBUG_VOICECTROL",
+					"value": 9
+				},
+				{
+					"name": "DEBUG_SENSOR",
+					"value": 10
+				}
+			],
+			"verifiedAgainstBytecode": "corrected: decompilate rendered negatives unsigned",
+			"bytecodeSource": "objKeyBuffer@40862 objValueBuffer@159687",
+			"membersFromDecompilate": [
 				{
 					"name": "DEBUG_NONE",
 					"value": 4294967295
@@ -2302,6 +2369,13 @@
 					"name": "DEBUG_SENSOR",
 					"value": 10
 				}
+			],
+			"signednessCorrections": [
+				{
+					"name": "DEBUG_NONE",
+					"renderedUnsigned": 4294967295,
+					"actual": -1
+				}
 			]
 		},
 		{
@@ -2331,7 +2405,9 @@
 					"name": "DustCollectionModeMax",
 					"value": 4
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29835 objValueBuffer@93028"
 		},
 		{
 			"name": "GarnetMopMode",
@@ -2352,7 +2428,9 @@
 					"name": "Wet",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@30868 objValueBuffer@126406"
 		},
 		{
 			"name": "HotWashTowelMode",
@@ -2373,7 +2451,9 @@
 					"name": "HotWashModeHot",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29896 objValueBuffer@39204"
 		},
 		{
 			"name": "InCleaningStatus",
@@ -2398,7 +2478,9 @@
 					"name": "SEGMENT_CLEAN_NOT_COMPLETE",
 					"value": 3
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@33597 objValueBuffer@7826"
 		},
 		{
 			"name": "LogLevel",
@@ -2423,7 +2505,8 @@
 					"name": "Full",
 					"value": 4
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "no matching object literal in the bytecode"
 		},
 		{
 			"name": "mapOpErrorCode",
@@ -2432,6 +2515,42 @@
 			"rpc": null,
 			"rpcMatchedBy": "name stem; verify before wiring a control to it",
 			"members": [
+				{
+					"name": "VENDOR_ERROR_CODE",
+					"value": -10000
+				},
+				{
+					"name": "PROCESS_BUSY_ERROR_CODE",
+					"value": -10001
+				},
+				{
+					"name": "ERROR_ACCESS_DENIED",
+					"value": -10002
+				},
+				{
+					"name": "ERROR_ACTION_LOCKED",
+					"value": -10003
+				},
+				{
+					"name": "ERROR_ACTION_TIMEOUT",
+					"value": -10004
+				},
+				{
+					"name": "PARAM_ERROR",
+					"value": -10005
+				},
+				{
+					"name": "OPERATION_FAILED",
+					"value": -10006
+				},
+				{
+					"name": "BAD_REQUEST",
+					"value": -10007
+				}
+			],
+			"verifiedAgainstBytecode": "corrected: decompilate rendered negatives unsigned",
+			"bytecodeSource": "objKeyBuffer@33622 objValueBuffer@127159",
+			"membersFromDecompilate": [
 				{
 					"name": "VENDOR_ERROR_CODE",
 					"value": 4294957296
@@ -2464,6 +2583,48 @@
 					"name": "BAD_REQUEST",
 					"value": 4294957289
 				}
+			],
+			"signednessCorrections": [
+				{
+					"name": "VENDOR_ERROR_CODE",
+					"renderedUnsigned": 4294957296,
+					"actual": -10000
+				},
+				{
+					"name": "PROCESS_BUSY_ERROR_CODE",
+					"renderedUnsigned": 4294957295,
+					"actual": -10001
+				},
+				{
+					"name": "ERROR_ACCESS_DENIED",
+					"renderedUnsigned": 4294957294,
+					"actual": -10002
+				},
+				{
+					"name": "ERROR_ACTION_LOCKED",
+					"renderedUnsigned": 4294957293,
+					"actual": -10003
+				},
+				{
+					"name": "ERROR_ACTION_TIMEOUT",
+					"renderedUnsigned": 4294957292,
+					"actual": -10004
+				},
+				{
+					"name": "PARAM_ERROR",
+					"renderedUnsigned": 4294957291,
+					"actual": -10005
+				},
+				{
+					"name": "OPERATION_FAILED",
+					"renderedUnsigned": 4294957290,
+					"actual": -10006
+				},
+				{
+					"name": "BAD_REQUEST",
+					"renderedUnsigned": 4294957289,
+					"actual": -10007
+				}
 			]
 		},
 		{
@@ -2489,7 +2650,9 @@
 					"name": "KeepMap",
 					"value": 3
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@36566 objValueBuffer@7826"
 		},
 		{
 			"name": "MoppingType",
@@ -2518,7 +2681,9 @@
 					"name": "MOPPING_TYPE_BOTH_BOTH",
 					"value": 0
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@32578 objValueBuffer@116327"
 		},
 		{
 			"name": "MopSettingMode",
@@ -2543,7 +2708,9 @@
 					"name": "Fast",
 					"value": 304
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@33232 objValueBuffer@126389"
 		},
 		{
 			"name": "NewFeatureStrBit",
@@ -2736,7 +2903,9 @@
 					"name": "EggDanceMode",
 					"value": 87
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29364 objValueBuffer@92544"
 		},
 		{
 			"name": "ObjSelectPageType",
@@ -2757,7 +2926,9 @@
 					"name": "Result",
 					"value": 3
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@41252 objValueBuffer@19429"
 		},
 		{
 			"name": "OperatorCode",
@@ -2778,7 +2949,9 @@
 					"name": "OPERATOR_NOT_CN",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@6412 objValueBuffer@39204"
 		},
 		{
 			"name": "OperatorCode",
@@ -2799,7 +2972,9 @@
 					"name": "OPERATOR_NOT_CN",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@6412 objValueBuffer@39204"
 		},
 		{
 			"name": "PanStatus",
@@ -2824,7 +2999,9 @@
 					"name": "MAP_VIEWING_SCALED",
 					"value": 3
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@32526 objValueBuffer@7826"
 		},
 		{
 			"name": "RectPanType",
@@ -2857,7 +3034,9 @@
 					"name": "PanTypeDelete",
 					"value": 32
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@36616 objValueBuffer@134554"
 		},
 		{
 			"name": "RepeatIndexMap",
@@ -2882,7 +3061,9 @@
 					"name": "Weekends",
 					"value": 3
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@35489 objValueBuffer@7826"
 		},
 		{
 			"name": "RobotAnimationStatus",
@@ -2903,7 +3084,9 @@
 					"name": "ANIMATING",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@32598 objValueBuffer@39204"
 		},
 		{
 			"name": "RobotStateCode",
@@ -3004,7 +3187,9 @@
 					"name": "UNKNOWN_STATUES",
 					"value": 102
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@33549 objValueBuffer@127065"
 		},
 		{
 			"name": "RRHomeSecStatus",
@@ -3025,7 +3210,9 @@
 					"name": "RRHomeSecStatusDisconnecting",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29342 objValueBuffer@39204"
 		},
 		{
 			"name": "SmartBubbleType",
@@ -3078,7 +3265,9 @@
 					"name": "BT_OBSTACLE",
 					"value": 512
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@32900 objValueBuffer@117224"
 		},
 		{
 			"name": "SofaSubType",
@@ -3111,7 +3300,9 @@
 					"name": "SST_SECTIONAL_LEFT",
 					"value": 5
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@32812 objValueBuffer@93539"
 		},
 		{
 			"name": "SpecialInfoType",
@@ -3156,7 +3347,9 @@
 					"name": "MaxPlus",
 					"value": 9
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29288 objValueBuffer@92465"
 		},
 		{
 			"name": "TableSubType",
@@ -3177,7 +3370,9 @@
 					"name": "TST_RECT",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@32834 objValueBuffer@39204"
 		},
 		{
 			"name": "TaskListItemType",
@@ -3198,7 +3393,9 @@
 					"name": "TaskAdd",
 					"value": 2
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@30860 objValueBuffer@39204"
 		},
 		{
 			"name": "TaskListState",
@@ -3223,7 +3420,9 @@
 					"name": "AddingTemplate",
 					"value": 3
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@33505 objValueBuffer@7826"
 		},
 		{
 			"name": "WashPageType",
@@ -3244,7 +3443,9 @@
 					"name": "washTowelTemp",
 					"value": 3
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29801 objValueBuffer@19429"
 		},
 		{
 			"name": "WashTowelModeMap",
@@ -3273,7 +3474,9 @@
 					"name": "WashTowelModeSmart",
 					"value": 10
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29850 objValueBuffer@93049"
 		},
 		{
 			"name": "WaterSettingMode",
@@ -3306,7 +3509,9 @@
 					"name": "MaxWater",
 					"value": 208
 				}
-			]
+			],
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@33219 objValueBuffer@126364"
 		}
 	],
 	"unresolved": [
@@ -4389,6 +4594,22 @@
 			],
 			"detail": "monitor_obstacle_tip_left monitor_obstacle_tip_right",
 			"reason": "fewer than 3 usable values; not published"
+		},
+		{
+			"what": "enum verification",
+			"sources": [
+				"a65_control_v5208/index.android.bundle.decompiled.js:238183"
+			],
+			"detail": "LogLevel",
+			"reason": "no object literal in the bytecode carries this key set; values come from the decompilate alone"
+		},
+		{
+			"what": "enum verification",
+			"sources": [
+				"a65_control_v5208/index.android.bundle.decompiled.js:610794"
+			],
+			"detail": "aiRobotType",
+			"reason": "no object literal in the bytecode carries this key set; values come from the decompilate alone"
 		}
 	]
 }
