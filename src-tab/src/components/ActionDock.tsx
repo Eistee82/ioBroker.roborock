@@ -19,6 +19,8 @@ interface ActionDockProps {
 	rooms: RoomSelectionModel;
 	zones: ZoneModel;
 	onStart: () => void;
+	/** Continues a paused run; the engine picks the command the paused run needs. */
+	onResume: () => void;
 	onPause: () => void;
 	onStop: () => void;
 	onDock: () => void;
@@ -100,6 +102,12 @@ export function startIntent(rooms: RoomSelectionModel, zones: ZoneModel): { labe
  * already in, and that run was started with whatever was drawn back then. See {@link startIntent}
  * for the naming of Start itself.
  *
+ * It also has a **callback of its own** rather than sharing Start's. Continuing a paused zone or
+ * segment run needs `resume_zoned_clean` or `resume_segment_clean`; only a paused whole-flat run is
+ * continued with `app_start`. Which one applies follows from the robot's `in_cleaning`, which this
+ * component does not see - so the engine chooses, and this button only has to say that Resume was
+ * pressed. See `MapEngine.resume()` for the evidence.
+ *
  * @param props
  */
 export function ActionDock(props: ActionDockProps): React.JSX.Element {
@@ -140,7 +148,7 @@ export function ActionDock(props: ActionDockProps): React.JSX.Element {
 					variant="contained"
 					color="primary"
 					startIcon={<PlayArrowIcon />}
-					onClick={props.onStart}
+					onClick={props.onResume}
 				>
 					{I18n.t("ui_resume")}
 				</Button>

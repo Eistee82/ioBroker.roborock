@@ -11,6 +11,7 @@ import {
 	ZONE_BLOCKS,
 	ZONE_LABELS,
 	ZONE_LENGTHS,
+	MAX_ROOM_NAME_LENGTH,
 	ZONE_REMOVE_COMMAND,
 	ZONE_UPDATE_COMMAND,
 } from "../../../../common/mapZoneKinds";
@@ -154,9 +155,10 @@ export const ROOM_TAGS: Readonly<Record<number, string>> = {
 };
 
 /**
- * Longest room name the app accepts (`map_edit_max_input_length_tip`, "Up to 30 characters").
+ * Longest room name the app accepts. Defined in `src/common/mapZoneKinds.ts` so the tab can stop
+ * the input where this refuses it; re-exported here because this is where the room commands live.
  */
-export const MAX_ROOM_NAME_LENGTH = 30;
+export { MAX_ROOM_NAME_LENGTH };
 
 /**
  * Bit 67 of `new_feature_info_str` (`NewFeatureStrBit.Matter`). Only robots with this bit are sent

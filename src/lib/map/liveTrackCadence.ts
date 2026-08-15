@@ -16,15 +16,28 @@
  * The adapter sees **that** a value differs from the one before, never **when** the robot wrote it.
  * What this module measures is therefore the distance between two *observations of a change*, not
  * the robot's update period, and it can never resolve anything finer than its own polling pause.
- * Both are stated here rather than papered over, and one of them is corrected for:
+ * Both limits are stated rather than papered over.
  *
- * A change is noticed on the first poll after it happened, so an observed interval carries, on
- * average, half a polling pause of extra delay. Left uncorrected that is a **runaway**: a longer
- * pause makes intervals look longer, which lengthens the pause again, until the cap stops it. So
- * every sample records the pause that was in force when it was taken, and
- * {@link estimateUpdatePeriodMs} subtracts half of it again. That makes the estimate converge from
- * both directions - a robot that is faster than the current pause is discovered step by step,
- * because each shorter pause resolves a little more.
+ * **No correction is applied for the polling delay, and that is deliberate.** A change is noticed
+ * on the first poll after it happened, so each detection is late by something between zero and one
+ * pause. It is tempting to subtract half a pause from every sample for that - and wrong: an
+ * interval is bounded by *two* detections, both late by the same kind of amount, so the two delays
+ * cancel on average and the observed interval is already an unbiased estimate of the real one.
+ * Subtracting anyway produces a systematic under-estimate; that was tried, and the test
+ * "lands near the pause that was measured for the test device" is what caught it.
+ *
+ * Each sample still records the pause it was taken at, because it says how coarsely that sample
+ * could possibly have been resolved - useful in the log, and a reminder not to re-introduce the
+ * subtraction.
+ *
+ * ## Why it cannot run away in either direction
+ *
+ * With a pause **shorter** than the robot's period the real intervals are visible, so the estimate
+ * lands on the period and the pause settles at half of it. With a pause **longer** than the period
+ * almost every poll shows a change, so the intervals look like the pause itself, the estimate
+ * follows it, and the next pause is half as long - it keeps halving until it is below the period
+ * and then settles. Both directions converge, which is why a robot faster than the shipped default
+ * is discovered in steps rather than never.
  *
  * ## Why the median and not an average
  *
@@ -83,19 +96,14 @@ export const MIN_PLAUSIBLE_GAP_MS = 50;
 export function estimateUpdatePeriodMs(samples: readonly CadenceSample[]): number | null {
 	if (samples.length < CADENCE_MIN_SAMPLES) return null;
 
-	// Each observation is late by up to one pause; on average by half of it. Taking that off again
-	// is what keeps a long pause from justifying itself - see the module comment.
-	const corrected = samples
-		.map((sample) => sample.observedMs - sample.pauseMs / 2)
-		.filter((value) => value > 0)
-		.sort((a, b) => a - b);
+	// Taken as measured: the two detections bounding an interval are late by the same kind of
+	// amount, so their delays cancel and no correction belongs here. See the module comment.
+	const observed = samples.map((sample) => sample.observedMs).sort((a, b) => a - b);
 
-	if (corrected.length < CADENCE_MIN_SAMPLES) return null;
-
-	const middle = Math.floor(corrected.length / 2);
-	return corrected.length % 2 === 0
-		? Math.round((corrected[middle - 1] + corrected[middle]) / 2)
-		: Math.round(corrected[middle]);
+	const middle = Math.floor(observed.length / 2);
+	return observed.length % 2 === 0
+		? Math.round((observed[middle - 1] + observed[middle]) / 2)
+		: Math.round(observed[middle]);
 }
 
 /**

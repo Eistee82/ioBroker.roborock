@@ -45,6 +45,7 @@ import {
 	zoneUpdatePayload,
 } from "./mapZones";
 import type { MapZone, MapZoneKind, MapZonePoint, MapZoneRefusal, ZoneBox } from "./mapZones";
+import { MAX_ROOM_NAME_LENGTH } from "@adapter/common/mapZoneKinds";
 import { layoutMapZoneHandles, renderMapZoneLayer } from "./mapZoneLayer";
 import type { MapZoneShape } from "./mapZoneLayer";
 import type { Furniture } from "@adapter/lib/map/v1/types";
@@ -90,6 +91,22 @@ export const MAP_ZONE_MIN_EDGE_PX = 6;
 
 /** State below the device root that carries the confirmed set of walls and zones. */
 export const MAP_ZONE_CONFIRM_STATE = "mapEdit.zones";
+
+/** Command state that renames rooms; the adapter rebuilds the whole assignment behind it. */
+export const ROOM_NAME_COMMAND = "name_segment";
+
+/**
+ * Which command continues a paused run, by the robot's own `in_cleaning`.
+ *
+ * The app's own dispatch, read out of its control plugin - see {@link MapEngine.resume} for the
+ * line references and for what is proved and what is not. `0` (None) is absent on purpose: there is
+ * nothing to resume, and the caller falls back to the whole-flat command.
+ */
+export const RESUME_COMMAND_BY_IN_CLEANING: Readonly<Record<number, string>> = {
+	1: "app_start",
+	2: "resume_zoned_clean",
+	3: "resume_segment_clean",
+};
 
 /**
  * How long a zone edit may stay unconfirmed before the user is told, in milliseconds.
@@ -590,6 +607,8 @@ export class MapEngine {
 	// Room selection (segment ids of the currently displayed map).
 	private selectedRoomIds = new Set<number>();
 	private roomLabelCount = 0;
+	/** The named rooms of the current map, in the order it lists them; see `renderRoomSelection`. */
+	private roomList: { segmentId: number; name: string }[] = [];
 
 	// Status bar values, all read from Devices.<duid>.deviceStatus.*
 	private statusValues: {
@@ -604,6 +623,13 @@ export class MapEngine {
 		waterBoxMode: number | null;
 		/** The mode the three values above add up to, derived by the adapter. */
 		cleanModeTab: number | null;
+		/**
+		 * Which kind of run the robot could resume - the robot's own `in_cleaning`.
+		 *
+		 * Not part of the status bar. It exists here because Resume has to send a different command
+		 * for each kind; see {@link MapEngine.resume}.
+		 */
+		inCleaning: number | null;
 		/**
 		 * Which station the robot is docked at, which decides the dock graphic on the map.
 		 *
@@ -622,6 +648,7 @@ export class MapEngine {
 		mopMode: null,
 		waterBoxMode: null,
 		cleanModeTab: null,
+		inCleaning: null,
 		dockType: null,
 	};
 	/** Value texts from the object definitions, so the UI needs no model knowledge. */
@@ -1198,6 +1225,7 @@ export class MapEngine {
 		this.q10CurrentCleanRoomIds = [];
 		this.selectedRoomIds.clear();
 		this.roomLabelCount = 0;
+		this.roomList = [];
 		this.userAdjustedView = false;
 		this.connectionChannel = "";
 		// The previous robot's modes are not this one's; they are filled in again by
@@ -1236,6 +1264,8 @@ export class MapEngine {
 			[`${deviceRoot}.deviceStatus.clean_mode_tab`, "cleanModeTab"],
 			// Not shown anywhere; it decides which of the app's two dock graphics the map draws.
 			[`${deviceRoot}.deviceStatus.dock_type`, "dockType"],
+			// Not shown either; it decides which command Resume has to send. See `resume()`.
+			[`${deviceRoot}.deviceStatus.in_cleaning`, "inCleaning"],
 		]);
 
 		// Transport channel of the local/cloud work package; simply hidden while it is absent.
@@ -1972,7 +2002,7 @@ export class MapEngine {
 		// again - otherwise it would keep sitting on the geometry of the previous map.
 		this.drawLiveOverlay();
 		this.applyRoomLabelZoomBehavior();
-		this.syncRoomSelectionWithLabels(roomLabels?.map((label) => label.segmentId) ?? []);
+		this.syncRoomSelectionWithLabels(roomLabels?.map((label) => ({ segmentId: label.segmentId, text: label.text })) ?? []);
 	}
 
 	/**
@@ -2584,7 +2614,7 @@ export class MapEngine {
 
 		renderer.drawObstacles(obstacleItems);
 		renderer.drawRoomLabels(roomLabels);
-		this.syncRoomSelectionWithLabels(roomLabels.map((label) => label.segmentId));
+		this.syncRoomSelectionWithLabels(roomLabels.map((label) => ({ segmentId: label.segmentId, text: label.text })));
 	}
 
 	// -----------------------------------------------------------------------------
@@ -2595,12 +2625,14 @@ export class MapEngine {
 	 * Keeps the selection in sync with what the map actually shows and refreshes the panel.
 	 * @param drawnSegmentIds Segment ids of the room labels just drawn.
 	 */
-	private syncRoomSelectionWithLabels(drawnSegmentIds: number[]): void {
-		const available = new Set(drawnSegmentIds);
+	private syncRoomSelectionWithLabels(drawnLabels: { segmentId: number; text: string }[]): void {
+		const available = new Set(drawnLabels.map((label) => label.segmentId));
 		this.roomLabelCount = available.size;
 		for (const selected of Array.from(this.selectedRoomIds)) {
 			if (!available.has(selected)) this.selectedRoomIds.delete(selected);
 		}
+		// Kept so the room list can be republished on a selection change without redrawing the map.
+		this.roomList = drawnLabels.map((label) => ({ segmentId: label.segmentId, name: label.text }));
 		this.renderRoomSelection();
 	}
 
@@ -2682,6 +2714,50 @@ export class MapEngine {
 	/** Publishes how many rooms are selected and how many the current map offers. */
 	private renderRoomSelection(): void {
 		this.host.onRooms?.({ selected: this.selectedRoomIds.size, available: this.roomLabelCount });
+		this.host.onRoomList?.({
+			rooms: this.roomList.map((room) => ({ ...room, selected: this.selectedRoomIds.has(room.segmentId) })),
+			maxNameLength: MAX_ROOM_NAME_LENGTH,
+		});
+	}
+
+	/**
+	 * Renames one room on the robot.
+	 *
+	 * **The robot never stores the name.** It keeps a segment id and a cloud room id; the name lives
+	 * in the Roborock cloud, and `name_segment` points the segment at a cloud room carrying the
+	 * wanted name (report 14 §1.5). All of that is the adapter's job - the tab sends the segment id
+	 * and the text and nothing else.
+	 *
+	 * Only the name travels. `buildNameSegment` keeps the room's current tag when none is given
+	 * (`MapEditService.ts:1225`), so renaming cannot silently retag a room and change the suction
+	 * and water defaults that tag carries.
+	 * @param segmentId The robot's own id for the room.
+	 * @param name The new name; trimmed, and refused when empty or too long.
+	 */
+	public async renameRoom(segmentId: number, name: string): Promise<void> {
+		if (!this.currentRobotDuid) return;
+
+		const trimmed = name.trim();
+		if (trimmed.length === 0 || trimmed.length > MAX_ROOM_NAME_LENGTH) {
+			this.showError(
+				this.t(
+					"ui_room_name_invalid",
+					"A room name needs between 1 and %s characters.",
+					MAX_ROOM_NAME_LENGTH
+				)
+			);
+			return;
+		}
+		// Nothing to send, and `name_segment` rewrites the whole assignment - not worth one for a
+		// name that did not change.
+		if (this.roomList.some((room) => room.segmentId === segmentId && room.name === trimmed)) return;
+
+		await this.sendCommand("set_state", {
+			duid: this.currentRobotDuid,
+			folder: MAP_ZONE_COMMAND_FOLDER,
+			command: ROOM_NAME_COMMAND,
+			value: JSON.stringify([{ segmentId, name: trimmed }]),
+		});
 	}
 
 	/** Publishes the zone count; the limit is a UI decision, see MAX_ZONES. */
@@ -3945,6 +4021,52 @@ export class MapEngine {
 		this.rects = [];
 		this.drawZones();
 		this.renderZoneHint();
+	}
+
+	/**
+	 * Continues the run the robot paused, with the command that run needs.
+	 *
+	 * **There is no single "resume".** The Roborock app branches on what kind of run was paused and
+	 * sends a different command for each (a65 control plugin, A65:421454-421600):
+	 *
+	 * | paused run | the app sends |
+	 * | --- | --- |
+	 * | segment run | `resume_segment_clean` (A65:421596) |
+	 * | whole-flat run | **`app_start`** (A65:421445-421453) |
+	 * | zone run | `resume_zoned_clean` (A65:421543) |
+	 *
+	 * The RPC names come from the app's own method table (A65:238179); the two methods are defined
+	 * at A65:229738-229768 and take no parameters.
+	 *
+	 * Which kind it was is `in_cleaning`, straight out of the robot's status: the app derives its
+	 * `cleanResumeFlag` from exactly that field through the table at A65:222457-222468 -
+	 * 1 = whole flat, 2 = zone, 3 = segment. The adapter has published `in_cleaning` all along.
+	 *
+	 * **What is deliberately not sent is `app_resume`.** It exists, but its only caller in the whole
+	 * bundle (A65:422688-422702) is reached when the robot has driven back to the station mid-run to
+	 * wash or change its mop and is to carry on - a situation this tab does not represent at all.
+	 * Sending it for a paused run would be a guess.
+	 *
+	 * **What is not decidable from outside** is whether the firmware *requires* the `resume_*`
+	 * commands or would continue a paused zone run on a plain `app_start` as well. That could only
+	 * be measured on the device. What is proved is what the app does, and that is what this follows.
+	 *
+	 * **And it is not covered by `commandVerification`**, deliberately. That check compares status
+	 * fields for **equality** against the values a command asked for, and a resume asks for no value
+	 * at all - its honest expectation is "`state` is no longer 10 (Paused)", which the mechanism
+	 * cannot express. Committing an equality expectation instead would mean naming the state each
+	 * kind of run lands in, and those numbers are inferred rather than measured. That is exactly how
+	 * the `dnd_enabled` false alarm came about, and a check that cries wolf is worse than none. A
+	 * robot that ignores the command therefore stays silent here; the button simply does nothing
+	 * visible, which is what it did before this branch existed too.
+	 */
+	public resume(): void {
+		if (!this.currentRobotDuid) return;
+
+		const command = RESUME_COMMAND_BY_IN_CLEANING[this.statusValues.inCleaning ?? -1];
+		// Unknown or absent `in_cleaning`: the whole-flat command, which is both the app's own
+		// choice for that case and what this tab sent for every case until now.
+		void this.sendCommand(command ?? "app_start", { duid: this.currentRobotDuid });
 	}
 
 	public pause(): void {

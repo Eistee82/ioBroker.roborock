@@ -159,12 +159,49 @@ export interface DockModel {
 	activity: DockActivityModel;
 }
 
-/** Room selection state of the currently displayed map. */
+/** One room of the currently displayed map. */
+export interface RoomEntry {
+	/** The robot's own segment id, which is what every room command names a room by. */
+	segmentId: number;
+	/** Name as the map or the room states carry it; never empty, or the room has no label. */
+	name: string;
+	/** True while the room is picked for the next segment run. */
+	selected: boolean;
+}
+
+/**
+ * Room selection state of the currently displayed map.
+ *
+ * Counts only. The run controls ask "is anything picked", and nothing more - see
+ * {@link RoomListModel} for the rooms themselves.
+ */
 export interface RoomSelectionModel {
 	/** Number of rooms the user picked. */
 	selected: number;
 	/** Number of rooms the current map offers at all. */
 	available: number;
+}
+
+/**
+ * The rooms of the current map, for the panel that lists and renames them.
+ *
+ * Kept apart from {@link RoomSelectionModel} because the two have different readers: the run
+ * controls need two numbers and are re-rendered on every selection change, the panel needs the
+ * names. One model carrying both would make every consumer depend on all of it.
+ */
+export interface RoomListModel {
+	/**
+	 * The rooms, in the order the map lists them.
+	 *
+	 * Only rooms that carry a name appear: an unnamed segment has no label on the map either, and
+	 * a row showing nothing but a number would invite renaming a room the user cannot identify.
+	 */
+	rooms: RoomEntry[];
+	/**
+	 * Longest name the robot's own app accepts, so the field can stop where the adapter refuses
+	 * (`map_edit_max_input_length_tip`).
+	 */
+	maxNameLength: number;
 }
 
 /** Zone selection state. */
@@ -240,6 +277,8 @@ export interface MapEngineHost {
 	onAssetBase?: (baseUrl: string | null) => void;
 	onFloors?: (floors: SelectOption[], selected: string | null) => void;
 	onRooms?: (rooms: RoomSelectionModel) => void;
+	/** The rooms of the current map and their names; republished with every map update. */
+	onRoomList?: (rooms: RoomListModel) => void;
 	onZones?: (zones: ZoneModel) => void;
 	/** The robot's own walls and zones, republished after every map update and every edit. */
 	onMapZones?: (zones: MapZonesModel) => void;

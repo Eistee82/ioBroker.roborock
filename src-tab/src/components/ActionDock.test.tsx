@@ -26,6 +26,7 @@ function renderDock(phase: RobotPhase, overrides: Partial<ActionDockProps> = {})
 		rooms: { selected: 0, available: 3 },
 		zones: { count: 0, max: 5, atLimit: false },
 		onStart: vi.fn(),
+		onResume: vi.fn(),
 		onPause: vi.fn(),
 		onStop: vi.fn(),
 		onDock: vi.fn(),
@@ -116,10 +117,16 @@ describe("ActionDock run controls", () => {
 		expect(props.onStop).toHaveBeenCalledTimes(1);
 	});
 
-	it("sends Resume through the same start command the adapter expects", () => {
+	it("sends Resume on its own callback, not on the one that starts a run", () => {
+		// These were the same callback until the app's own dispatch was read: continuing a paused
+		// zone or segment run needs `resume_zoned_clean` / `resume_segment_clean`, and only a paused
+		// whole-flat run is continued with `app_start` (A65:421454-421600). Which one it is depends
+		// on the robot's `in_cleaning`, which the dock does not know - so the engine decides, and
+		// the dock has to hand it a separate press to decide about.
 		const { props } = renderDock("paused");
 		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_resume") }));
-		expect(props.onStart).toHaveBeenCalledTimes(1);
+		expect(props.onResume).toHaveBeenCalledTimes(1);
+		expect(props.onStart).not.toHaveBeenCalled();
 	});
 });
 
@@ -178,7 +185,8 @@ describe("ActionDock start button", () => {
 		expect(screen.queryByRole("button", { name: I18n.t("ui_start_zones") })).toBeNull();
 		expect(screen.queryByRole("button", { name: I18n.t("ui_start_rooms") })).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: I18n.t("ui_resume") }));
-		expect(props.onStart).toHaveBeenCalledTimes(1);
+		expect(props.onResume).toHaveBeenCalledTimes(1);
+		expect(props.onStart).not.toHaveBeenCalled();
 		expect(props.onCleanRooms).not.toHaveBeenCalled();
 	});
 

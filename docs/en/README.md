@@ -170,6 +170,19 @@ app's tables, and a code those tables do not list is shown as the plain number r
 given an invented name. Values whose meaning is not proven - a B01 or Q10 device publishes
 several - are listed under *More values* with the name and unit of their own object.
 
+**Schedules: some robots keep them, others leave them on Roborock's server.** Which of the two a
+robot does is not a question of its model - the app decides it from a flag the robot reports about
+itself. On a robot of the second kind the list the adapter used to read is simply empty, so a
+schedule that runs every day did not appear in ioBroker at all. Such schedules are now listed with
+their identifier and whether they are switched on.
+
+What is **not** there is their content. The app builds its schedule list from two sources: the
+robot supplies the identifiers, and the times, rooms and cleaning modes come from your Roborock
+account. Over the local connection they cannot be read, and this adapter does not fetch them. For
+the same reason the switch of such a schedule is read-only here: turning a server-side schedule on
+or off needs a command whose form has not been established, and a switch wired to the wrong command
+would look like it works and do nothing.
+
 The dock is drawn with the Roborock app's own picture of it, turned the way the robot
 reports the dock to stand. Which picture depends on the reported dock type: a plain
 charging dock gets a different graphic from a station that empties, washes or dries. Those
@@ -217,6 +230,7 @@ Every setting of the adapter instance, taken from the admin configuration defini
 | Maximum wait after failed polls | `pollBackoffMaxInterval` | `number` | `300` | After a failed poll the adapter waits 30 seconds, then doubles the wait after each further failure, up to this limit. A low value notices a returning robot sooner but keeps retrying against an unreachable device; a high value keeps the log and the network quiet during a longer outage. |
 | Live map update | `liveMapInterval` | `number` | `3` | Seconds between two checks for map changes while the robot is cleaning; while it stands still the adapter waits twice as long. The check itself is a small request that asks only what changed, and a complete map is transferred only when something actually did - so a low value costs far less than it looks, but it is still one request per interval on the robot, the network and ioBroker. Robots that do not offer the incremental map have to transfer the whole map every time and are therefore never checked faster than every 5 seconds. 0 switches the live update off; the map is then only refreshed by the normal poll. |
 | Live position: pause between updates (ms) | `liveTrackInterval` | `number` | `1500` | Milliseconds the adapter waits after one answer before it asks for the robot position again. It is a pause, not a fixed rate: the next question goes out only once the previous answer has arrived, so the requests can never pile up and a slow connection simply slows the updates down instead. The default of 1500 ms comes from a measurement at a driving robot: it advances its own position only about every 3 seconds, so 95 percent of the requests in a 100 ms test returned the value they had already returned before. 1500 ms samples that roughly twice per update, which is enough not to skip a step. A shorter setting does not make the robot report more often - it only produces more requests, and the position it shows is on average about 1.5 seconds old whatever is configured here, because that is the robot's own update grid. 250 ms is the fastest allowed, kept well below the default so a model that updates faster than the measured one is not held back. Two limits apply automatically and cannot be undercut: while the robot stands still, and while it is only reachable through the Roborock cloud, the pause is at least 2 seconds. 0 switches the live position off; the robot is then only shown where the last map put it. Values from 1 to 30 are still read as the whole seconds this option used to count, so an existing setting keeps working - set a value of 250 or more to use the new unit. |
+| Live position: match the robot | `liveTrackAuto` | `checkbox` | `true` | Lets the adapter work out how often this particular robot advances its position, and paces the live position channel accordingly. Switch it off to use the fixed value above instead. The default of 1500 ms was measured at one robot; a robot that reports three times as fast would be held back by it, and its owner would never learn that there is a setting to change. What the adapter measures is the distance between two observations of a change, not the moment the robot wrote it, and it can never resolve anything finer than the pause it is currently running at - so a faster robot is approached in steps rather than recognised at once. Only a robot that is actually working counts, never one standing in its dock, and the result never goes below the fastest allowed value or above the two seconds a standing robot gets. What the adapter settled on is written to the log and to the read-only state map.liveTrackLearnedPause of each robot. Setting the value above to 0 switches the live position off entirely, and this option cannot re-enable it. |
 | Saved program execution | `sceneExecutionMode` | `select` | `"local"` | Local: runs the saved scene locally from its Roborock scene steps and keeps the local queue/resume. Cloud: starts the saved scene through Roborock cloud like the app. No automatic fallback between modes.<br>Options: `local` = Local adapter queue, `cloud` = Cloud like Roborock app |
 | Listen for device broadcasts (UDP 58866) | `udpDiscoveryEnabled` | `checkbox` | `true` | Off: only devices with a statically configured IP address are used. Helpful when broadcasts are filtered (VLAN, WLAN client isolation, LXC or Docker bridges). |
 | Network interface for discovery | `udpBindAddress` | `interface` |  | IP address or interface name (for example eth0) the UDP discovery socket binds to. Empty means all interfaces, which can fail on hosts with several networks.<br>Hidden when `!data.udpDiscoveryEnabled` |
@@ -240,9 +254,9 @@ All device objects live below `roborock.<instance>.Devices.<duid>`:
 | `cleaningInfo` | Lifetime totals (area, time, number of runs). |
 | `cleaningInfo.records.<index>` | The individual cleaning runs of the history, newest first, with the rendered map of each run below `map`. |
 | `floors` | One entry per stored map, including the button that loads it. |
-| `schedules` | The timers stored in the robot, including an enable switch. |
+| `schedules` | The robot's timers. A timer the robot keeps itself has `cron` and a writable `enabled` switch. A robot that keeps its schedules on Roborock's server instead gets one entry per schedule with `source: "server"`, a **read-only** `enabled` and `raw`, the entry exactly as the robot reported it - see below. |
 | `programs` | The scenes saved in the Roborock app. |
-| `map` | The rendered map and the room names. |
+| `map` | The rendered map and the room names. `map.liveTrackLearnedPause` reports, read only, the pause the adapter worked out for this robot's live position - see **Live position: match the robot** in the settings. It stays empty until enough position changes have been seen, and while the option is switched off. |
 | `deviceInfo`, `networkInfo`, `connection` | Model and firmware information, network data and the state of the local/cloud channels. |
 | `dockingStationStatus` | Dock states, only on models with a dock that reports them. |
 

@@ -6,6 +6,7 @@ import { StationService } from "./services/StationService";
 import { V1ConsumableService } from "./services/V1ConsumableService";
 import { V1MapService } from "./services/V1MapService";
 import { CapabilityProbe } from "../capabilityProbe";
+import { GET_SERVER_TIMER, parseServerTimerList } from "./serverTimers";
 import {
 	CLOSE_DND_TIMER,
 	DND_ENABLED_FIELD,
@@ -1288,6 +1289,55 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			}
 		} catch (e: any) {
 			this.deps.adapter.rLog("System", this.duid, "Warn", undefined, undefined, `Failed to update timers: ${e.message}`, "warn");
+		}
+
+		await this.updateServerTimers();
+	}
+
+	/**
+	 * Publishes the schedules the robot keeps on Roborock's server.
+	 *
+	 * Runs after the device timers because on a robot that uses the server path the device list is
+	 * empty - measured at the test device, which showed a running schedule in the app and nothing
+	 * at all in ioBroker (`_appanalysis/20-zeitplaene.md`). Which path a robot uses is decided by a
+	 * bit of `local_info.featureset`, not by its model; the proof chain is in `serverTimers.ts`.
+	 *
+	 * **`enabled` is read-only here, unlike its device-timer namesake.** The device switch works
+	 * through `upd_timer`, and that is a device-timer command; whether `upd_server_timer` takes the
+	 * same arguments has not been read. A writable switch wired to the wrong command is precisely
+	 * the dead control this project keeps removing, so the switch is not offered until its command
+	 * is proven.
+	 */
+	private async updateServerTimers(): Promise<void> {
+		try {
+			const answer = await this.deps.adapter.requestsHandler.sendRequest(this.duid, GET_SERVER_TIMER, []);
+			const entries = parseServerTimerList(answer);
+			if (entries.length === 0) return;
+
+			await this.deps.ensureFolder(`Devices.${this.duid}.schedules`);
+			for (const entry of entries) {
+				const folder = `Devices.${this.duid}.schedules.${entry.id}`;
+				await this.deps.ensureFolder(folder);
+
+				await this.deps.ensureState(`${folder}.enabled`, { name: "Enabled", type: "boolean", role: "indicator", write: false });
+				await this.deps.adapter.setStateChanged(`${folder}.enabled`, { val: entry.active, ack: true });
+
+				await this.deps.ensureState(`${folder}.source`, { name: "Where this schedule lives", type: "string", role: "text", write: false });
+				await this.deps.adapter.setStateChanged(`${folder}.source`, { val: "server", ack: true });
+
+				await this.deps.ensureState(`${folder}.raw`, { name: "Entry as reported", type: "string", role: "json", write: false });
+				await this.deps.adapter.setStateChanged(`${folder}.raw`, { val: entry.raw, ack: true });
+			}
+
+			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined,
+				`${entries.length} schedule(s) of this robot live on the Roborock server, not in the robot. `
+				+ "Their identifiers and on/off state are published; their times, rooms and modes are held in the Roborock account and are not readable over the local channel.",
+				"info");
+		} catch (e: unknown) {
+			// A robot that does not know the method is not a fault - it simply keeps its schedules
+			// itself, which is the other half of the same branch.
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
+				`No server-side schedules read: ${this.deps.adapter.errorMessage(e)}`, "debug");
 		}
 	}
 

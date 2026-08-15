@@ -87,6 +87,15 @@ export const ZONE_ADD_COMMANDS: Readonly<Record<string, MapZoneKind>> = {
 export const ZONE_REMOVE_COMMAND = "remove_map_zone";
 
 /**
+ * Longest room name the app accepts (`map_edit_max_input_length_tip`, "Up to 30 characters").
+ *
+ * Here rather than beside the room commands for the same reason as everything else in this file:
+ * the admin tab has to stop the input at the same place the adapter refuses, and it cannot import
+ * `MapEditService`.
+ */
+export const MAX_ROOM_NAME_LENGTH = 30;
+
+/**
  * Command that changes one wall or zone in place.
  *
  * Exists so that moving one is a **single** read-change-write cycle. "Remove, then add" would be

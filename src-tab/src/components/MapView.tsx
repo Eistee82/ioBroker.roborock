@@ -12,6 +12,7 @@ import type {
 	ObstaclePhotoModel,
 	RobotEntry,
 	MapZonesModel,
+	RoomListModel,
 	RoomSelectionModel,
 	SelectOption,
 	StatusModel,
@@ -24,6 +25,7 @@ import { ModeBar } from "./ModeBar";
 import { ConsumablesPanel } from "./ConsumablesPanel";
 import { DockPanel } from "./DockPanel";
 import { MapZonesPanel } from "./MapZonesPanel";
+import { RoomsPanel } from "./RoomsPanel";
 import { LiveTrackLegend } from "./LiveTrackLegend";
 import { ObstacleDialog } from "./ObstacleDialog";
 import { HistoryPanel } from "./HistoryPanel";
@@ -121,6 +123,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [rooms, setRooms] = useState<RoomSelectionModel>({ selected: 0, available: 0 });
 	const [zones, setZones] = useState<ZoneModel>({ count: 0, max: 5, atLimit: false });
 	const [mapZones, setMapZones] = useState<MapZonesModel>(EMPTY_MAP_ZONES);
+	const [roomList, setRoomList] = useState<RoomListModel>({ rooms: [], maxNameLength: 30 });
 	const [cleanCount, setCleanCount] = useState(1);
 	const [consumables, setConsumables] = useState<ConsumablePartModel[]>([]);
 	const [dock, setDock] = useState<DockModel>({ controls: [], status: [], faulty: false, activity: EMPTY_DOCK_ACTIVITY });
@@ -172,6 +175,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				setSelectedFloor(selected ?? "");
 			},
 			onRooms: setRooms,
+			onRoomList: setRoomList,
 			onZones: setZones,
 			onMapZones: setMapZones,
 			onConsumables: setConsumables,
@@ -375,6 +379,10 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 					dockActivity={status.dockActivity}
 					onCommand={(command, value) => engineRef.current?.sendDockValue(command, value)}
 				/>
+				<RoomsPanel
+					rooms={roomList}
+					onRename={(segmentId, name) => void engineRef.current?.renameRoom(segmentId, name)}
+				/>
 				<MapZonesPanel
 					zones={mapZones}
 					onAdd={kind => engineRef.current?.startMapZone(kind)}
@@ -455,6 +463,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 						rooms={rooms}
 						zones={zones}
 						onStart={() => engineRef.current?.start()}
+						onResume={() => engineRef.current?.resume()}
 						onPause={() => engineRef.current?.pause()}
 						onStop={() => engineRef.current?.stop()}
 						onDock={() => engineRef.current?.dock()}

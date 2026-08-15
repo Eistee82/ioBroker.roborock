@@ -51,13 +51,16 @@
 import {
 	LIVE_MAP_DISABLED,
 	LIVE_TRACK_DISABLED,
+	LIVE_TRACK_POLICY,
 	LIVE_TRACK_REQUEST_PRIORITY,
+	MIN_LIVE_TRACK_PAUSE_MS,
 	getLiveMapIntervalSeconds,
 	getLiveTrackPauseMs,
 	isChannelUnavailableError,
 	resolveLiveMapIntervalSeconds,
 	resolveLiveTrackPauseMs
 } from "../requestPolicy";
+import { LiveTrackCadenceLearner } from "./liveTrackCadence";
 import { MapManager } from "./MapManager";
 import {
 	DYNAMIC_DATA_BUNDLE_ID,
@@ -104,7 +107,7 @@ const TRACK_DIFF_FALLBACK_NONCE = 1;
 
 /** The part of the adapter this poller needs. Kept structural so tests can supply a stub. */
 export type LiveMapAdapter = {
-	config: { liveMapInterval?: number; liveTrackInterval?: number };
+	config: { liveMapInterval?: number; liveTrackInterval?: number; liveTrackAuto?: boolean };
 	requestsHandler: {
 		sendRequest(duid: string, method: string, params: unknown, options?: { priority?: number; timeout?: number }): Promise<unknown>;
 	};
@@ -140,6 +143,13 @@ export type DynamicCycleContext = {
 
 /** State that carries the driven track, its mop markers and the robot position for the UI. */
 export const LIVE_TRACK_STATE = "map.liveTrack";
+
+/**
+ * State the learned pause is published in, so what the adapter worked out is visible.
+ *
+ * Read-only: it reports what was learned, it is not a second place to configure the cadence.
+ */
+export const LIVE_TRACK_CADENCE_STATE = "map.liveTrackLearnedPause";
 
 /** The part of a device feature handler this poller needs. */
 export type LiveMapHandler = {
@@ -187,6 +197,13 @@ type DeviceState = {
 	dynamicUnsupported: boolean;
 	/** Last diff answer, offered to whichever cycle falls due next. */
 	sharedDiff: SharedDiff | null;
+	/**
+	 * Learns how often this particular robot advances its position.
+	 *
+	 * One per device, because the answer is a property of the robot and not of the adapter; see
+	 * `liveTrackCadence.ts` for what it can and cannot measure.
+	 */
+	cadence: LiveTrackCadenceLearner;
 };
 
 export class LiveMapPoller {
@@ -328,13 +345,15 @@ export class LiveMapPoller {
 	private async runDynamicPass(duid: string, context: DynamicCycleContext): Promise<void> {
 		if (this.stopped || !this.dynamicLoops.has(duid)) return;
 
+		const state = this.getState(duid);
 		const pauseMs = getLiveTrackPauseMs({
-			configuredPause: this.adapter.config.liveTrackInterval,
+			// What the learner found out about *this* robot, where it has an opinion and the user
+			// has not switched the automatic off. The caps for a standing robot and for a
+			// cloud-only device still apply on top: `getLiveTrackPauseMs` never speeds those up.
+			configuredPause: this.effectiveConfiguredPause(state),
 			isActive: context.isActive(),
 			isLocal: context.isLocal()
 		});
-
-		const state = this.getState(duid);
 		if (pauseMs === LIVE_TRACK_DISABLED || state.dynamicUnsupported || state.trackDiffGaveUp) {
 			// Switched off, or this robot has proven it cannot answer. Either way the loop ends; it
 			// is started again from the outside when the configuration or the device changes.
@@ -344,7 +363,7 @@ export class LiveMapPoller {
 
 		state.dynamicInFlight = true;
 		try {
-			await this.runDynamicCycle(duid, state);
+			await this.runDynamicCycle(duid, state, { pauseMs, active: context.isActive() });
 		} catch (error: unknown) {
 			this.adapter.rLog("MapManager", duid, "Warn", "1.0", undefined, `Live position update failed: ${this.adapter.errorMessage(error)}`, "debug");
 		} finally {
@@ -382,7 +401,7 @@ export class LiveMapPoller {
 	 * @param duid Device Unique ID.
 	 * @param state Bookkeeping for this device.
 	 */
-	private async runDynamicCycle(duid: string, state: DeviceState): Promise<void> {
+	private async runDynamicCycle(duid: string, state: DeviceState, cadence?: { pauseMs: number; active: boolean }): Promise<void> {
 		// The same reason the map cycle skips here: while the robot re-locates itself the map it is
 		// drawn on is about to be replaced, so a position in the old frame would point at the wrong
 		// room rather than at nothing.
@@ -406,7 +425,7 @@ export class LiveMapPoller {
 		}
 
 		state.trackDiffFailures = 0;
-		await this.refreshDynamicTrack(duid, raw, state);
+		await this.refreshDynamicTrack(duid, raw, state, cadence);
 	}
 
 	/**
@@ -590,7 +609,7 @@ export class LiveMapPoller {
 	 * @param rawDiff The untouched `get_dynamic_map_diff` answer.
 	 * @param state Bookkeeping for this device.
 	 */
-	private async refreshDynamicTrack(duid: string, rawDiff: unknown, state: DeviceState): Promise<void> {
+	private async refreshDynamicTrack(duid: string, rawDiff: unknown, state: DeviceState, cadence?: { pauseMs: number; active: boolean }): Promise<void> {
 		if (state.dynamicUnsupported) return;
 
 		const channel = parseDynamicChannels(rawDiff).get(DYNAMIC_DATA_BUNDLE_ID);
@@ -610,6 +629,10 @@ export class LiveMapPoller {
 			const id = `Devices.${duid}.${LIVE_TRACK_STATE}`;
 			await this.adapter.ensureState(id, { name: "Live track", type: "string", role: "json", read: true, write: false, def: "" });
 			await this.adapter.setStateChangedAsync(id, { val: JSON.stringify(snapshot), ack: true });
+
+			// Only now, with the position in hand: the learner needs the value, the pause it was
+			// fetched at, and whether the robot was working - a standing robot proves nothing.
+			if (cadence) await this.learnCadence(duid, state, snapshot.position, cadence.pauseMs, cadence.active);
 		} catch (error: unknown) {
 			// An unavailable channel says nothing about the robot's abilities - keep asking later.
 			if (isChannelUnavailableError(error)) return;
@@ -751,6 +774,56 @@ export class LiveMapPoller {
 	 * @param duid Device Unique ID.
 	 * @returns The device's state record.
 	 */
+	/**
+	 * The pause the cycle should ask for, before the idle and cloud caps are applied.
+	 *
+	 * The configured number wins in two cases, and both are deliberate: when the automatic is
+	 * switched off, and when it is `0`, which switches the channel off entirely - an automatic that
+	 * could re-enable a feature the user turned off would be a bug, not a convenience.
+	 *
+	 * @param state Bookkeeping of the device, which carries its learner.
+	 */
+	private effectiveConfiguredPause(state: DeviceState): number | undefined {
+		const configured = this.adapter.config.liveTrackInterval;
+		if (this.adapter.config.liveTrackAuto === false) return configured;
+		if (resolveLiveTrackPauseMs(configured) === LIVE_TRACK_DISABLED) return configured;
+		return state.cadence.learnedPauseMs ?? configured;
+	}
+
+	/**
+	 * Feeds one observation to the learner and publishes what it concluded.
+	 *
+	 * @param duid Device Unique ID.
+	 * @param state Bookkeeping of the device.
+	 * @param position Position of this pass, or null when the answer carried none.
+	 * @param pauseMs Pause the cycle is running at right now.
+	 * @param active Whether the robot is working.
+	 */
+	private async learnCadence(duid: string, state: DeviceState, position: { x: number; y: number } | null, pauseMs: number, active: boolean): Promise<void> {
+		if (this.adapter.config.liveTrackAuto === false) return;
+		if (!state.cadence.observe(position, pauseMs, active)) return;
+
+		const adopted = state.cadence.adopt();
+		if (adopted === null) return;
+
+		const period = state.cadence.estimatedPeriodMs;
+		this.adapter.rLog("MapManager", duid, "Info", "1.0", undefined,
+			`Live position: this robot advances its position about every ${period} ms (median of ${state.cadence.sampleCount} observed changes), so the pause is now ${adopted} ms. `
+			+ "Measured between two observations, never finer than the pause itself.", "info");
+
+		const id = `Devices.${duid}.${LIVE_TRACK_CADENCE_STATE}`;
+		await this.adapter.ensureState(id, {
+			name: "Learned live position pause",
+			type: "number",
+			role: "value.interval",
+			unit: "ms",
+			read: true,
+			write: false,
+			def: 0
+		});
+		await this.adapter.setStateChangedAsync(id, { val: adopted, ack: true });
+	}
+
 	private getState(duid: string): DeviceState {
 		let state = this.states.get(duid);
 		if (!state) {
@@ -765,7 +838,13 @@ export class LiveMapPoller {
 				trackDiffFailures: 0,
 				trackDiffGaveUp: false,
 				dynamicUnsupported: false,
-				sharedDiff: null
+				sharedDiff: null,
+				// The learner may never produce a pause outside what the option itself allows, and
+				// never a slower one than a standing robot gets - see `pauseForPeriod`.
+				cadence: new LiveTrackCadenceLearner({
+					minMs: MIN_LIVE_TRACK_PAUSE_MS,
+					maxMs: LIVE_TRACK_POLICY.idlePauseMs
+				})
 			};
 			this.states.set(duid, state);
 		}

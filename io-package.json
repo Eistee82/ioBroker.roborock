@@ -204,6 +204,7 @@
     "pollBackoffMaxInterval": 300,
     "liveMapInterval": 3,
     "liveTrackInterval": 1500,
+    "liveTrackAuto": true,
     "hostname_ip": "iobroker",
     "cameraPin": 1234,
     "region": "eu",

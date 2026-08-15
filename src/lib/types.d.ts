@@ -28,6 +28,7 @@ declare global {
 			 * requests, the map is a large cloud transfer.
 			 */
 			liveTrackInterval?: number;
+			liveTrackAuto?: boolean;
 
 			enable_map_creation: boolean;
 			cameraPin: string;
