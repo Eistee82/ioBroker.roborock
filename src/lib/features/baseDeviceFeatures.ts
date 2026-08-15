@@ -792,19 +792,28 @@ export abstract class BaseDeviceFeatures {
 	 *
 	 * `requestAndProcess` used to write states only when the answer unwrapped to a plain object.
 	 * Everything else fell through to the end of the `try` block and vanished: no state, no log,
-	 * no error. That is not a corner case. Four of the adapter's own eight callers hit it on the
-	 * reference robot (`_appanalysis/19-geraetefaehigkeiten.md` §2):
+	 * no error.
 	 *
-	 * | Call | Answer | What used to happen |
+	 * Measured against every answer the reference robot gives - all 43 of them, recorded in
+	 * `_appanalysis/19-geraetefaehigkeiten.md` §2 - **28 arrived and 15 were dropped**. The three
+	 * shapes that got lost, with a real example each:
+	 *
+	 * | Shape | Example answer | What used to happen |
 	 * | --- | --- | --- |
-	 * | `get_fw_features` | `[111,…,125]` | nothing - `Devices.*.firmwareFeatures` never existed |
-	 * | `get_room_mapping` | `[[16,"23351030",6],…]` | nothing - `map.room_mapping` never existed |
-	 * | `get_server_timer` | `[["1743140136890","on",-1]]` | unwrapped to a 3-element array, then nothing |
-	 * | `get_timer` | `[]` | nothing - indistinguishable from "robot did not answer" |
+	 * | bare value in a wrapper | `get_sound_volume` → `[90]` | unwrapped to `90`, then nothing |
+	 * | list | `get_fw_features` → `[111,…,125]` | nothing |
+	 * | empty list | `get_timer` → `[]` | nothing - indistinguishable from "did not answer" |
 	 *
-	 * Measured across all 43 getters the reference robot answers, 28 arrived and **15 were
-	 * dropped**. So the adapter could already publish values it knows nothing about - it just
-	 * refused to do so for a third of them.
+	 * **What this is not:** a claim that eight states are missing today. Of the eight base callers,
+	 * `get_prop`, `get_consumable`, `get_network_info` and `get_multi_maps_list` answer with an
+	 * object and always worked; V1 overrides `updateTimers` and `updateRoomMapping` with its own
+	 * parsers; and `Feature.FirmwareInfo` and `Feature.Timers` are granted by **no** model class,
+	 * so those two return before ever reaching this code. That gate is a separate finding and is
+	 * deliberately not touched here.
+	 *
+	 * What is broken is the mechanism: any getter whose answer is not an object loses its value
+	 * without a word - which is precisely the mechanism needed to publish values the adapter has
+	 * no name for.
 	 *
 	 * ## The rules, and what they deliberately do not do
 	 *

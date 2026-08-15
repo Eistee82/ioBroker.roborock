@@ -6,6 +6,7 @@ const path = require("node:path");
 const REPO_ROOT = path.join(__dirname, "..");
 const PREPARE_SCRIPT = path.join(__dirname, "prepare_appplugin_bundles.js");
 const EXTRACT_SCRIPT = path.join(__dirname, "extract_appplugin_translations.js");
+const VALUE_LIST_SCRIPT = path.join(__dirname, "extract_appplugin_value_lists.js");
 
 function printHelp() {
     console.log(`Usage: node scripts/appplugins.js <command> [options]
@@ -13,16 +14,20 @@ function printHelp() {
 Commands:
   convert bundle         Normalize and split AppPlugin bundles under .AppPlugins
   extract translations   Prepare bundles when needed and extract merged translations
+  extract value-lists    Extract the mode pickers and named enums into lib/protocols/roborock_value_lists.json
 
 Examples:
   npm run appplugins:convert
   npm run appplugins:extract
   npm run appplugins:extract -- --plugin "Saros Z70"
+  npm run appplugins:value-lists
+  npm run appplugins:value-lists -- --bundle path/to/index.android.bundle.decompiled.js
 
 Notes:
   Metro bundles are split automatically.
   Hermes bundles are auto-detected; when the decompiler is missing, the tooling tries to install it automatically.
   Translation extraction merges into lib/protocols/roborock_strings.json by default.
+  Value-list extraction resolves its labels against that file, so run "extract translations" first.
 `);
 }
 
@@ -102,6 +107,14 @@ function main() {
         const { prepareArgs, extractArgs } = splitExtractArgs(rest);
         runNodeScript(PREPARE_SCRIPT, prepareArgs);
         runNodeScript(EXTRACT_SCRIPT, extractArgs);
+        return;
+    }
+
+    if (command === "extract" && subject === "value-lists") {
+        // No prepare step here: with an explicit --bundle there is nothing to normalize, and
+        // without one the extractor reads what "convert bundle" already produced. Running the
+        // Hermes decompiler again would cost minutes for no gain.
+        runNodeScript(VALUE_LIST_SCRIPT, rest);
         return;
     }
 
