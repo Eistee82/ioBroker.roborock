@@ -1,6 +1,9 @@
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 import { MapManager } from "../../../map/MapManager";
+import { normalizeMapFlag, normalizeRoomId } from "../../../map/roomKey";
+import { decideRoomPruning, ROOM_ABSENCE_THRESHOLD } from "./roomStatePruning";
+import type { RoomAbsenceCounters } from "./roomStatePruning";
 import type { FeatureDependencies } from "../../baseDeviceFeatures";
 
 const gunzipAsync = promisify(gunzip);
@@ -117,6 +120,128 @@ export class V1MapService {
 					});
 				}
 			}
+
+			await this.pruneRoomStates(currentMapFlag, mapResult.mapData.IMAGE.segments.list);
+		}
+	}
+
+	/**
+	 * Evidence that a room is gone, per map slot. Reset whenever a reading is not usable.
+	 *
+	 * In memory only: a restart starts the evidence over, which delays a deletion and can never
+	 * cause one.
+	 */
+	private roomAbsences = new Map<number, RoomAbsenceCounters>();
+
+	/**
+	 * Removes room switches for segments the robot no longer has.
+	 *
+	 * **The only place in this adapter that deletes objects a user may have built on** - scripts,
+	 * vis widgets and scenes all point at `floors.<mapFlag>.<roomId>`. It exists because splitting
+	 * or merging rooms renumbers the robot's segments, and a switch that keeps the old number keeps
+	 * the old *name* with it: a "Kitchen" switch that now points at the bathroom.
+	 *
+	 * Four things hold it back, and each of them is a case where doing nothing is correct:
+	 *
+	 *  1. **Only a map slot that is actually known.** An unknown flag would prune the wrong floor.
+	 *  2. **Only a reading with segments.** An empty list is the absence of a reading, not a reading
+	 *     of "no rooms" - see {@link decideRoomPruning}.
+	 *  3. **Only after {@link ROOM_ABSENCE_THRESHOLD} consecutive clean readings** of this same slot
+	 *     have all missed the room. A map fetched while the robot is still driving can legitimately
+	 *     carry fewer segments than the finished one.
+	 *  4. **Only states this adapter created as room switches** - a `state` with `native.id`. Nothing
+	 *     else below the floor is touched, whoever put it there.
+	 *
+	 * Every deletion is logged with its path and its reason, so a missing switch can be explained
+	 * rather than guessed at.
+	 * @param mapFlag Map slot the reading belongs to.
+	 * @param segments Segment list of that reading.
+	 */
+	private async pruneRoomStates(mapFlag: unknown, segments: unknown[]): Promise<void> {
+		const slot = normalizeMapFlag(mapFlag);
+		if (slot === null) return;
+
+		const present: number[] = [];
+		for (const segment of segments) {
+			const id = normalizeRoomId((segment as { id?: unknown } | null)?.id);
+			if (id !== null) present.push(id);
+		}
+
+		const existing = await this.readRoomStateIds(slot);
+		if (existing === null) return;
+
+		const decision = decideRoomPruning({
+			present,
+			existing,
+			absences: this.roomAbsences.get(slot) ?? {},
+		});
+		this.roomAbsences.set(slot, decision.absences);
+
+		for (const roomId of decision.remove) {
+			const stateId = `Devices.${this.duid}.floors.${slot}.${roomId}`;
+			if (!(await this.isOwnRoomSwitch(stateId))) continue;
+			try {
+				await this.adapter.delObjectAsync(stateId);
+				this.adapter.rLog("MapManager", this.duid, "Info", "1.0", undefined,
+					`Removed the room switch ${stateId}: segment ${roomId} was missing from ${ROOM_ABSENCE_THRESHOLD} consecutive readings of map ${slot}, so the robot no longer has it - most likely because rooms were split or merged, which renumbers the segments. Anything that referred to this room by that number (scripts, vis, scenes) has to be pointed at the new one.`,
+					"info");
+			} catch (e: unknown) {
+				this.adapter.rLog("MapManager", this.duid, "Warn", "1.0", undefined, `Could not remove the stale room switch ${stateId}: ${this.adapter.errorMessage(e)}`, "warn");
+			}
+		}
+	}
+
+	/**
+	 * Reads which room switches this adapter has below one map slot.
+	 *
+	 * A read that fails answers `null` rather than "none": an empty answer would look like a floor
+	 * whose rooms had all vanished, and the caller would count that as evidence.
+	 * @param slot Map slot to look below.
+	 * @returns The room ids, or null when the folder could not be read.
+	 */
+	private async readRoomStateIds(slot: number): Promise<number[] | null> {
+		const relativePrefix = `Devices.${this.duid}.floors.${slot}.`;
+		const fullPrefix = `${this.adapter.namespace}.${relativePrefix}`;
+		try {
+			// The same way the rest of the adapter enumerates room states (`v1VacuumFeatures.ts:871`
+			// and `:1087`, documented at `roomKey.ts:120`).
+			const states = await this.adapter.getStatesAsync(`${relativePrefix}*`);
+			if (!states) return null;
+
+			const ids: number[] = [];
+			for (const id of Object.keys(states)) {
+				// Only direct children: a room switch is `floors.<slot>.<roomId>` and nothing deeper.
+				const tail = id.startsWith(fullPrefix) ? id.slice(fullPrefix.length) : null;
+				if (tail === null || tail.includes(".")) continue;
+
+				const roomId = normalizeRoomId(tail);
+				if (roomId !== null) ids.push(roomId);
+			}
+			return ids;
+		} catch (e: unknown) {
+			this.adapter.rLog("MapManager", this.duid, "Debug", "1.0", undefined, `Could not read the room switches of map ${slot}, so none are removed: ${this.adapter.errorMessage(e)}`, "debug");
+			return null;
+		}
+	}
+
+	/**
+	 * Whether a state is one this adapter created as a room switch.
+	 *
+	 * Checked immediately before a deletion rather than while enumerating, because this is the last
+	 * gate in front of an object a user may have built on. A room switch is a `state` that carries
+	 * the segment id in its `native` - both written by `processMapResults`. Anything else below the
+	 * floor was put there by somebody else and stays, whatever its name looks like.
+	 * @param stateId Full or relative id of the candidate.
+	 * @returns True when it may be removed.
+	 */
+	private async isOwnRoomSwitch(stateId: string): Promise<boolean> {
+		try {
+			const object = await this.adapter.getObjectAsync(stateId);
+			if (!object || object.type !== "state") return false;
+			return (object.native as { id?: unknown } | undefined)?.id !== undefined;
+		} catch {
+			// Unreadable is not "deletable".
+			return false;
 		}
 	}
 
