@@ -201,6 +201,21 @@ describe("renderMapZoneLayer", () => {
 		expect(onSelect).toHaveBeenCalledWith(null);
 	});
 
+	it("does not toggle the selection off when a handle is pressed", () => {
+		// The handles live inside the zone's own group - that is what makes them turn with a turned
+		// zone - so a press on one also reaches the group's click handler. Without the guard, using
+		// a handle would deselect the zone and take the handle away mid-gesture.
+		const group = makeGroup();
+		const onSelect = vi.fn();
+		renderMapZoneLayer(group, [shape()], options({ selectedKey: "no_go:0", onSelect }));
+
+		document
+			.querySelector("g.zone-handle-scale circle.zone-handle-hit")
+			?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
 	it("reports the zone its own delete handle sits on", () => {
 		const group = makeGroup();
 		const onDelete = vi.fn();

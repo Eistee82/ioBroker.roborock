@@ -170,10 +170,12 @@ duration and the on/off state are additionally readable as `deviceStatus.dryer_d
 screens; whether every dock accepts it is not proven. If one rejects it, the command check says so
 in the log.
 
-Six more settings are plain on/off switches, and which of them a robot gets is again decided by
-asking it: **Auto Emptying**, **Clean along floor direction**, **Adjusted Battery Level**, **FlexiArm
-Design Extended Cleaning** for the side brush, **FlexiArm Design Extended Mopping** for the corners,
-and **FlexiArm Design Extended Cleaning for Crevices**. Each is unlocked by its own read command, so a robot that
+Seven more settings are plain on/off switches, and which of them a robot gets is again decided by
+asking it: **Auto Emptying**, **Button Lights**, **Clean along floor direction**, **Adjusted Battery
+Level**, **FlexiArm Design Extended Cleaning** for the side brush, **FlexiArm Design Extended
+Mopping** for the corners, and **FlexiArm Design Extended Cleaning for Crevices**. Button Lights
+decides whether the robot's indicator light stays on; with it off, the light goes out a minute after
+the robot is fully charged. Each is unlocked by its own read command, so a robot that
 does not know one simply has no switch for it - the test device, measured, answers exactly one of
 the five. Every label and every explanation is Roborock's own wording. None of these five appears in
 the status the robot sends by itself, so the adapter reads each one once at start-up and again after

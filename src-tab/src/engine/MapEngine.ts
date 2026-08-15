@@ -689,6 +689,8 @@ export class MapEngine {
 	private popupImage!: HTMLImageElement;
 	private resizeObserver: ResizeObserver | null = null;
 	private windowResizeHandler: (() => void) | null = null;
+	/** Escape drops the zone selection; removed again in `destroy()`. */
+	private escapeKeyHandler: ((event: KeyboardEvent) => void) | null = null;
 	/** One handler per subscription, so `unsubscribeState` can drop exactly this listener. */
 	private readonly stateHandler = (id: string, state: any): void => {
 		if (this.onStateChange) this.onStateChange(id, state);
@@ -837,6 +839,10 @@ export class MapEngine {
 			window.removeEventListener("resize", this.windowResizeHandler);
 			this.windowResizeHandler = null;
 		}
+		if (this.escapeKeyHandler) {
+			window.removeEventListener("keydown", this.escapeKeyHandler);
+			this.escapeKeyHandler = null;
+		}
 		if (this.popupTimeout) {
 			clearTimeout(this.popupTimeout);
 			this.popupTimeout = null;
@@ -957,6 +963,19 @@ export class MapEngine {
 			this.pointerDownAt = { x: event.clientX, y: event.clientY };
 		});
 
+		// A click past every zone drops the selection, which is what takes the handles away again.
+		this.svgContainer.on("click.mapzonedeselect", (event: MouseEvent) => {
+			if (this.selectedMapZoneKey === null) return;
+			// Panning the map is not clicking beside a zone, and neither is releasing a drag that
+			// happened to end over empty ground.
+			if (this.isDragGesture(event)) return;
+			// A handle sits *outside* its rectangle, so a click on one reaches this handler. Taking
+			// the selection away there would make the control vanish from under the finger.
+			if (this.isInsideMapZoneLayer(event.target)) return;
+
+			this.selectMapZone(null);
+		});
+
 		// The map fills the available area instead of a fixed 450 x 450 box.
 		this.updateSvgSize();
 		const container = this.svgContainer.node() as HTMLElement | null;
@@ -966,6 +985,17 @@ export class MapEngine {
 		} else {
 			this.windowResizeHandler = () => this.updateSvgSize();
 			window.addEventListener("resize", this.windowResizeHandler);
+		}
+
+		// Escape is the other way out of a selection, and the one a keyboard reaches. On the window
+		// rather than on the map, because the map is not focusable - a user who just clicked a zone
+		// has the focus wherever they left it.
+		if (typeof window !== "undefined") {
+			this.escapeKeyHandler = (event: KeyboardEvent) => {
+				if (event.key !== "Escape" || this.selectedMapZoneKey === null) return;
+				this.selectMapZone(null);
+			};
+			window.addEventListener("keydown", this.escapeKeyHandler);
 		}
 	}
 
@@ -2636,6 +2666,23 @@ export class MapEngine {
 		this.renderRoomSelection();
 	}
 
+	/**
+	 * Whether an event happened on the walls-and-zones layer, handles included.
+	 *
+	 * Asked by the deselect handler rather than relying on every element below to stop the click
+	 * from travelling. A handle sits **outside** the rectangle it belongs to, so a press on one
+	 * reaches the map behind it; if that counted as "clicked beside the zone", the control would
+	 * disappear at the moment it was used. Testing the ancestry says what was actually hit, and it
+	 * keeps working when a handle is added that forgets to stop propagation.
+	 * @param target Whatever the event reports as its target.
+	 * @returns True when the target sits inside a `g.map-zone`.
+	 */
+	private isInsideMapZoneLayer(target: EventTarget | null): boolean {
+		// `closest` lives on Element; a click can also report the document or the SVG root.
+		if (!target || typeof (target as Element).closest !== "function") return false;
+		return (target as Element).closest("g.map-zone") !== null;
+	}
+
 	/** True when the pointer moved far enough that the "click" was really a pan. */
 	private isDragGesture(event: MouseEvent): boolean {
 		if (!this.pointerDownAt) return false;
@@ -3732,9 +3779,14 @@ export class MapEngine {
 	 */
 	public selectMapZone(key: string | null): void {
 		if (this.selectedMapZoneKey === key) return;
-		// Selecting something else while a draft is unsaved would leave it on the map with no way
-		// back to it, so the draft keeps the selection and the click is spent on nothing.
-		if (this.mapZoneDraft && key !== this.mapZoneDraftKey()) return;
+		// Switching to a *different* zone while a draft is unsaved would leave the draft on the map
+		// with no way back to it, so that click is spent on nothing.
+		//
+		// Dropping the selection is allowed, and deliberately does **not** throw the draft away:
+		// the work stays on the map, dashed, and the panel keeps offering Save and Cancel. Only the
+		// handles go. Discarding an unsaved zone because somebody clicked past it would destroy
+		// work nobody confirmed away - and clicking the draft again brings the handles back.
+		if (this.mapZoneDraft && key !== null && key !== this.mapZoneDraftKey()) return;
 
 		this.selectedMapZoneKey = key;
 		this.drawMapZones();

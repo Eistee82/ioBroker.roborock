@@ -191,6 +191,9 @@ const KNOWN_SETTINGS: ReadonlyArray<
 	{ kind: "switch", command: "set_right_brush_stretch_status" },
 	{ kind: "switch", command: "set_stretch_tag_status" },
 	{ kind: "switch", command: "set_gap_deep_clean_status" },
+	// The status light. Nothing to see here from this side - it differs from its six neighbours only
+	// in what goes on the wire, and the adapter owns that.
+	{ kind: "switch", command: "set_led_status" },
 	// The robot's speaking volume. Its bounds travel on the object like everything else here; the
 	// adapter offers the range the app validates before sending, which is wider than the app's own
 	// slider - see `src/lib/features/vacuum/v1SoundVolume.ts`.

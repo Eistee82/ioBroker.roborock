@@ -120,8 +120,37 @@ export interface StatusToggle {
 	/** Roborock string key of the explanation shown as the object's description. */
 	descKey: string;
 	descFallback: string;
+	/**
+	 * How this setting looks on the wire. Omitted means {@link STATUS_OBJECT}, which is what six of
+	 * the seven use; see {@link ToggleShape} for why the seventh needed a second one.
+	 */
+	shape?: ToggleShape;
 	/** Where the value and the payload were read; goes into the log of a refused write. */
 	fundstelle: string;
+}
+
+/**
+ * The two shapes an on/off setting takes on the wire.
+ *
+ * There are two and not one because the app really does both, and the difference is not cosmetic -
+ * it decides what is sent to a machine. Adding the second one to this table was weighed against
+ * giving the odd setting a module of its own, and the table won for the reason the Do Not Disturb
+ * window parser was imported rather than copied last round: **two implementations of "read a flag,
+ * write a flag" are how the two drift apart.** The cost is one discriminator that six of seven
+ * entries never set; the alternative cost was a second copy of the whole read/write path.
+ *
+ * - `status-object` — `{status: 1|0}` out, `{"status":1}` back. The dock, floor and FlexiArm
+ *   settings.
+ * - `bare-array` — `[1|0]` out, `[1]` back. The status light, and so far only it.
+ */
+export type ToggleShape = "status-object" | "bare-array";
+
+/** The shape all but one of the settings use. */
+export const STATUS_OBJECT: ToggleShape = "status-object";
+
+/** Reads the shape of a toggle, defaulting to the one most of them have. */
+export function toggleShape(toggle: StatusToggle): ToggleShape {
+	return toggle.shape ?? STATUS_OBJECT;
 }
 
 /**
@@ -219,6 +248,20 @@ export const STATUS_TOGGLES: ReadonlyArray<StatusToggle> = [
 		descKey: "setting_gap_deep_clean_detail",
 		descFallback: "The robot identifies crevices below appliances and furniture and extends the flexible side brush into them.",
 		fundstelle: "A65:230497-230506, A65:946537-946546"
+	},
+	{
+		// The one entry with the other shape. Both sides read: the wrapper builds `new Array(1)`
+		// (A65:230545-230561), the caller computes `on ? 1 : 0` (A65:849705-849712), and the app
+		// reads the answer back as `result[0] == 1` (A65:849620-849627). Its getter still takes
+		// `[]` like all the others (A65:228688-228703), so only the payload and the answer differ.
+		getter: "get_led_status",
+		setter: "set_led_status",
+		labelKey: "led_status_title",
+		labelFallback: "Button Lights",
+		descKey: "led_status_detail",
+		descFallback: "When this is off, the robot's indicator light goes out a minute after it is fully charged.",
+		shape: "bare-array",
+		fundstelle: "A65:230545-230561, A65:849705-849712"
 	}
 ];
 
@@ -448,7 +491,21 @@ export function parseDryerSettingResponse(response: unknown): DryerSetting | nul
  * @param response Raw robot answer.
  * @returns Whether the setting is on, or null when the answer carries no `status`.
  */
-export function parseStatusToggleResponse(response: unknown): boolean | null {
+export function parseStatusToggleResponse(response: unknown, shape: ToggleShape = STATUS_OBJECT): boolean | null {
+	if (shape === "bare-array") {
+		// `[1]` or `[0]`. Deliberately **not** unwrapped down to the bare number first: a robot that
+		// does not know the method answers with a bare string, and accepting a loose value would
+		// turn `unknown_method` into a switch position. The array is what tells the two apart, so it
+		// has to be there - the same reasoning `parseTimezoneResponse` is built on.
+		let payload: unknown = response;
+		if (payload && typeof payload === "object" && !Array.isArray(payload) && "data" in (payload as Record<string, unknown>)) {
+			payload = (payload as Record<string, unknown>).data;
+		}
+		if (!Array.isArray(payload) || payload.length !== 1) return null;
+		const value = finiteNumber(payload[0]);
+		return value === null ? null : value === 1;
+	}
+
 	const payload = unwrapPayload(response);
 	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
 
@@ -646,7 +703,7 @@ export class V1ProbedCapabilityService {
 	 * @returns Whether a position was published.
 	 */
 	public async applyStatusToggleResponse(toggle: StatusToggle, response: unknown): Promise<boolean> {
-		const enabled = parseStatusToggleResponse(response);
+		const enabled = parseStatusToggleResponse(response, toggleShape(toggle));
 		if (enabled === null) {
 			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
 				`Unreadable ${toggle.getter} answer: ${JSON.stringify(response)}`, "warn");
@@ -676,10 +733,14 @@ export class V1ProbedCapabilityService {
 	public buildCommandParams(method: string, value: unknown): { method: string; params: unknown } {
 		const toggle = statusToggleFor(method);
 		if (toggle) {
-			// The getter takes `new Array(0)` in every one of the five wrappers; the setter always
-			// carries `{status: 1|0}`, whether the wrapper builds that object or the caller does.
+			// Every getter here takes `new Array(0)`, whatever shape its answer has - checked for
+			// all seven, the status light included (A65:228688-228703).
 			if (method === toggle.getter) return { method, params: [] };
-			return { method, params: { status: toBooleanFlag(value) } };
+
+			const flag = toBooleanFlag(value);
+			return toggleShape(toggle) === "bare-array"
+				? { method, params: [flag] }
+				: { method, params: { status: flag } };
 		}
 
 		if (method === GET_TIMEZONE) return { method: GET_TIMEZONE, params: [] };

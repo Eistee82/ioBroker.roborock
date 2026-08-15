@@ -8,7 +8,8 @@ import {
 	STATUS_TOGGLES,
 	V1ProbedCapabilityService,
 	parseStatusToggleResponse,
-	statusToggleFor
+	statusToggleFor,
+	toggleShape
 } from "../../src/lib/features/vacuum/v1ProbedCapabilities";
 
 vi.mock("../../src/lib/map/MapManager", () => ({
@@ -101,6 +102,77 @@ describe("the switches the tab knows about", () => {
 	});
 });
 
+/** A service with just enough adapter around it to build parameters. */
+function createService(): V1ProbedCapabilityService {
+	const deps = {
+		adapter: {
+			translationManager: { get: (_key: string, fallback: string) => fallback },
+			setStateChanged: vi.fn().mockResolvedValue(undefined),
+			rLog: vi.fn()
+		},
+		ensureState: vi.fn().mockResolvedValue(undefined),
+		ensureFolder: vi.fn().mockResolvedValue(undefined)
+	} as unknown as FeatureDependencies;
+	return new V1ProbedCapabilityService(deps, "duid-test");
+}
+
+/**
+ * The second wire shape.
+ *
+ * Six of the seven settings send `{status: 1|0}` and read `{"status":1}` back. The status light
+ * sends `[1|0]` and reads `[1]`, and both sides of that were read in the app (A65:230545-230561,
+ * A65:849705-849712, A65:849620-849627). A single discriminator in the table carries the
+ * difference; these tests are what keep the two apart.
+ */
+describe("the status light, which speaks the other shape", () => {
+	const led = STATUS_TOGGLES.find((entry) => entry.setter === "set_led_status")!;
+
+	it("is the only entry that declares a shape", () => {
+		// If a second one ever appears, this fails and the comment in the table gets read again.
+		const withShape = STATUS_TOGGLES.filter((entry) => entry.shape !== undefined);
+		expect(withShape.map((entry) => entry.setter)).toEqual(["set_led_status"]);
+		expect(toggleShape(led)).toBe("bare-array");
+	});
+
+	it("every other entry falls back to the object shape without saying so", () => {
+		for (const entry of STATUS_TOGGLES) {
+			if (entry.setter === "set_led_status") continue;
+			expect(toggleShape(entry), entry.setter).toBe("status-object");
+		}
+	});
+
+	it("sends a bare array, not a status object", () => {
+		const service = createService();
+		expect(service.buildCommandParams("set_led_status", true)).toEqual({ method: "set_led_status", params: [1] });
+		expect(service.buildCommandParams("set_led_status", false)).toEqual({ method: "set_led_status", params: [0] });
+	});
+
+	it("still asks with an empty array, like every other getter", () => {
+		expect(createService().buildCommandParams("get_led_status", undefined)).toEqual({ method: "get_led_status", params: [] });
+	});
+
+	it("reads the bare array back", () => {
+		expect(parseStatusToggleResponse([1], "bare-array")).toBe(true);
+		expect(parseStatusToggleResponse([0], "bare-array")).toBe(false);
+		expect(parseStatusToggleResponse({ data: [1] }, "bare-array")).toBe(true);
+	});
+
+	it("refuses a loose value, because that is how a robot says it knows no such method", () => {
+		// Without the array, `unknown_method` would have to be read as a switch position.
+		expect(parseStatusToggleResponse("unknown_method", "bare-array")).toBeNull();
+		expect(parseStatusToggleResponse(1, "bare-array")).toBeNull();
+		expect(parseStatusToggleResponse([], "bare-array")).toBeNull();
+		expect(parseStatusToggleResponse([1, 0], "bare-array")).toBeNull();
+	});
+
+	it("does not read one shape as the other", () => {
+		// The failure this discriminator exists to prevent: a light that reports itself off because
+		// its answer was searched for a field it does not have.
+		expect(parseStatusToggleResponse([1], "status-object")).toBeNull();
+		expect(parseStatusToggleResponse({ status: 1 }, "bare-array")).toBeNull();
+	});
+});
+
 describe("reading the position back", () => {
 	it("reads 1 as on and 0 as off", () => {
 		expect(parseStatusToggleResponse({ status: 1 })).toBe(true);
@@ -126,27 +198,17 @@ describe("reading the position back", () => {
 });
 
 describe("the payload that goes on the wire", () => {
-	function createService(): V1ProbedCapabilityService {
-		const deps = {
-			adapter: {
-				translationManager: { get: (_key: string, fallback: string) => fallback },
-				setStateChanged: vi.fn().mockResolvedValue(undefined),
-				rLog: vi.fn()
-			},
-			ensureState: vi.fn().mockResolvedValue(undefined),
-			ensureFolder: vi.fn().mockResolvedValue(undefined)
-		} as unknown as FeatureDependencies;
-		return new V1ProbedCapabilityService(deps, "duid-test");
-	}
-
 	it.each(STATUS_TOGGLES.map((toggle) => [toggle.getter]))("sends %s an empty array", (getter) => {
 		expect(createService().buildCommandParams(getter, undefined)).toEqual({ method: getter, params: [] });
 	});
 
-	it.each(STATUS_TOGGLES.map((toggle) => [toggle.setter]))("sends %s a status of 1 or 0", (setter) => {
+	it.each(STATUS_TOGGLES.map((toggle) => [toggle.setter, toggleShape(toggle)]))("sends %s a 1 or a 0 in its own shape (%s)", (setter, shape) => {
+		// One assertion for both shapes rather than two lists: what must hold for every setting is
+		// that it carries exactly the flag and nothing else, whichever wrapper it goes through.
+		const wrap = (flag: number): unknown => (shape === "bare-array" ? [flag] : { status: flag });
 		const service = createService();
-		expect(service.buildCommandParams(setter, true)).toEqual({ method: setter, params: { status: 1 } });
-		expect(service.buildCommandParams(setter, false)).toEqual({ method: setter, params: { status: 0 } });
+		expect(service.buildCommandParams(setter, true)).toEqual({ method: setter, params: wrap(1) });
+		expect(service.buildCommandParams(setter, false)).toEqual({ method: setter, params: wrap(0) });
 	});
 
 	it("reads the strings a text field produces as the positions they name", () => {

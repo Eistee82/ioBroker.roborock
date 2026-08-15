@@ -154,6 +154,7 @@ describe("the state ids the source has to read", () => {
 			`${ROOT}.settings.set_right_brush_stretch_status`,
 			`${ROOT}.settings.set_stretch_tag_status`,
 			`${ROOT}.settings.set_gap_deep_clean_status`,
+			`${ROOT}.settings.set_led_status`,
 			`${ROOT}.settings.change_sound_volume`,
 			// Off-peak charging, same shape as the Do Not Disturb window above.
 			`${ROOT}.settings.set_valley_electricity_timer`,

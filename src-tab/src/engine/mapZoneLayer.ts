@@ -79,6 +79,21 @@ export interface MapZoneShape {
 	draft: boolean;
 }
 
+/**
+ * Whether an event came from one of a zone's handles rather than from the zone.
+ *
+ * The handles sit inside the zone's own group - that is what makes them turn with a turned zone -
+ * so every press on one also reaches the group. Anything that reacts to a click on the zone has to
+ * ask this first, or the controls answer for the thing they are attached to.
+ * @param target Whatever the event reports as its target.
+ * @returns True when the target sits inside a handle.
+ */
+export function isOnHandle(target: EventTarget | null): boolean {
+	// `closest` lives on Element; an event can also report the document or an SVG root.
+	if (!target || typeof (target as Element).closest !== "function") return false;
+	return (target as Element).closest("g.zone-handle") !== null;
+}
+
 /** Which handles each kind offers; the table in the module comment. */
 export function handleKindsFor(kind: MapZoneKind): readonly ZoneHandleKind[] {
 	return kind === "wall" ? ZONE_HANDLE_KINDS : ZONE_HANDLE_KINDS_ROTATABLE;
@@ -184,9 +199,15 @@ export function renderMapZoneLayer(
 		zone.select("line.map-zone-hit").style("stroke-width", hitStrokeWidth(options.zoom));
 	});
 
-	// A click selects. The press is not stopped here: the map's pan gesture has to keep working
-	// over a zone, exactly as it does over a room label.
+	// A click selects, and a second click on the same zone lets it go again. The press is not
+	// stopped here: the map's pan gesture has to keep working over a zone, exactly as it does over
+	// a room label.
 	merged.on("click", (event: Event, shape: MapZoneShape) => {
+		// The handles live inside this group, because that is what makes them turn with a turned
+		// zone. So a click on one arrives here as well - and toggling the selection off would take
+		// the handle away at the moment it is used.
+		if (isOnHandle(event.target)) return;
+
 		event.stopPropagation();
 		options.onSelect(shape.key === options.selectedKey ? null : shape.key);
 	});

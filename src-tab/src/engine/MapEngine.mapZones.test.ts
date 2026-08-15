@@ -495,6 +495,131 @@ describe("confirming that an edit landed", () => {
 	});
 });
 
+describe("leaving a selection", () => {
+	/**
+	 * The element the engine hangs its map gestures on.
+	 *
+	 * Not the host container the shell hands in: the engine builds its own div inside it and binds
+	 * there, so the map surface is that inner one - the parent of the SVG.
+	 */
+	function mapSurface(): HTMLElement {
+		return document.querySelector("svg")?.parentElement as HTMLElement;
+	}
+
+	/** A press and release at the same spot: a click, not a pan. */
+	function clickAt(target: Element | HTMLElement, x = 10, y = 10): void {
+		target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: x, clientY: y }));
+		target.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: x, clientY: y }));
+	}
+
+	it("drops the selection on a click past every zone", async () => {
+		// The user's report: the handles appear on a click and never go away again.
+		const { engine, internals } = await startEngine();
+		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
+		engine.selectMapZone("no_go:0");
+		expect(document.querySelectorAll("g.zone-handles")).toHaveLength(1);
+
+		clickAt(mapSurface());
+
+		expect(internals.selectedMapZoneKey).toBeNull();
+		expect(document.querySelectorAll("g.zone-handles")).toHaveLength(0);
+	});
+
+	it("keeps the selection when a handle is what was clicked", async () => {
+		// A handle sits outside its rectangle, so the click reaches the map behind it. Letting that
+		// count as "clicked beside the zone" would take the control away as it is being used.
+		const { engine, internals } = await startEngine();
+		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
+		engine.selectMapZone("no_go:0");
+
+		const handle = document.querySelector("g.zone-handle-scale circle.zone-handle-hit") as Element;
+		clickAt(handle);
+
+		expect(internals.selectedMapZoneKey).toBe("no_go:0");
+	});
+
+	it("lets the zone go when its own body is clicked again", async () => {
+		// The second way out, and the one closest to hand: clicking the selected zone toggles it
+		// off. Distinct from the handle case above, which must not.
+		const { engine, internals } = await startEngine();
+		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
+		engine.selectMapZone("no_go:0");
+
+		clickAt(document.querySelector("rect.map-zone-rect") as Element);
+		expect(internals.selectedMapZoneKey).toBeNull();
+	});
+
+	it("does not treat panning the map as a click beside a zone", async () => {
+		const { engine, internals } = await startEngine();
+		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
+		engine.selectMapZone("no_go:0");
+
+		const surface = mapSurface();
+		surface.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 10 }));
+		// Well past the five pixels that tell a click from a drag.
+		surface.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 120, clientY: 90 }));
+
+		expect(internals.selectedMapZoneKey).toBe("no_go:0");
+	});
+
+	it("drops the selection on Escape", async () => {
+		const { engine, internals } = await startEngine();
+		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
+		engine.selectMapZone("no_go:0");
+
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+		expect(internals.selectedMapZoneKey).toBeNull();
+	});
+
+	it("keeps an unsaved zone on the map when the selection is dropped", async () => {
+		// The work stays, dashed, and the panel keeps offering Save and Cancel. Throwing away an
+		// unsaved zone because somebody clicked past it would destroy work nobody confirmed away.
+		const { engine, internals, sendTo, models } = await startEngine();
+		loadMap(internals, {});
+		engine.startMapZone("no_go");
+
+		clickAt(mapSurface());
+
+		expect(internals.selectedMapZoneKey).toBeNull();
+		expect(internals.mapZoneDraft).not.toBeNull();
+		expect(document.querySelectorAll("g.map-zone-draft")).toHaveLength(1);
+		expect(models[models.length - 1].drafting).toBe(true);
+		expect(sendTo).not.toHaveBeenCalled();
+	});
+
+	it("lets the unsaved zone be picked up again", async () => {
+		const { engine, internals } = await startEngine();
+		loadMap(internals, {});
+		engine.startMapZone("no_go");
+		clickAt(mapSurface());
+
+		engine.selectMapZone("draft");
+		expect(internals.selectedMapZoneKey).toBe("draft");
+		expect(document.querySelectorAll("g.zone-handles")).toHaveLength(1);
+	});
+
+	it("still refuses to jump to another zone while one is unsaved", async () => {
+		const { engine, internals } = await startEngine();
+		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
+		engine.startMapZone("no_mop");
+
+		engine.selectMapZone("no_go:0");
+		expect(internals.selectedMapZoneKey).toBe("draft");
+	});
+
+	it("stops listening for Escape once the engine is gone", async () => {
+		// The tab outlives one engine; a listener left on the window would answer for a map that
+		// is no longer there.
+		const { engine, internals } = await startEngine();
+		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
+		engine.selectMapZone("no_go:0");
+
+		engine.destroy();
+		live = null;
+		expect(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))).not.toThrow();
+	});
+});
+
 describe("switching robots", () => {
 	it("takes the previous robot's zones and any draft with it", async () => {
 		// A draft left over would be saved onto the wrong map.
