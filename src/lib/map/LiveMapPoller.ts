@@ -6,24 +6,45 @@
  * `get_dynamic_map_diff` every 1.2 s and only pulls the whole map once the answer says something
  * relevant changed. This class does the same for the adapter.
  *
- * It deliberately owns **no timer of its own**. {@link tick} is called from the one-second ticker
- * the `DeviceManager` already runs, so there is nothing extra to clear on unload; {@link dispose}
+ * It owns **no timer of its own**. {@link tick} and {@link tickDynamic} are called from the two
+ * tickers the `DeviceManager` runs, so there is nothing extra to clear on unload; {@link dispose}
  * only drops the bookkeeping.
  *
- * Two branches exist, exactly as in the app:
+ * Two branches exist for the map, exactly as in the app:
  *
  *  - **Incremental** — the robot announced the feature bit and its map carries a nonce. The diff
  *    is asked for at the configured cadence, the full map follows only on a real change.
  *  - **Full map** — anything else. The app pulls a complete map every second in that case; the
  *    adapter refuses to and slows the cadence to {@link LIVE_MAP_POLICY.fullMapFloorSeconds},
  *    which leaves the behaviour where it was before this feature existed.
+ *
+ * ## The position runs on its own clock
+ *
+ * {@link tickDynamic} is a second, independent cycle for the dynamic channel — robot position,
+ * driven track, mop markers. It used to hang off the map cycle, which made the cheapest question
+ * the adapter can ask inherit the pace of the most expensive one: `refreshDynamicTrack` was
+ * reachable from exactly one place inside the incremental map cycle, so the position updated at
+ * the map cadence (3 s working, 6 s idle), never at all on the full-map branch, and not while a
+ * map transfer held `inFlight`. Measured at the device the two are not remotely comparable — two
+ * local requests of 58 ms and 57 ms against a 248 ms cloud transfer of 7 KiB.
+ *
+ * Both cycles therefore keep their own due time and their own in-flight flag, and neither can
+ * block the other. What they do share is a single {@link DeviceState.sharedDiff} slot: when both
+ * fall due within {@link DIFF_SHARE_WINDOW_MS} of each other, the second one reuses the first
+ * one's answer instead of asking again. That is safe only because both send the **same** nonce —
+ * what a diff reports depends on the nonce it was asked with (`PROJECT_STATE.md`, "Was der Diff
+ * meldet, hängt von der übergebenen Nonce ab"), so the cache is keyed by it and a mismatch simply
+ * means each cycle asks for itself.
  */
 
 import {
 	LIVE_MAP_DISABLED,
+	LIVE_TRACK_DISABLED,
 	getLiveMapIntervalSeconds,
+	getLiveTrackIntervalSeconds,
 	isChannelUnavailableError,
-	resolveLiveMapIntervalSeconds
+	resolveLiveMapIntervalSeconds,
+	resolveLiveTrackIntervalSeconds
 } from "../requestPolicy";
 import { MapManager } from "./MapManager";
 import {
@@ -52,9 +73,31 @@ export const MAP_DIFF_METHOD = "get_dynamic_map_diff";
  */
 const MAX_DIFF_FAILURES = 3;
 
+/**
+ * How long a `get_dynamic_map_diff` answer may serve the other cycle as well.
+ *
+ * The map cycle and the track cycle ride two different tickers, so "at the same moment" is not an
+ * exact term. This is the tolerance that makes it one. It is short enough that the reused answer
+ * still describes the present — the robot appends about one path point per second — and long
+ * enough to catch the case the sharing exists for: both slots falling due within the same
+ * {@link LIVE_TRACK_POLICY.tickMs} window.
+ */
+const DIFF_SHARE_WINDOW_MS = 250;
+
+/**
+ * Nonce the track cycle sends while no map with a nonce has been parsed yet.
+ *
+ * Measured at the device: a diff sent as `{nonce: 1, round: <epoch ms>}` is not rejected, it
+ * answers with the currently valid nonce of every channel — `"3":{"max_len":71,"nonce":…}` — which
+ * is exactly and only what the track cycle needs (`PROJECT_STATE.md`, "Die Nonce war aktuell").
+ * The real map nonce is preferred whenever there is one, because then the answer is also usable
+ * for the map cycle and one request serves both.
+ */
+const TRACK_DIFF_FALLBACK_NONCE = 1;
+
 /** The part of the adapter this poller needs. Kept structural so tests can supply a stub. */
 export type LiveMapAdapter = {
-	config: { liveMapInterval?: number };
+	config: { liveMapInterval?: number; liveTrackInterval?: number };
 	requestsHandler: {
 		sendRequest(duid: string, method: string, params: unknown, options?: { priority?: number; timeout?: number }): Promise<unknown>;
 	};
@@ -73,13 +116,23 @@ export type LiveMapHandler = {
 	updateMap(): Promise<void>;
 };
 
+/** A `get_dynamic_map_diff` answer kept for the other cycle; see {@link DIFF_SHARE_WINDOW_MS}. */
+type SharedDiff = {
+	/** Nonce the answer was asked with. Reuse is only sound for the very same nonce. */
+	nonce: number;
+	/** The untouched answer. */
+	raw: unknown;
+	/** When it arrived, epoch ms. */
+	at: number;
+};
+
 /** Per-device bookkeeping. */
 type DeviceState = {
-	/** Earliest epoch ms at which this device may be checked again. */
+	/** Earliest epoch ms at which the map of this device may be checked again. */
 	nextDueAt: number;
-	/** A check is running; a second one must not start. */
+	/** A map check is running; a second one must not start. */
 	inFlight: boolean;
-	/** Consecutive `get_dynamic_map_diff` failures. */
+	/** Consecutive `get_dynamic_map_diff` failures on the map cycle. */
 	diffFailures: number;
 	/** The diff was given up on for this device; only full maps from here. */
 	diffGaveUp: boolean;
@@ -87,10 +140,26 @@ type DeviceState = {
 	owned: boolean;
 	/** Whether the last cycle used the diff, for logging the branch only once. */
 	loggedBranch: "incremental" | "full" | null;
+	/** Earliest epoch ms at which the live position of this device may be read again. */
+	nextDynamicDueAt: number;
+	/**
+	 * A position read is running.
+	 *
+	 * Separate from {@link inFlight} on purpose: a full map takes seconds, and it used to hold the
+	 * one shared flag for all of them, which is why the position stood still exactly while the
+	 * robot was busy enough to be worth watching.
+	 */
+	dynamicInFlight: boolean;
+	/** Consecutive `get_dynamic_map_diff` failures on the track cycle. */
+	trackDiffFailures: number;
+	/** The diff was given up on for the track cycle; the position is no longer read. */
+	trackDiffGaveUp: boolean;
 	/** State of the dynamic bundle at the last fetch, to notice when it was replaced or grew. */
 	lastDynamicChannel: DynamicChannelState | null;
 	/** The robot answered `get_dynamic_data` with an error; do not ask it again. */
 	dynamicUnsupported: boolean;
+	/** Last diff answer, offered to whichever cycle falls due next. */
+	sharedDiff: SharedDiff | null;
 };
 
 export class LiveMapPoller {
@@ -111,6 +180,17 @@ export class LiveMapPoller {
 	 */
 	public isEnabled(): boolean {
 		return resolveLiveMapIntervalSeconds(this.adapter.config.liveMapInterval) !== LIVE_MAP_DISABLED;
+	}
+
+	/**
+	 * Whether the live position channel is switched on at all.
+	 *
+	 * Answered independently of {@link isEnabled}: switching the map refresh off is a statement
+	 * about a 7 KiB cloud transfer and says nothing about a 300 byte local read.
+	 * @returns False when `liveTrackInterval` is 0.
+	 */
+	public isTrackEnabled(): boolean {
+		return resolveLiveTrackIntervalSeconds(this.adapter.config.liveTrackInterval) !== LIVE_TRACK_DISABLED;
 	}
 
 	/**
@@ -153,6 +233,115 @@ export class LiveMapPoller {
 			state.owned = false;
 			this.adapter.rLog("MapManager", duid, "Warn", "1.0", undefined, `Live map update failed: ${this.adapter.errorMessage(error)}`, "debug");
 		}
+	}
+
+	/**
+	 * One pass of the live position channel for one device.
+	 *
+	 * Called from the fast ticker, independently of {@link tick}: a running map transfer must not
+	 * delay the position, and a slow position read must not delay the map. Cheap and returns
+	 * immediately unless the device is due. Never throws, for the same reason {@link tick} does not.
+	 *
+	 * @param duid Device Unique ID.
+	 * @param isActive Whether the robot is currently cleaning, returning, washing, ...
+	 */
+	public async tickDynamic(duid: string, isActive: boolean): Promise<void> {
+		if (this.stopped) return;
+
+		const intervalSeconds = getLiveTrackIntervalSeconds({
+			configuredSeconds: this.adapter.config.liveTrackInterval,
+			isActive
+		});
+		if (intervalSeconds === LIVE_TRACK_DISABLED) return;
+
+		const state = this.getState(duid);
+		if (state.dynamicInFlight || state.dynamicUnsupported || state.trackDiffGaveUp) return;
+
+		const now = Date.now();
+		if (now < state.nextDynamicDueAt) return;
+
+		// Fixed rate, not fixed delay: scheduling from the end of the work would add the round trip
+		// to every single cycle, so a 1 s cadence would really run every 1.06 s and drift further
+		// with every pass. The `finally` below only pushes the slot when the work outran the
+		// cadence, which is the one case where firing again at once would pile requests up.
+		state.nextDynamicDueAt = now + intervalSeconds * 1000;
+		state.dynamicInFlight = true;
+		try {
+			await this.runDynamicCycle(duid, state);
+		} catch (error: unknown) {
+			this.adapter.rLog("MapManager", duid, "Warn", "1.0", undefined, `Live position update failed: ${this.adapter.errorMessage(error)}`, "debug");
+		} finally {
+			state.dynamicInFlight = false;
+			state.nextDynamicDueAt = Math.max(state.nextDynamicDueAt, Date.now());
+		}
+	}
+
+	/**
+	 * Asks what the dynamic channel currently holds and fetches it when it moved.
+	 *
+	 * The two requests are the ones the app uses as well: `get_dynamic_map_diff` names the nonce
+	 * and the length of the channel, `get_dynamic_data` returns position, path and mop markers in
+	 * one answer. The diff cannot be skipped — the nonce it reports is a parameter of the second
+	 * call — but it can be shared with the map cycle, see {@link readSharedDiff}.
+	 *
+	 * @param duid Device Unique ID.
+	 * @param state Bookkeeping for this device.
+	 */
+	private async runDynamicCycle(duid: string, state: DeviceState): Promise<void> {
+		// The same reason the map cycle skips here: while the robot re-locates itself the map it is
+		// drawn on is about to be replaced, so a position in the old frame would point at the wrong
+		// room rather than at nothing.
+		if (await this.isLocating(duid)) return;
+
+		// The map nonce whenever there is one, so the answer is usable for the map cycle too.
+		const nonce = MapManager.getMapNonce(duid) ?? TRACK_DIFF_FALLBACK_NONCE;
+
+		let raw: unknown;
+		const shared = this.readSharedDiff(state, nonce);
+		if (shared) {
+			raw = shared.raw;
+		} else {
+			try {
+				raw = await this.adapter.requestsHandler.sendRequest(duid, MAP_DIFF_METHOD, buildMapDiffParams(nonce), { priority: 0 });
+			} catch (error: unknown) {
+				this.noteTrackDiffFailure(duid, state, error);
+				return;
+			}
+			this.storeSharedDiff(state, nonce, raw);
+		}
+
+		state.trackDiffFailures = 0;
+		await this.refreshDynamicTrack(duid, raw, state);
+	}
+
+	/**
+	 * Offers the other cycle's diff answer when it is recent enough and was asked with the same
+	 * nonce.
+	 *
+	 * The nonce equality is not a nicety: a diff describes what changed **since that nonce**, and
+	 * the test device answered the same moment with different block sets depending on which nonce
+	 * it was given. Reusing an answer across nonces would hand the map cycle a decision about a
+	 * question it never asked.
+	 *
+	 * @param state Bookkeeping for this device.
+	 * @param nonce The nonce this cycle would send.
+	 * @returns The reusable answer, or null when there is none.
+	 */
+	private readSharedDiff(state: DeviceState, nonce: number): { raw: unknown } | null {
+		const cached = state.sharedDiff;
+		if (!cached || cached.nonce !== nonce) return null;
+		if (Date.now() - cached.at > DIFF_SHARE_WINDOW_MS) return null;
+		return { raw: cached.raw };
+	}
+
+	/**
+	 * Keeps a diff answer for the other cycle.
+	 * @param state Bookkeeping for this device.
+	 * @param nonce The nonce it was asked with.
+	 * @param raw The untouched answer.
+	 */
+	private storeSharedDiff(state: DeviceState, nonce: number, raw: unknown): void {
+		state.sharedDiff = { nonce, raw, at: Date.now() };
 	}
 
 	/**
@@ -217,20 +406,24 @@ export class LiveMapPoller {
 	 */
 	private async runIncrementalCycle(duid: string, handler: LiveMapHandler, state: DeviceState, nonce: number): Promise<void> {
 		let raw: unknown;
-		try {
-			raw = await this.adapter.requestsHandler.sendRequest(duid, MAP_DIFF_METHOD, buildMapDiffParams(nonce), { priority: 0 });
-		} catch (error: unknown) {
-			this.noteDiffFailure(duid, state, error);
-			return;
+		const shared = this.readSharedDiff(state, nonce);
+		if (shared) {
+			raw = shared.raw;
+		} else {
+			try {
+				raw = await this.adapter.requestsHandler.sendRequest(duid, MAP_DIFF_METHOD, buildMapDiffParams(nonce), { priority: 0 });
+			} catch (error: unknown) {
+				this.noteDiffFailure(duid, state, error);
+				return;
+			}
+			this.storeSharedDiff(state, nonce, raw);
 		}
 
 		state.diffFailures = 0;
 		state.owned = true;
 
-		// The track is worth having even when the raster did not change: the robot moves on
-		// unchanged ground most of the time. Fetching it here costs one local round trip and
-		// spares the UI the complete map, which only arrives over the cloud.
-		await this.refreshDynamicTrack(duid, raw, state);
+		// The track used to be fetched here, which is what tied the position to the map cadence.
+		// It has its own cycle now ({@link tickDynamic}); this one is only about the raster.
 
 		const decision = evaluateMapDiff(raw, nonce);
 
@@ -286,6 +479,9 @@ export class LiveMapPoller {
 	 *
 	 * Failures are deliberately quiet: this is an extra on top of the map, and a robot that does
 	 * not know the method must not lose the map because of it.
+	 *
+	 * Called from {@link runDynamicCycle} only. It used to be called from the map cycle, which is
+	 * what this class was restructured to stop.
 	 * @param duid Device Unique ID.
 	 * @param rawDiff The untouched `get_dynamic_map_diff` answer.
 	 * @param state Bookkeeping for this device.
@@ -364,6 +560,41 @@ export class LiveMapPoller {
 	}
 
 	/**
+	 * Records a failed diff on the track cycle and stops reading the position after
+	 * {@link MAX_DIFF_FAILURES} in a row.
+	 *
+	 * Counted separately from {@link noteDiffFailure} although both call the same method: the two
+	 * cycles must not be able to switch each other off, which is the whole point of giving them
+	 * separate bookkeeping. A robot that answers neither is simply noticed twice.
+	 *
+	 * @param duid Device Unique ID.
+	 * @param state Bookkeeping for this device.
+	 * @param error What `sendRequest` threw.
+	 */
+	private noteTrackDiffFailure(duid: string, state: DeviceState, error: unknown): void {
+		// A dead channel says nothing about what the robot can do.
+		if (isChannelUnavailableError(error)) return;
+
+		state.trackDiffFailures++;
+
+		if (state.trackDiffFailures < MAX_DIFF_FAILURES) {
+			this.adapter.rLog("MapManager", duid, "Debug", "1.0", undefined, `${MAP_DIFF_METHOD} failed on the live position channel (${state.trackDiffFailures}/${MAX_DIFF_FAILURES}): ${this.adapter.errorMessage(error)}`, "debug");
+			return;
+		}
+
+		state.trackDiffGaveUp = true;
+		this.adapter.rLog(
+			"MapManager",
+			duid,
+			"Info",
+			"1.0",
+			undefined,
+			`${MAP_DIFF_METHOD} failed ${state.trackDiffFailures} times in a row (${this.adapter.errorMessage(error)}). This robot apparently does not deliver the live position; the map itself is unaffected.`,
+			"info"
+		);
+	}
+
+	/**
 	 * Reads the incremental map feature bit the robot reports.
 	 * @param duid Device Unique ID.
 	 * @returns True only when the bit is provably set.
@@ -428,8 +659,13 @@ export class LiveMapPoller {
 				diffGaveUp: false,
 				owned: false,
 				loggedBranch: null,
+				nextDynamicDueAt: 0,
+				dynamicInFlight: false,
+				trackDiffFailures: 0,
+				trackDiffGaveUp: false,
 				lastDynamicChannel: null,
-				dynamicUnsupported: false
+				dynamicUnsupported: false,
+				sharedDiff: null
 			};
 			this.states.set(duid, state);
 		}
@@ -446,8 +682,8 @@ export class LiveMapPoller {
 	/**
 	 * Stops further work and drops all bookkeeping.
 	 *
-	 * There is no timer to clear — the poller rides the `DeviceManager` ticker — but a cycle that
-	 * is already awaiting an answer must not schedule another one after unload.
+	 * There is no timer to clear — the poller rides the two `DeviceManager` tickers — but a cycle
+	 * that is already awaiting an answer must not schedule another one after unload.
 	 */
 	public dispose(): void {
 		this.stopped = true;

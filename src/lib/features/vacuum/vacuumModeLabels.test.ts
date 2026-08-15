@@ -22,6 +22,9 @@ function createDeps(): FeatureDependencies {
 		rLog: vi.fn(),
 		setStateChanged: vi.fn().mockResolvedValue(undefined),
 		extendObject: vi.fn().mockResolvedValue(undefined),
+		applyCommonUpdate: vi.fn().mockResolvedValue(undefined),
+		getObjectAsync: vi.fn().mockResolvedValue(null),
+		getStateAsync: vi.fn().mockResolvedValue(null),
 		getDeviceProtocolVersion: vi.fn().mockResolvedValue("1.0"),
 		http_api: {
 			getDevices: vi.fn().mockReturnValue([]),
@@ -162,5 +165,140 @@ describe("vibrating-mop water wording", () => {
 
 		expect(BASE_WATER[201]).toBe("Low");
 		expect(BASE_WATER[208]).toBeUndefined();
+	});
+});
+
+/**
+ * `water_box_mode = 208` is gated on `DM.support(MF.Mop_ShakeModule)` *and*
+ * `isNewFeatureStrSupport(NewFeatureStrBit.MopShakeWaterMax)`, and `MopShakeWaterMax` is bit 45 of
+ * `new_feature_info_str` (control plugin lines 231849, 237242, 243294-243615 - see
+ * {@link MOP_SHAKE_WATER_MAX_BIT}). The model half is applied in the constructor; this is the half
+ * only the robot can answer.
+ */
+describe("the Extreme water level and feature bit 45", () => {
+	/** Hex string with the given bits set, in the shape the robot reports. */
+	function featureStr(...bits: number[]): string {
+		return bits.reduce((value, bit) => value | (1n << BigInt(bit)), 0n).toString(16);
+	}
+
+	async function processStatus(status: Record<string, unknown>): Promise<{ vacuum: any; deps: FeatureDependencies }> {
+		const deps = createDeps();
+		const vacuum = new A65Features(deps, "duid1") as any;
+		await vacuum.processStatus({ state: 8, ...status });
+		return { vacuum, deps };
+	}
+
+	it("removes it when the robot reports the field without bit 45", async () => {
+		const { vacuum } = await processStatus({ new_feature_info_str: featureStr(22, 67) });
+
+		expect(vacuum.profile.mappings.water_box_mode).toEqual({ 201: "Mild", 202: "Standard", 203: "Intense" });
+	});
+
+	it("keeps it when the robot announces bit 45", async () => {
+		const { vacuum } = await processStatus({ new_feature_info_str: featureStr(45) });
+
+		expect(vacuum.profile.mappings.water_box_mode[208]).toBe("Extreme");
+	});
+
+	it("keeps it when the robot does not report the field at all", async () => {
+		const { vacuum } = await processStatus({});
+
+		expect(vacuum.profile.mappings.water_box_mode[208]).toBe("Extreme");
+	});
+
+	it("keeps it when the field is there but unreadable - a broken value takes nothing away", async () => {
+		for (const raw of ["", "   ", "not hex", 45, null]) {
+			const { vacuum } = await processStatus({ new_feature_info_str: raw });
+
+			expect(vacuum.profile.mappings.water_box_mode[208]).toBe("Extreme");
+		}
+	});
+
+	it("treats a string too short to hold bit 45 as 'not announced'", async () => {
+		// The app reads bit 45 as nibble 11 counted from the end; on an eight-character string that
+		// slice is empty and it reads 0. Anything shorter than twelve hex digits cannot carry it.
+		const { vacuum } = await processStatus({ new_feature_info_str: "ffffffff" });
+
+		expect(vacuum.profile.mappings.water_box_mode[208]).toBeUndefined();
+	});
+
+	it("rewrites the command object so the picker loses the entry too", async () => {
+		const deps = createDeps();
+		const adapter = deps.adapter as any;
+		adapter.getObjectAsync = vi.fn().mockResolvedValue({
+			type: "state",
+			common: { states: { 201: "Mild", 202: "Standard", 203: "Intense", 208: "Extreme" } },
+			native: {}
+		});
+		const vacuum = new A65Features(deps, "duid1") as any;
+
+		await vacuum.processStatus({ water_box_mode: 201, new_feature_info_str: featureStr(22) });
+
+		const call = adapter.applyCommonUpdate.mock.calls.find((c: any[]) => String(c[0]).endsWith("commands.set_water_box_custom_mode"));
+		expect(call).toBeDefined();
+		expect(call![2].states).toEqual({ 201: "Mild", 202: "Standard", 203: "Intense" });
+	});
+
+	it("publishes the shortened list on deviceStatus in the same pass", async () => {
+		const { deps } = await processStatus({ water_box_mode: 201, new_feature_info_str: featureStr(22) });
+
+		const call = (deps.ensureState as any).mock.calls.find((c: any[]) => String(c[0]).endsWith("deviceStatus.water_box_mode"));
+		expect(call).toBeDefined();
+		expect(call![1].states).toEqual({ 201: "Mild", 202: "Standard", 203: "Intense" });
+	});
+
+	it("also closes the write path, so the level cannot be set by hand any more", async () => {
+		const vacuum = new A65Features(createDeps(), "duid1") as any;
+		// The command specs exist by the time a status arrives: `initialize()` builds them before it
+		// fetches anything. Only that first step is needed here.
+		await vacuum.setupProtocolFeatures();
+		expect(vacuum.getCommandSpec("commands", "set_water_box_custom_mode").states[208]).toBe("Extreme");
+
+		await vacuum.processStatus({ new_feature_info_str: featureStr(22) });
+
+		expect(vacuum.getCommandSpec("commands", "set_water_box_custom_mode").states).toEqual({
+			201: "Mild",
+			202: "Standard",
+			203: "Intense"
+		});
+	});
+
+	it("does the work once and then stops touching the objects", async () => {
+		const deps = createDeps();
+		const adapter = deps.adapter as any;
+		const vacuum = new A65Features(deps, "duid1") as any;
+		const status = { water_box_mode: 201, new_feature_info_str: featureStr(22) };
+
+		await vacuum.processStatus({ ...status });
+		const afterFirst = adapter.applyCommonUpdate.mock.calls.length;
+		await vacuum.processStatus({ ...status });
+
+		expect(adapter.applyCommonUpdate.mock.calls.length).toBe(afterFirst);
+	});
+
+	it("leaves a level a model profile worded itself alone", async () => {
+		const deps = createDeps();
+		const vacuum = new V1VacuumFeatures(
+			deps,
+			"duid1",
+			"roborock.vacuum.a65",
+			{ staticFeatures: [] },
+			{ mappings: { fan_power: { 102: "Balanced" }, water_box_mode: { 201: "Low", 203: "High", 208: "Flood" } } }
+		) as any;
+
+		await vacuum.processStatus({ new_feature_info_str: featureStr(22) });
+
+		expect(vacuum.profile.mappings.water_box_mode[208]).toBe("Flood");
+	});
+
+	it("does not go looking for the level on a robot that never had it", async () => {
+		const deps = createDeps();
+		const adapter = deps.adapter as any;
+		const vacuum = new A87Features(deps, "duid1") as any;
+
+		await vacuum.processStatus({ water_box_mode: 201, new_feature_info_str: featureStr(22) });
+
+		expect(vacuum.profile.mappings.water_box_mode[208]).toBeUndefined();
+		expect(adapter.applyCommonUpdate).not.toHaveBeenCalled();
 	});
 });

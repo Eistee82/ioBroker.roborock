@@ -21,6 +21,13 @@ declare global {
 			 * off; any other value is clamped to 1..30 and doubled while the robot stands still.
 			 */
 			liveMapInterval?: number;
+			/**
+			 * Cadence (seconds) of the live position/track update while the robot is working. 0
+			 * switches it off; any other value is clamped to 1..30 and doubled while the robot
+			 * stands still. Independent of `liveMapInterval` — the position is two cheap local
+			 * requests, the map is a large cloud transfer.
+			 */
+			liveTrackInterval?: number;
 
 			enable_map_creation: boolean;
 			cameraPin: string;

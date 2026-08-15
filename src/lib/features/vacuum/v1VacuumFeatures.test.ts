@@ -36,6 +36,7 @@ describe("V1VacuumFeatures", () => {
 			getStatesAsync: vi.fn().mockResolvedValue({}),
 			getObjectAsync: vi.fn().mockResolvedValue({ common: {} }),
 			extendObject: vi.fn().mockResolvedValue(undefined),
+			applyCommonUpdate: vi.fn().mockResolvedValue(undefined),
 			setObject: vi.fn().mockResolvedValue(undefined),
 			setObjectNotExistsAsync: vi.fn().mockResolvedValue(undefined),
 			requestsHandler: requestsHandlerMock,

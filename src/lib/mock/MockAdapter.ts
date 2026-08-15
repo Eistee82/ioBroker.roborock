@@ -107,8 +107,49 @@ export class MockAdapter {
 		}
 	}
 
+	/**
+	 * Reproduces js-controller's `extendObject`, including what it cannot do.
+	 *
+	 * The controller merges the update into the stored object with `node.extend(true, …)`: a
+	 * recursive merge that descends into every plain object and only ever adds or overwrites. A key
+	 * the update leaves out therefore survives - which is exactly the trap `applyCommonUpdate`
+	 * exists for. A shallow assignment here would hide it, so the merge is copied faithfully.
+	 */
 	public extendObject = async (id: string, obj: any): Promise<void> => {
-		this.objects[id] = { ...this.objects[id], ...obj };
+		this.objects[id] = MockAdapter.deepExtend(this.objects[id] ?? {}, obj);
+	};
+
+	/** `node.extend(true, target, source)`: recurse into plain objects, skip `undefined`. */
+	private static deepExtend(target: any, source: any): any {
+		const merged: Record<string, any> = { ...target };
+		for (const key of Object.keys(source ?? {})) {
+			const value = source[key];
+			if (value && typeof value === "object" && !Array.isArray(value)) {
+				const base = merged[key] && typeof merged[key] === "object" && !Array.isArray(merged[key]) ? merged[key] : {};
+				merged[key] = MockAdapter.deepExtend(base, value);
+			} else if (value !== undefined) {
+				merged[key] = value;
+			}
+		}
+		return merged;
+	}
+
+	/** Mirrors `Roborock.applyCommonUpdate`: replace the object when the update shrinks `common`. */
+	public applyCommonUpdate = async (id: string, oldObj: any, commonUpdate: any): Promise<void> => {
+		const oldCommon = oldObj?.common ?? {};
+		const merged = { ...oldCommon, ...commonUpdate };
+
+		for (const key of Object.keys(commonUpdate ?? {})) {
+			const oldValue = oldCommon[key];
+			const newValue = commonUpdate[key];
+			const bothRecords = [oldValue, newValue].every((v) => v && typeof v === "object" && !Array.isArray(v));
+			if (bothRecords && Object.keys(oldValue).some((nested) => !(nested in newValue))) {
+				this.objects[id] = { ...oldObj, type: "state", common: merged, native: oldObj?.native ?? {} };
+				return;
+			}
+		}
+
+		await this.extendObject(id, { common: merged });
 	};
 
 	public async getObjectAsync(id: string): Promise<any> {

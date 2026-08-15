@@ -1,5 +1,6 @@
 import { MapDecryptor } from "../../../map/v1/MapDecryptor";
 import { MapParser } from "../../../map/v1/MapParser";
+import { hasFeatureStrBit } from "../../../featureStr";
 import type { CommandSpec, FeatureDependencies } from "../../baseDeviceFeatures";
 
 /**
@@ -264,24 +265,6 @@ export function parseRoomMapping(raw: unknown, mapFlag: number): Map<number, Roo
 	}
 
 	return result;
-}
-
-/**
- * Reads a bit out of `new_feature_info_str`, the hex string that carries the feature bits above 31.
- * @param raw Value of the state, a hex string.
- * @param bit Bit index, counted from the least significant bit.
- * @returns True when the bit is set, false when it is not or the value is unreadable.
- */
-export function hasFeatureStrBit(raw: unknown, bit: bigint): boolean {
-	if (typeof raw !== "string") return false;
-	const hex = raw.trim().replace(/^0x/i, "");
-	if (hex.length === 0 || !/^[0-9a-f]+$/i.test(hex)) return false;
-
-	try {
-		return ((BigInt(`0x${hex}`) >> bit) & 1n) === 1n;
-	} catch {
-		return false;
-	}
 }
 
 /**

@@ -19,6 +19,8 @@ import {
 	FAN_POWER_MAX_PLUS,
 	FAN_POWER_SMART,
 	MOP_MODE_SMART,
+	MOP_SHAKE_WATER_MAX_BIT,
+	WATER_BOX_MODE_MAX,
 	WATER_BOX_MODE_SMART,
 	WATER_BOX_MODE_VACUUM_ONLY,
 	buildCleanMotorModePresets,
@@ -27,6 +29,7 @@ import {
 	supportsPureCleanMop
 } from "./cleaningModes";
 import type { CleaningModeCapabilities } from "./cleaningModes";
+import { readFeatureStr } from "../../featureStr";
 import { floorFolderId, groupSelectedRoomsByMapFlag, normalizeMapFlag, sortRoomIds } from "../../map/roomKey";
 
 // --- Shared Constants ---
@@ -120,11 +123,13 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	 * deliberately words a level differently (or uses a different value range altogether, like the
 	 * Qrevo Edge 2) keeps what it declared.
 	 *
-	 * **208 (Extreme)** is added for those robots too. The app gates it on the vibrating mop *and*
-	 * firmware bit 45 (`MopShakeWaterMax`), and the bit is not known when the objects are created;
-	 * offering the level to a robot that lacks the bit only means the robot rejects the value,
-	 * whereas withholding it hides a real level from every robot that has it. The half of the
-	 * predicate that is knowable is therefore applied, and the other half is left to the robot.
+	 * **208 (Extreme)** is added for those robots too, but only provisionally. The app's gate is the
+	 * vibrating mop *and* bit 45 of `new_feature_info_str` (`MopShakeWaterMax`, see
+	 * {@link MOP_SHAKE_WATER_MAX_BIT}). Only the first half is knowable here - the second arrives
+	 * with the robot's first status, and {@link V1VacuumFeatures.applyShakeMopWaterMaxBit} takes the
+	 * level away again if the bit is missing. Adding it first and withdrawing it is the right way
+	 * round: a level that appears for one poll and then disappears costs nothing, while a level
+	 * withheld from a robot that has it is simply gone.
 	 */
 	private applyShakeMopWaterLabels(): void {
 		const water = this.profile.mappings.water_box_mode;
@@ -140,9 +145,91 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		}
 
 		// Only meaningful next to the regular levels; never invent it for a custom value range.
-		if (water[203] !== undefined && water[208] === undefined) {
-			water[208] = WATER_BOX_MODE_EXTREME_LABEL;
+		if (water[203] !== undefined && water[WATER_BOX_MODE_MAX] === undefined) {
+			water[WATER_BOX_MODE_MAX] = WATER_BOX_MODE_EXTREME_LABEL;
 		}
+	}
+
+	/**
+	 * Takes the water level *Extreme* back off robots that do not announce it.
+	 *
+	 * This is the second half of the app's predicate for `water_box_mode = 208`, the half that only
+	 * the robot can answer: bit 45 of `new_feature_info_str`. The proof for the whole gate, down to
+	 * the line in the control plugin, is at {@link MOP_SHAKE_WATER_MAX_BIT}.
+	 *
+	 * Reported from the field as "Wassermenge Extreme gibt es in der App nicht" - and it does not,
+	 * on that robot: `firmwareFeatures` is a different structure entirely (it carries values like
+	 * 111-125) and says nothing about this bit, so the level was simply offered to everyone with a
+	 * vibrating mop.
+	 *
+	 * The follow-up report settles what kind of fault this is: "ich kann Extreme nicht anwählen, da
+	 * kommt keine Reaktion vom Roboter". The entry was not merely superfluous, it was a **dead
+	 * control** - the user picks a level, the robot drops it, and nothing in the interface says so.
+	 * The adapter does catch the mismatch afterwards, but only in the log and only in some of the
+	 * cases (see `requestsHandler.command`), so the picker is where it has to be prevented.
+	 *
+	 * Three cases, and the tie always goes to the user:
+	 *
+	 * | `new_feature_info_str`        | Result   |
+	 * | ----------------------------- | -------- |
+	 * | absent, or not a hex string   | level stays - an unreadable field must not take anything away |
+	 * | present, bit 45 set           | level stays |
+	 * | present, bit 45 clear         | level removed |
+	 *
+	 * Only the entry this class added itself is removed - it has to still carry the label from
+	 * {@link V1VacuumFeatures.applyShakeMopWaterLabels}. A model profile that words 208 its own way
+	 * meant something by it, the same restraint the wording pass applies.
+	 *
+	 * @param status The robot's `get_status` result.
+	 * @returns True when the level was removed just now, so the caller can republish the objects.
+	 */
+	private applyShakeMopWaterMaxBit(status: Record<string, any>): boolean {
+		const water = this.profile.mappings.water_box_mode;
+		if (!water || water[WATER_BOX_MODE_MAX] !== WATER_BOX_MODE_EXTREME_LABEL) {
+			return false;
+		}
+
+		const announced = readFeatureStr(status?.new_feature_info_str);
+		if (announced === null || ((announced >> MOP_SHAKE_WATER_MAX_BIT) & 1n) === 1n) {
+			return false;
+		}
+
+		delete water[WATER_BOX_MODE_MAX];
+		this.deps.adapter.rLog("System", this.duid, "Info", undefined, undefined,
+			`Water level ${WATER_BOX_MODE_MAX} (Extreme) removed: the robot does not announce MopShakeWaterMax (bit ${MOP_SHAKE_WATER_MAX_BIT} of new_feature_info_str).`, "info");
+		return true;
+	}
+
+	/**
+	 * Rewrites the water picker after {@link V1VacuumFeatures.applyShakeMopWaterMaxBit} shortened it.
+	 *
+	 * `commands.set_water_box_custom_mode` is built in `setupProtocolFeatures` and written once, at
+	 * the start of `initialize()` - long before the robot has said anything. The status handler is
+	 * therefore the only place that can correct it, and the write has to happen here because
+	 * nothing re-runs `createCommandObjects()` afterwards.
+	 *
+	 * The in-memory command spec is corrected as well. Today that assignment changes nothing - the
+	 * spec holds the very object the profile does, because `addCommand` stored the mapping by
+	 * reference - and no test can tell the two apart. It is written out anyway because the spec is
+	 * what `getCommandSpec` hands `socketHandler.handleSetState`, whose `coerceCommandValue`
+	 * rejects a value that is not in `spec.states` (`socketHandler.ts:584-587`). A level gone from
+	 * the picker has to be refused there too, and that must not rest on an alias nobody would think
+	 * to preserve.
+	 */
+	private async republishWaterBoxModeCommand(): Promise<void> {
+		const water = this.profile.mappings.water_box_mode;
+		if (!water) return;
+
+		const spec = this.commands["set_water_box_custom_mode"];
+		if (spec?.states) {
+			spec.states = { ...water };
+		}
+
+		const path = `Devices.${this.duid}.commands.set_water_box_custom_mode`;
+		const existing = await this.deps.adapter.getObjectAsync(path);
+		if (!existing) return;
+
+		await this.deps.adapter.applyCommonUpdate(path, existing, { states: { ...water } });
 	}
 
 	/**
@@ -1036,6 +1123,13 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	public async processStatus(status: any): Promise<void> {
     	const validStatus = status || {};
 		const localizedErrorStates = getLocalizedErrorStates(this.deps.adapter.translationManager);
+
+		// Before anything is published: the status carries `new_feature_info_str`, and that is the
+		// only place the robot says whether it has the Extreme water level. Runs on every poll but
+		// only does something once - afterwards the entry is gone and the guard trips immediately.
+		if (this.applyShakeMopWaterMaxBit(validStatus)) {
+			await this.republishWaterBoxModeCommand();
+		}
 
 		if (validStatus.dss !== undefined) {
 			await this.updateDockingStationStatus(Number(validStatus.dss));

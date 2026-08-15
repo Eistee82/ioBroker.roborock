@@ -414,8 +414,11 @@ export abstract class BaseDeviceFeatures {
 			const existingObj = await this.deps.adapter.getObjectAsync(path);
 			if (existingObj) {
 				// Extend if common differs. Stringify is good enough for now.
+				// Goes through applyCommonUpdate because a command's picker can shrink - a water or
+				// suction level the robot turns out not to have is removed from `common.states`,
+				// and a plain extendObject would leave it standing on every existing installation.
 				if (JSON.stringify(existingObj.common) !== JSON.stringify(options)) {
-					await this.deps.adapter.extendObject(path, { common: options as ioBroker.StateCommon });
+					await this.deps.adapter.applyCommonUpdate(path, existingObj, options as ioBroker.StateCommon);
 				}
 			} else {
 				await this.deps.ensureState(path, options as ioBroker.StateCommon);

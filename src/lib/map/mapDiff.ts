@@ -18,6 +18,8 @@
  * The one deliberate deviation is documented at {@link REDRAW_BLOCK_TYPES}.
  */
 
+import { hasFeatureStrBit } from "../featureStr";
+
 /**
  * Bit 22 of `new_feature_info_str` — the flag the app's `isSupportIncrementalMap()` reads before
  * it chooses the differential timer branch over the "fetch the whole map" branch.
@@ -35,24 +37,17 @@ export const INCREMENTAL_MAP_FEATURE_BIT = 22n;
  * Mirrors `isSupportIncrementalMap()`: take the hex string the robot reports as
  * `new_feature_info_str` and test {@link INCREMENTAL_MAP_FEATURE_BIT}.
  *
- * `MapEditService` has a general `hasFeatureStrBit` that does the same arithmetic, but importing
- * it here would close a cycle — `services/V1MapService` already imports `map/MapManager`. The
- * check is three lines, so it is repeated rather than inverting the dependency.
+ * The arithmetic used to be repeated here because the only other copy lived in `MapEditService`,
+ * and importing that would have closed a cycle — `services/V1MapService` already imports
+ * `map/MapManager`. It now lives in `lib/featureStr`, which imports nothing at all, so there is
+ * no cycle left to avoid.
  *
  * @param raw Value of `Devices.<duid>.deviceStatus.new_feature_info_str`.
  * @returns True only when the bit is provably set. A missing or unreadable value counts as "no",
  *          which routes the device to the conservative full-map branch.
  */
 export function supportsIncrementalMap(raw: unknown): boolean {
-	if (typeof raw !== "string") return false;
-	const hex = raw.trim().replace(/^0x/i, "");
-	if (hex.length === 0 || !/^[0-9a-f]+$/i.test(hex)) return false;
-
-	try {
-		return ((BigInt(`0x${hex}`) >> INCREMENTAL_MAP_FEATURE_BIT) & 1n) === 1n;
-	} catch {
-		return false;
-	}
+	return hasFeatureStrBit(raw, INCREMENTAL_MAP_FEATURE_BIT);
 }
 
 /**

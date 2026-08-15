@@ -7,7 +7,7 @@ import { FallbackBaseFeatures, FallbackVacuumFeatures } from "./features/fallbac
 import { DEFAULT_PROFILE, VacuumProfile } from "./features/vacuum/v1VacuumFeatures";
 
 import { ProductHelper } from "./productHelper";
-import { LIVE_MAP_DISABLED, getPollIntervalSeconds, isChannelUnavailableError, resolveActiveIntervalSeconds, resolveBackoffMaxSeconds, resolveLiveMapIntervalSeconds } from "./requestPolicy";
+import { LIVE_MAP_DISABLED, LIVE_TRACK_DISABLED, LIVE_TRACK_TICK_MS, getPollIntervalSeconds, isChannelUnavailableError, resolveActiveIntervalSeconds, resolveBackoffMaxSeconds, resolveLiveMapIntervalSeconds, resolveLiveTrackIntervalSeconds } from "./requestPolicy";
 import { Feature } from "./features/features.enum";
 import { getB01VariantFromModel } from "./b01Variant";
 import { isB01ParkedState } from "./map/b01/B01StateSemantics";
@@ -106,8 +106,13 @@ export class DeviceManager {
 		// Q7 HomeData consumables are stale/incomplete and can overwrite the
 		// live prop.get values. Q7 consumables must come from B01 prop.get.
 	};
-	// Interval handle
+	// Interval handles
 	private mainUpdateInterval: ioBroker.Interval | undefined = undefined;
+	/**
+	 * Ticker of the live position channel. Cleared in {@link stopPolling}, which `onUnload` calls
+	 * through `clearTimersAndIntervals()`.
+	 */
+	private liveTrackTicker: ioBroker.Interval | undefined = undefined;
 	private pollingDevices = new Set<string>();
 	public deviceFeatureHandlers = new Map<string, BaseDeviceFeatures>();
 	/** Adaptive polling: earliest tick (ms epoch) at which a device may be polled again. */
@@ -144,6 +149,57 @@ export class DeviceManager {
 		if (!this.liveMapPoller.isEnabled()) return;
 
 		void this.liveMapPoller.tick(duid, handler, isActive);
+	}
+
+	/**
+	 * Runs the live position check for one device.
+	 *
+	 * Same eligibility as {@link scheduleLiveMapTick} — the dynamic channel belongs to the V1 map
+	 * format — but a separate entry point on a separate ticker, so neither a map transfer nor a
+	 * slow cloud call in the main loop can hold the position back.
+	 *
+	 * @param duid Device Unique ID.
+	 * @param handler The device's feature handler, read only for its protocol version.
+	 * @param isActive Whether the robot is currently working.
+	 */
+	private scheduleLiveTrackTick(duid: string, handler: BaseDeviceFeatures, isActive: boolean): void {
+		const version = (handler as unknown as { protocolVersion?: string }).protocolVersion;
+		if (!version || !DeviceManager.V1_PROTOCOL_VERSIONS.has(version)) return;
+		if (!this.liveMapPoller.isTrackEnabled()) return;
+
+		void this.liveMapPoller.tickDynamic(duid, isActive);
+	}
+
+	/**
+	 * Starts the ticker of the live position channel.
+	 *
+	 * It is a second timer rather than a counter on the one-second main ticker, for two reasons
+	 * that only became visible once the position was measured against the map:
+	 *
+	 *  1. **Resolution.** A 1 s cadence checked by a 1 s ticker degrades to 2 s, because the slot
+	 *     falls due a few milliseconds after the tick that could have served it.
+	 *  2. **Jitter.** The main ticker awaits `updateHomeData()` and a whole device poll inside its
+	 *     own callback, so a slow cloud answer delays everything behind it. The position must not
+	 *     inherit that; this callback dispatches without awaiting anything.
+	 */
+	private startLiveTrackTicker(): void {
+		// Never leave one behind: a second start without a stop would run two tickers and there
+		// would be no handle left to clear the first one with on unload.
+		if (this.liveTrackTicker) {
+			this.adapter.clearInterval(this.liveTrackTicker as any);
+			this.liveTrackTicker = undefined;
+		}
+
+		this.liveTrackTicker = this.adapter.setInterval(() => {
+			for (const device of this.adapter.http_api.getDevices()) {
+				if (!device.online) continue;
+				const handler = this.deviceFeatureHandlers.get(device.duid);
+				if (!handler) continue;
+
+				const isActive = this.isActiveState(this.lastStateCode.get(device.duid) || 0);
+				this.scheduleLiveTrackTick(device.duid, handler, isActive);
+			}
+		}, LIVE_TRACK_TICK_MS);
 	}
 
 	private getHomeDataConsumableMap(handler: BaseDeviceFeatures): Record<string, string> {
@@ -347,10 +403,12 @@ export class DeviceManager {
 		const activeInterval = resolveActiveIntervalSeconds(this.adapter.config.activePollInterval);
 		const backoffMax = resolveBackoffMaxSeconds(this.adapter.config.pollBackoffMaxInterval);
 		const liveMap = resolveLiveMapIntervalSeconds(this.adapter.config.liveMapInterval);
+		const liveTrack = resolveLiveTrackIntervalSeconds(this.adapter.config.liveTrackInterval);
 
 		this.liveMapPoller.start();
+		this.startLiveTrackTicker();
 
-		this.adapter.rLog("System", null, "Info", undefined, undefined, `Starting main poll (idle ${mainPollInterval}s, while cleaning ${activeInterval}s, error backoff up to ${backoffMax}s, live map ${liveMap === LIVE_MAP_DISABLED ? "off" : `${liveMap}s`}). Heavy data updates only after activity finishes.`, "info");
+		this.adapter.rLog("System", null, "Info", undefined, undefined, `Starting main poll (idle ${mainPollInterval}s, while cleaning ${activeInterval}s, error backoff up to ${backoffMax}s, live map ${liveMap === LIVE_MAP_DISABLED ? "off" : `${liveMap}s`}, live position ${liveTrack === LIVE_TRACK_DISABLED ? "off" : `${liveTrack}s`}). Heavy data updates only after activity finishes.`, "info");
 
 		let mainUpdateCount = mainPollInterval; // Slow loop counter
 
@@ -594,6 +652,10 @@ export class DeviceManager {
 			// Cast to any for ioBroker interval
 			this.adapter.clearInterval(this.mainUpdateInterval as any);
 			this.mainUpdateInterval = undefined;
+		}
+		if (this.liveTrackTicker) {
+			this.adapter.clearInterval(this.liveTrackTicker as any);
+			this.liveTrackTicker = undefined;
 		}
 		this.liveMapPoller.dispose();
 		this.nextPollDueAt.clear();

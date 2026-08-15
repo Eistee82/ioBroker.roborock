@@ -280,6 +280,20 @@
           "lg": 6,
           "xl": 6
         },
+        "liveTrackInterval": {
+          "type": "number",
+          "label": "Live position update",
+          "help": "Seconds between two updates of the robot position and of the driven and mopped track while the robot is cleaning; while it stands still the adapter waits twice as long. This is a separate channel from the map above and a far cheaper one: two small requests the robot answers locally in about 55 milliseconds each, instead of a complete map of several kilobytes over the cloud. That is why the default of 1 second is faster than the Roborock app itself. Lower is not offered because the robot only adds about one track point per second, so nothing new would arrive. 0 switches the live position off; the robot is then only shown where the last map put it.",
+          "default": 1,
+          "newLine": true,
+          "min": 0,
+          "max": 30,
+          "xs": 12,
+          "sm": 12,
+          "md": 6,
+          "lg": 6,
+          "xl": 6
+        },
         "sceneExecutionMode": {
           "type": "select",
           "label": "Saved program execution",

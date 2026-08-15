@@ -2057,11 +2057,7 @@ export class Roborock extends utils.Adapter {
 		try {
 			if (oldObj) {
 				// Object exists, but metadata changed
-				// Safely merge common properties
-				const newCommon = { ...oldObj.common, ...finalCommon };
-
-				// Force extension to apply changes
-				await this.extendObject(path, { common: newCommon });
+				await this.applyCommonUpdate(path, oldObj, finalCommon);
 			} else {
 				// Object does not exist, create it new.
 				// Provide mandatory defaults for a valid ioBroker state object.
@@ -2084,6 +2080,81 @@ export class Roborock extends utils.Adapter {
 		} catch (e: unknown) {
 			this.rLog("System", null, "Error", undefined, undefined, `[ensureState] Failed to update/create object for "${path}": ${this.errorMessage(e)}`, "error");
 		}
+	}
+
+	/**
+	 * Writes a changed `common` onto an object that already exists.
+	 *
+	 * The obvious call is `extendObject`, and for almost every change it is the right one. It
+	 * cannot, however, take anything away: js-controller merges the update into the stored object
+	 * with `node.extend(true, …)`, a recursive merge that walks into nested objects and only ever
+	 * adds or overwrites keys. Verified in the shipped controller, not from memory:
+	 *
+	 * * `js-controller-adapter/build/esm/lib/adapter/adapter.js:2283` hands the update to the
+	 *   objects client,
+	 * * `db-objects-redis/build/esm/lib/objects/objectsInRedisClient.js:3611` does
+	 *   `oldObj = extend(true, oldObj, obj)` (unchanged on the 7.2.3 line),
+	 * * `node.extend@2.0.3/lib/extend.js` recurses into every plain object and skips `undefined`,
+	 * * `db-objects-file` and `db-objects-jsonl` both re-export `Client` from `db-objects-redis`,
+	 *   so this holds for every database backend.
+	 *
+	 * A `null` is no escape hatch either - it is copied as a value, leaving the key in place with
+	 * an empty label. (`setObject` does read `null` as "delete", but only for the five preserved
+	 * settings `custom`, `smartName`, `material`, `habpanel`, `mobile`.)
+	 *
+	 * That matters because the adapter does remove entries: a water level the robot proves it does
+	 * not have, a suction level a model never had. Through `extendObject` those deletions reach a
+	 * fresh installation and no other - which is the worse outcome of the two, because the value
+	 * stays exactly where a user would look for it.
+	 *
+	 * So when the update drops a key from a nested object, the whole object is written instead.
+	 * `setObject` replaces rather than merges, and the objects client carries `common.custom`
+	 * (history, InfluxDB, …), `smartName`, `material`, `habpanel`, `mobile` and the ACL over by
+	 * itself (`objectsInRedisClient.js:64` and the block above `_setObject`), so nothing a user
+	 * configured on the state is lost. Everything else keeps the cheap merge.
+	 *
+	 * @param path Full object id.
+	 * @param oldObj The object as it is stored now.
+	 * @param commonUpdate The `common` properties to apply; merged over the stored ones.
+	 */
+	public async applyCommonUpdate(path: string, oldObj: ioBroker.Object, commonUpdate: Partial<ioBroker.StateCommon>): Promise<void> {
+		const merged = { ...oldObj.common, ...commonUpdate } as ioBroker.StateCommon;
+
+		if (oldObj.type === "state" && this.removesNestedCommonKeys(oldObj.common as Record<string, unknown>, commonUpdate as Record<string, unknown>)) {
+			await this.setObject(path, {
+				type: "state",
+				common: merged,
+				native: (oldObj.native as Record<string, unknown>) || {},
+			});
+			return;
+		}
+
+		await this.extendObject(path, { common: merged });
+	}
+
+	/**
+	 * Whether applying `commonUpdate` would drop a key out of a nested object such as
+	 * `common.states` - the one thing `extendObject` cannot express.
+	 */
+	private removesNestedCommonKeys(oldCommon: Record<string, unknown>, commonUpdate: Record<string, unknown>): boolean {
+		if (!oldCommon) return false;
+
+		for (const key of Object.keys(commonUpdate)) {
+			const oldValue = oldCommon[key];
+			const newValue = commonUpdate[key];
+			if (!this.isPlainRecord(oldValue) || !this.isPlainRecord(newValue)) continue;
+
+			for (const nestedKey of Object.keys(oldValue)) {
+				if (!(nestedKey in newValue)) return true;
+			}
+		}
+
+		return false;
+	}
+
+	/** A `{...}` that a recursive merge would descend into - not an array, not null. */
+	private isPlainRecord(value: unknown): value is Record<string, unknown> {
+		return typeof value === "object" && value !== null && !Array.isArray(value);
 	}
 
 	/**

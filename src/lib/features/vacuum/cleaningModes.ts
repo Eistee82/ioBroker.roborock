@@ -54,6 +54,37 @@ export const WATER_BOX_MODE_CUSTOM = 204;
 /** `SmartWaterMode`. A65:243008. */
 export const WATER_BOX_MODE_SMART = 209;
 
+/**
+ * `MaxWater` - the *Extreme* level, offered only on robots that prove they have it. A65:243589.
+ *
+ * @see MOP_SHAKE_WATER_MAX_BIT
+ */
+export const WATER_BOX_MODE_MAX = 208;
+
+/**
+ * Bit 45 of `new_feature_info_str` (`NewFeatureStrBit.MopShakeWaterMax`), the second half of the
+ * app's gate on {@link WATER_BOX_MODE_MAX}.
+ *
+ * `MopWaterOrStrengths()` builds the water picker as a list it pushes entries onto. The *Extreme*
+ * entry (`tanos_s_mop_mode_max`, `strength: 208`, A65:243576-243589) is the last one, and it is
+ * pushed only after both halves of the predicate hold (A65:243597-243615):
+ *
+ * ```js
+ * let ok = DM.support(MF.Mop_ShakeModule);              // A65:243294-243310, model table
+ * if (ok) ok = DM.isNewFeatureStrSupport(NewFeatureStrBit.MopShakeWaterMax);
+ * if (ok) list.push(extremeEntry);
+ * ```
+ *
+ * `NewFeatureStrBit.MopShakeWaterMax = 45` is A65:231849; `isNewFeatureStrSupport` (A65:237242)
+ * tests that bit of `DM.newFeatureInfoStr`, which is filled verbatim from the robot's
+ * `new_feature_info_str` (A65:5804).
+ *
+ * The first half is a model table and is knowable before the robot answers - that is
+ * `usesShakeMopWaterLabels`. This half is not, so it is applied as soon as the robot reports the
+ * field; see `V1VacuumFeatures.applyShakeMopWaterMaxBit`.
+ */
+export const MOP_SHAKE_WATER_MAX_BIT = 45n;
+
 /** `CleanRouteDailyMode` - the route the app falls back to. A65:242995. */
 export const MOP_MODE_DAILY = 300;
 

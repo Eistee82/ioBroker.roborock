@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DeviceManager } from "../../src/lib/deviceManager";
-import { ChannelUnavailableError, POLL_POLICY } from "../../src/lib/requestPolicy";
+import { ChannelUnavailableError, LIVE_TRACK_TICK_MS, POLL_POLICY } from "../../src/lib/requestPolicy";
 
 const CLEANING_STATE = 5;
 const IDLE_STATE = 3;
@@ -11,12 +11,15 @@ type PollEnv = {
 	handler: any;
 	/** Runs `seconds` one-second ticks of the main poll loop. */
 	tick: (seconds: number) => Promise<void>;
+	/** Runs `count` ticks of the separate live position ticker. */
+	trackTick: (count: number) => void;
 	setDeviceState: (state: number) => void;
 };
 
-function createPollEnv(options: { updateInterval?: number; activePollInterval?: number; pollBackoffMaxInterval?: number } = {}): PollEnv {
+function createPollEnv(options: { updateInterval?: number; activePollInterval?: number; pollBackoffMaxInterval?: number; liveTrackInterval?: number } = {}): PollEnv {
 	let deviceState = IDLE_STATE;
 	let tickFn: (() => Promise<void>) | undefined;
+	let trackTickFn: (() => void) | undefined;
 
 	const handler = {
 		protocolVersion: "1.0",
@@ -33,7 +36,8 @@ function createPollEnv(options: { updateInterval?: number; activePollInterval?: 
 		config: {
 			updateInterval: options.updateInterval ?? 60,
 			activePollInterval: options.activePollInterval,
-			pollBackoffMaxInterval: options.pollBackoffMaxInterval
+			pollBackoffMaxInterval: options.pollBackoffMaxInterval,
+			liveTrackInterval: options.liveTrackInterval
 		},
 		rLog: vi.fn(),
 		catchError: vi.fn(),
@@ -52,9 +56,15 @@ function createPollEnv(options: { updateInterval?: number; activePollInterval?: 
 		ensureState: vi.fn().mockResolvedValue(undefined),
 		setStateChanged: vi.fn().mockResolvedValue(undefined),
 		getStateAsync: vi.fn(async (id: string) => (id.endsWith(".state") ? { val: deviceState } : null)),
-		setInterval: vi.fn((callback: () => Promise<void>) => {
-			tickFn = callback;
-			return 1 as any;
+		// Two tickers run now, told apart by their period: the one-second main loop and the finer
+		// one that carries the live position.
+		setInterval: vi.fn((callback: () => any, ms: number) => {
+			if (ms === LIVE_TRACK_TICK_MS) {
+				trackTickFn = callback as () => void;
+				return "live-track-handle" as any;
+			}
+			tickFn = callback as () => Promise<void>;
+			return "main-handle" as any;
 		}),
 		clearInterval: vi.fn()
 	};
@@ -74,6 +84,12 @@ function createPollEnv(options: { updateInterval?: number; activePollInterval?: 
 			for (let i = 0; i < seconds; i++) {
 				vi.setSystemTime(Date.now() + 1000);
 				await tickFn!();
+			}
+		},
+		trackTick: (count: number): void => {
+			for (let i = 0; i < count; i++) {
+				vi.setSystemTime(Date.now() + LIVE_TRACK_TICK_MS);
+				trackTickFn!();
 			}
 		}
 	};
@@ -213,5 +229,79 @@ describe("adaptive polling", () => {
 		expect((env.manager as any).nextPollDueAt.size).toBe(0);
 		expect((env.manager as any).pollErrorCount.size).toBe(0);
 		expect((env.manager as any).pollingDevices.size).toBe(0);
+	});
+});
+
+describe("live position ticker", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("runs on a timer of its own, finer than the main loop", () => {
+		const env = createPollEnv();
+
+		const periods = env.adapter.setInterval.mock.calls.map((call: any[]) => call[1]);
+		expect(periods).toContain(1000);
+		expect(periods).toContain(LIVE_TRACK_TICK_MS);
+		expect(LIVE_TRACK_TICK_MS).toBeLessThan(1000);
+	});
+
+	it("asks the poller for the position without the main loop running at all", () => {
+		// The point of the separate timer: the main loop awaits cloud calls inside its own
+		// callback, so anything riding on it inherits their delay.
+		const env = createPollEnv();
+		const tickDynamic = vi.spyOn((env.manager as any).liveMapPoller, "tickDynamic").mockResolvedValue(undefined);
+
+		env.trackTick(4);
+
+		expect(tickDynamic).toHaveBeenCalledTimes(4);
+		expect(tickDynamic.mock.calls[0][0]).toBe("duid-1");
+	});
+
+	it("passes on whether the robot is working, so the cadence can slow down when it is not", async () => {
+		const env = createPollEnv({ updateInterval: 60 });
+		const tickDynamic = vi.spyOn((env.manager as any).liveMapPoller, "tickDynamic").mockResolvedValue(undefined);
+
+		env.trackTick(1);
+		expect(tickDynamic.mock.calls[0][1]).toBe(false);
+
+		env.setDeviceState(CLEANING_STATE);
+		await env.tick(1);
+		env.trackTick(1);
+		expect(tickDynamic.mock.calls.at(-1)![1]).toBe(true);
+	});
+
+	it("leaves an offline device alone", () => {
+		const env = createPollEnv();
+		const tickDynamic = vi.spyOn((env.manager as any).liveMapPoller, "tickDynamic").mockResolvedValue(undefined);
+		env.adapter.http_api.getDevices()[0].online = false;
+
+		env.trackTick(3);
+
+		expect(tickDynamic).not.toHaveBeenCalled();
+	});
+
+	it("is cleared when polling stops, so nothing survives an unload", () => {
+		const env = createPollEnv();
+
+		env.manager.stopPolling();
+
+		expect(env.adapter.clearInterval).toHaveBeenCalledWith("live-track-handle");
+		expect(env.adapter.clearInterval).toHaveBeenCalledWith("main-handle");
+		expect((env.manager as any).liveTrackTicker).toBeUndefined();
+	});
+
+	it("never leaves a second ticker running when polling is started twice", () => {
+		const env = createPollEnv();
+		env.adapter.clearInterval.mockClear();
+
+		env.manager.startPolling();
+
+		expect(env.adapter.clearInterval).toHaveBeenCalledWith("live-track-handle");
 	});
 });

@@ -4,10 +4,13 @@
  * Everything that decides "how long do we wait" or "how often do we ask" lives here so the
  * values can be reviewed in one place instead of being scattered across the request path.
  *
- * Three concerns:
+ * Four concerns:
  *  1. {@link getRequestTimeoutMs}   — method dependent RPC timeouts.
  *  2. {@link getRetryDelayMs}       — exponential backoff with jitter after a failed attempt.
  *  3. {@link getPollIntervalSeconds} — adaptive polling cadence per device.
+ *  4. {@link getLiveMapIntervalSeconds} / {@link getLiveTrackIntervalSeconds} — the two live
+ *     cadences, kept apart on purpose: the map is an expensive cloud transfer, the position is a
+ *     cheap local read, and one must never be paced by the other.
  */
 
 /** Fallback timeout for methods that are not listed in {@link METHOD_TIMEOUTS_MS}. */
@@ -365,6 +368,103 @@ export function getLiveMapIntervalSeconds(context: LiveMapContext): number {
 	}
 
 	return context.isActive ? configured : configured * LIVE_MAP_POLICY.idleFactor;
+}
+
+/**
+ * Cadence of the live position channel (`liveTrackInterval` in the admin UI).
+ *
+ * This is a different question from {@link LIVE_MAP_POLICY} and therefore has its own numbers. The
+ * map is a 7 KiB transfer that arrives over the cloud in 248 ms; the dynamic channel is two local
+ * requests of 712 B and 309 B that answer in 58 ms and 57 ms (all four medians measured at the test
+ * device, `PROJECT_STATE.md` section "Live-Karte: `get_dynamic_data` ist der schnelle Weg"). Tying
+ * the cheap question to the expensive one is what made the position lag; these constants exist so
+ * it cannot happen again.
+ *
+ * Both values are derived from measurements at the driving robot, not from the app:
+ *
+ *  - **1 s while working.** The driven track grows by about one point per second (`PATH` gained
+ *    24-28 bytes per 6.3 s, `_appanalysis/fahrt.log`), so 1 Hz is the fastest cadence at which every
+ *    single cycle still returns something new - asking faster would repeat the same track. The
+ *    position does move continuously, measured at up to 216 mm/s, so this is also what bounds how
+ *    far the drawn robot can be from the real one: about one robot radius instead of the 1.3 m a
+ *    6 s cadence produces.
+ *  - **2 s while idle.** A standing robot appends no path points and does not move, so a faster
+ *    cadence provably cannot deliver anything. What the idle cadence really bounds is how long the
+ *    *start* of a movement can stay invisible if the status poll has not classified the robot as
+ *    working yet, and 2 s is the value the app itself uses in that situation (report section 15,
+ *    §1.3).
+ */
+export const LIVE_TRACK_POLICY = Object.freeze({
+	/** Cadence (seconds) of the position/track fetch while the robot is working. */
+	activeIntervalSeconds: 1,
+	/** Factor applied while the robot is idle or paused, giving the app's 2 s. */
+	idleFactor: 2,
+	/**
+	 * Period (ms) of the ticker the live track rides on.
+	 *
+	 * It has to be shorter than the fastest configurable cadence, otherwise a 1 s cadence checked by
+	 * a 1 s ticker degrades to 2 s: the slot falls due a few milliseconds after the tick that could
+	 * have served it, so every second tick is wasted. Half the minimum cadence keeps the error below
+	 * {@link LIVE_TRACK_TICK_MS} without polling the bookkeeping pointlessly often - the tick itself
+	 * only compares two numbers per device when nothing is due.
+	 */
+	tickMs: 500
+});
+
+/** Period (ms) of the live track ticker; see {@link LIVE_TRACK_POLICY.tickMs}. */
+export const LIVE_TRACK_TICK_MS = LIVE_TRACK_POLICY.tickMs;
+
+/** Value of `liveTrackInterval` that switches the live position channel off entirely. */
+export const LIVE_TRACK_DISABLED = 0;
+/** Fastest configurable live track cadence; see {@link LIVE_TRACK_POLICY} for why it is not lower. */
+export const MIN_LIVE_TRACK_INTERVAL_SECONDS = 1;
+/** Slowest configurable live track cadence. */
+export const MAX_LIVE_TRACK_INTERVAL_SECONDS = 30;
+
+/**
+ * Normalises the configured live track cadence.
+ *
+ * @param configured Raw `liveTrackInterval` from the instance config.
+ * @returns The cadence in seconds, or {@link LIVE_TRACK_DISABLED} when the channel is off. An
+ *          explicit 0 means off; anything unreadable falls back to the policy default rather than
+ *          silently disabling a feature the user did not switch off.
+ */
+export function resolveLiveTrackIntervalSeconds(configured?: number): number {
+	const numeric = typeof configured === "number" ? configured : Number(configured);
+	if (Number.isFinite(numeric) && numeric <= 0) return LIVE_TRACK_DISABLED;
+	return clampInteger(
+		configured,
+		MIN_LIVE_TRACK_INTERVAL_SECONDS,
+		MAX_LIVE_TRACK_INTERVAL_SECONDS,
+		LIVE_TRACK_POLICY.activeIntervalSeconds
+	);
+}
+
+/** Inputs that drive the live track cadence for one device. */
+export type LiveTrackContext = {
+	/** Configured `liveTrackInterval` (seconds); 0 switches the channel off. */
+	configuredSeconds?: number;
+	/** Robot is cleaning, returning, washing, mapping, ... */
+	isActive: boolean;
+};
+
+/**
+ * Resolves how often the live position channel may be read for one device.
+ *
+ * Deliberately independent of {@link getLiveMapIntervalSeconds}: there is no
+ * `supportsIncrementalMap` term here, because the two requests behind this cadence
+ * (`get_dynamic_map_diff` and `get_dynamic_data`) are the same for every robot that answers them.
+ * A robot that does not is switched off individually by the poller after a few failures, which is
+ * a per-device fact and not something a cadence should encode.
+ *
+ * @param context See {@link LiveTrackContext}.
+ * @returns The cadence in seconds, or {@link LIVE_TRACK_DISABLED} when nothing should run.
+ */
+export function getLiveTrackIntervalSeconds(context: LiveTrackContext): number {
+	const configured = resolveLiveTrackIntervalSeconds(context.configuredSeconds);
+	if (configured === LIVE_TRACK_DISABLED) return LIVE_TRACK_DISABLED;
+
+	return context.isActive ? configured : configured * LIVE_TRACK_POLICY.idleFactor;
 }
 
 /** Error code carried by {@link ChannelUnavailableError}. */

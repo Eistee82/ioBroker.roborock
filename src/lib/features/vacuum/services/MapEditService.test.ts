@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
+import { hasFeatureStrBit } from "../../../featureStr";
 import { MockAdapter } from "../../../mock/MockAdapter";
 import { MockRobot } from "../../../mock/MockRobot";
 import { Feature } from "../../features.enum";
@@ -10,7 +11,6 @@ import {
 	CARPET_CLEAN_MODES,
 	extractMapBuffer,
 	FURNITURE_TYPES,
-	hasFeatureStrBit,
 	MAP_RECORD_TYPES,
 	MapEditService,
 	MATTER_FEATURE_BIT,
