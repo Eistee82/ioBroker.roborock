@@ -47,7 +47,8 @@ import type { MapZone, MapZoneKind, MapZonePoint, MapZoneRefusal, ZoneBox } from
 import { MAX_ROOM_NAME_LENGTH } from "@adapter/common/mapZoneKinds";
 import { layoutMapZoneHandles, renderMapZoneLayer } from "./mapZoneLayer";
 import type { MapZoneShape } from "./mapZoneLayer";
-import type { Furniture } from "@adapter/lib/map/v1/types";
+import type { Furniture, SegmentInfo } from "@adapter/lib/map/v1/types";
+import type { SegmentRaster } from "@adapter/common/segmentRaster";
 
 /**
  * Base path for the device artwork the AppPluginManager stores in the adapter's file storage
@@ -163,6 +164,8 @@ interface MapData {
 		segments: {
 			list: SegmentInfo[];
 		};
+		/** The grid as the robot sends it, run-length coded. Absent on maps that carry no raster. */
+		raster?: SegmentRaster;
 	};
 	ROBOT_POSITION?: PositionBlock;
 	CHARGER_LOCATION?: PositionBlock;
@@ -187,12 +190,6 @@ interface PositionBlock {
 interface PathBlock {
 	current_angle: number;
 	points: [number, number][];
-}
-
-interface SegmentInfo {
-	id: number;
-	name: string;
-	center: [number, number]; // Robot coordinates
 }
 
 interface Point {

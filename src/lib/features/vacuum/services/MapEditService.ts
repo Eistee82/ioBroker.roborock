@@ -1,6 +1,8 @@
 import { MapDecryptor } from "../../../map/v1/MapDecryptor";
 import { MapParser } from "../../../map/v1/MapParser";
-import { hasFeatureStrBit } from "../../../featureStr";
+import { FEATURE_STR_FIELD, hasFeatureStrBit, readFeatureStr } from "../../../featureStr";
+import { SQUARE_METRES_PER_CELL } from "../../../../common/segmentRaster";
+import type { SegmentInfo } from "../../../map/v1/types";
 import {
 	MAP_RECORD_MAP_SLOT,
 	MAP_RECORD_TYPES,
@@ -804,6 +806,38 @@ export function readMaxMultiMap(raw: unknown): number | null {
 /** `MAX_BLOCK_NO` (module 1507): a map holds at most this many segments. */
 export const MAX_BLOCK_NO = 32;
 
+/**
+ * Rooms a robot without `NewFeatureStrBit.MaxZoneOpened` may hold.
+ *
+ * The app runs a two-stage gate, not the single one this service used to (`splitSelectBlock`,
+ * A65:809425-809475, written up in `_appanalysis/28-raeume-teilen.md` §3.3):
+ *
+ * ```js
+ * if (!MM.isAllowMaxBlock() && blockNum > 15) return toast(map_edit_split_restriction_num);
+ * if ( MM.isAllowMaxBlock() && blockNum > 31) return toast(map_edit_split_restriction_num);
+ * ```
+ *
+ * So the cut-off is "16 rooms already there" without the bit and "32" with it - a factor of two,
+ * not the one room an earlier reading assumed.
+ */
+export const MAX_BLOCK_NO_WITHOUT_MAX_ZONE = 16;
+
+/**
+ * Bit 77 of `new_feature_info_str` (`NewFeatureStrBit.MaxZoneOpened`, A65:231849).
+ *
+ * `MM.isAllowMaxBlock()` (A65:340831-340841) is nothing but this bit.
+ */
+export const MAX_ZONE_OPENED_FEATURE_BIT = 77n;
+
+/**
+ * Floor area, in square metres, below which the app will not divide a room.
+ *
+ * `splitSelectBlock` (A65:809411-809417) refuses on `getSegmentArea(id) < 2`, and `getSegmentArea`
+ * (A65:483620-483654) is `0.05 * centerInfo[id].count * 0.05` - the segment's cell count times the
+ * area of one cell. Checked before anything is sent; the robot is never asked.
+ */
+export const MIN_SPLIT_AREA_SQM = 2;
+
 /** A merge needs at least this many segments (`map_edit_merge_restriction`). */
 export const MIN_MERGE_SEGMENTS = 2;
 
@@ -811,8 +845,14 @@ export const MIN_MERGE_SEGMENTS = 2;
  * Reads a split request a user wrote into the command state.
  *
  * Report section 1.3: the parameter is `[blockID, x1, y1, x2, y2]` - the segment to divide and the
- * two end points of the dividing line, in the robot's own millimetres. The app computes them as
- * `50 * cell` with the y axis mirrored, which is the same unit the map states report.
+ * two end points of the dividing line, in the robot's own millimetres.
+ *
+ * **The y axis is not mirrored.** An earlier report said it was, reading the `top + height - y` in
+ * the app's `getSplitParams` as an axis flip; it is not, it undoes the app's own conversion into
+ * screen space, and the net formula is `x_mm = 50 * (left + column)`, `y_mm = 50 * (top + row)` -
+ * the same one every other map state uses. `_appanalysis/28-raeume-teilen.md` §4.2 carries the
+ * derivation and the cross-check against `MapParser`. Mirroring here would divide the wrong half
+ * of the room.
  * @param raw Value of the command state, already JSON-parsed by the adapter where possible.
  * @returns The five numbers, validated.
  * @throws If the value is not a well-formed split request.
@@ -1184,13 +1224,8 @@ export class MapEditService {
 			if (!rooms.has(info[0])) {
 				throw new Error(`split_segment: room ${info[0]} is not on the current map (known: ${[...rooms].join(", ")}).`);
 			}
-			// The report words the app's own check two ways: section 1.3 says "more than 31", while
-			// section 2.3 and `roborock_map_edit.json` both say "refused from 31 rooms on". Two of
-			// three say 31, and a split refused one room early costs nothing next to one the robot
-			// rejects after the fact, so 31 it is.
-			if (rooms.size >= MAX_BLOCK_NO - 1) {
-				throw new Error(`split_segment: the map already holds ${rooms.size} rooms, and the app stops offering a split from ${MAX_BLOCK_NO - 1} on (the firmware's limit is ${MAX_BLOCK_NO}). Combine two rooms first.`);
-			}
+
+			await this.refuseSplitTheAppWouldRefuse(info[0], rooms.size);
 
 			this.warnAboutSegmentEdit(`Dividing room ${info[0]} along ${info.slice(1).join(", ")}.`);
 			return { method, params: await this.wrap(method, info) };
@@ -1530,6 +1565,101 @@ export class MapEditService {
 	 * @returns The segment ids on the current map.
 	 * @throws If the room list cannot be read.
 	 */
+	/**
+	 * Applies the two checks the app runs before it will divide a room.
+	 *
+	 * Both are the app's own, both happen before anything is sent, and both are worth repeating
+	 * here: `split_segment` renumbers every segment, so a call the robot refuses is not free - it is
+	 * a call whose outcome nobody can predict without asking the robot afterwards.
+	 *
+	 * What the app does (`splitSelectBlock`, A65:809364-809620, `_appanalysis/28-raeume-teilen.md`
+	 * §3):
+	 *
+	 * 1. `getSegmentArea(id) < 2` m² - refuse. Read off the map, never off the robot.
+	 * 2. `blockNum > 15` without `MaxZoneOpened`, `blockNum > 31` with it - refuse.
+	 *
+	 * Both need the parsed map, and both are skipped rather than guessed when it is not there: a
+	 * `mapData` written by an older adapter version carries no `count`, and a B01/Q10 device has no
+	 * V1 image block at all. Refusing on absent data would take a working function away from exactly
+	 * the users whose map this adapter has not learned to measure yet.
+	 * @param segmentId Room the caller wants divided.
+	 * @param knownRooms Rooms `get_room_mapping` reported, used when the map has no count of its own.
+	 * @throws If the app would have refused.
+	 */
+	private async refuseSplitTheAppWouldRefuse(segmentId: number, knownRooms: number): Promise<void> {
+		const image = await this.readImageBlock();
+
+		const cells = image?.segments?.list?.find((room) => room.id === segmentId)?.count;
+		if (cells !== undefined) {
+			const squareMetres = cells * SQUARE_METRES_PER_CELL;
+			if (squareMetres < MIN_SPLIT_AREA_SQM) {
+				// Three decimals, not two: a room of 1.9975 m² printed as "2.00 m², which is under
+				// 2 m²" reads like a bug in the check rather than a small room.
+				throw new Error(
+					`split_segment: room ${segmentId} covers ${squareMetres.toFixed(3)} m² (${cells} cells), and the app refuses to divide anything under ${MIN_SPLIT_AREA_SQM} m². Dividing it would renumber every room for two halves too small to clean separately.`
+				);
+			}
+		}
+
+		// `blockNum` is the app's own number - the segment count in the image block header. The room
+		// mapping is the fallback, and it can undercount: a room the user has never named is on the
+		// map but not in `get_room_mapping`.
+		const blockNum = typeof image?.segments?.count === "number" && image.segments.count > 0 ? image.segments.count : knownRooms;
+
+		const allowMaxBlock = await this.isMaxZoneOpened();
+		const limit = allowMaxBlock === false ? MAX_BLOCK_NO_WITHOUT_MAX_ZONE : MAX_BLOCK_NO;
+		if (blockNum >= limit) {
+			const because = allowMaxBlock === false
+				? `this robot does not report NewFeatureStrBit.MaxZoneOpened, so the app's limit is ${MAX_BLOCK_NO_WITHOUT_MAX_ZONE}`
+				: `the app's limit is ${MAX_BLOCK_NO}`;
+			throw new Error(`split_segment: the map already holds ${blockNum} rooms and ${because}. Combine two rooms first.`);
+		}
+	}
+
+	/**
+	 * Whether the robot announces `NewFeatureStrBit.MaxZoneOpened`, or has not said.
+	 *
+	 * The distinction matters here in a way it usually does not. Treating "has not said" as "does
+	 * not have it" would halve the room limit and refuse a split on a perfectly capable robot whose
+	 * feature string this adapter simply has not read yet - the same mistake that once labelled a
+	 * supported water level as unsupported. So an unread feature string is answered as `null`, and
+	 * the caller uses the permissive limit; the robot still has the last word.
+	 * @returns `true`/`false` when the robot said, `null` when there is nothing to read.
+	 */
+	private async isMaxZoneOpened(): Promise<boolean | null> {
+		try {
+			const state = await this.deps.adapter.getStateAsync(`Devices.${this.duid}.deviceStatus.${FEATURE_STR_FIELD}`);
+			if (readFeatureStr(state?.val) === null) return null;
+			return hasFeatureStrBit(state?.val, MAX_ZONE_OPENED_FEATURE_BIT);
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined, `Could not read ${FEATURE_STR_FIELD}: ${this.deps.adapter.errorMessage(e)}`, "debug");
+			return null;
+		}
+	}
+
+	/**
+	 * Reads the image block out of the map this adapter last parsed.
+	 *
+	 * Deliberately the stored state and not a fresh `get_map_v1`: it is the very map the admin tab
+	 * is showing, so a check made here agrees with what the user is looking at. Unlike
+	 * {@link readOverlays}, nothing destructive hangs on it - the worst a stale count can do is
+	 * refuse a split that would have worked, or pass one the robot then refuses.
+	 * @returns The image block, or `null` when there is none to read.
+	 */
+	private async readImageBlock(): Promise<{ segments?: { count?: number; list?: SegmentInfo[] } } | null> {
+		try {
+			const state = await this.deps.adapter.getStateAsync(`Devices.${this.duid}.map.mapData`);
+			if (typeof state?.val !== "string" || !state.val) return null;
+
+			const parsed = JSON.parse(state.val);
+			const image = parsed?.IMAGE;
+			return image && typeof image === "object" ? image : null;
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined, `Could not read the stored map for the split checks: ${this.deps.adapter.errorMessage(e)}`, "debug");
+			return null;
+		}
+	}
+
 	private async readSegmentIds(method: string): Promise<Set<number>> {
 		const mapping = await this.readRoomMapping(this.getMapFlag());
 		if (mapping.size === 0) {

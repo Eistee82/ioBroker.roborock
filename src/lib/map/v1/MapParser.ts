@@ -1,7 +1,9 @@
 // src/lib/map/v1/MapParser.ts
 import * as crypto from "node:crypto";
 import type { Roborock } from "../../../main";
-import type { Furniture } from "./types";
+import type { Furniture, SegmentInfo } from "./types";
+import type { SegmentRaster } from "../../../common/segmentRaster";
+import { encodeRasterRuns, MAX_RASTER_RUN_VALUES } from "../../../common/segmentRaster";
 
 export type { Furniture };
 
@@ -102,11 +104,6 @@ interface PositionBlock {
 	position: [number, number];
 	angle: number;
 }
-interface SegmentInfo {
-	id: number; // The segment ID (e.g., 16)
-	name: string; // The room name (e.g., "Kitchen")
-	center: [number, number]; // The calculated center coordinates in MM
-}
 interface ImageBlock {
 	segments: {
 		count: number;
@@ -115,6 +112,16 @@ interface ImageBlock {
 	position: { top: number; left: number };
 	dimensions: { height: number; width: number };
 	pixels: { floor: number[]; obstacle: number[]; segments: number[] };
+	/**
+	 * The grid as the robot sends it, one byte per cell, run-length coded.
+	 *
+	 * The three `pixels` arrays are derived views and cannot replace it: `pixels.obstacle` keeps
+	 * only the cell index and throws the segment id away, which is exactly what dividing a room
+	 * needs. See {@link SegmentRaster} for the coding and for why it is not gzipped.
+	 *
+	 * Absent when the raster does not compress - see {@link MapParser.buildSegmentRaster}.
+	 */
+	raster?: SegmentRaster;
 }
 interface PathBlock {
 	current_angle: number;
@@ -514,9 +521,16 @@ export class MapParser {
 
 		const dataStart = dataPosition + offset;
 
+		// The grid as it arrives, kept verbatim so that the segment id of a *wall* cell survives -
+		// `pixels.obstacle` below drops it, and dividing a room needs it. Copied in this loop rather
+		// than sliced afterwards so the block is walked exactly once.
+		const rasterCells = new Uint8Array(length);
+
 		for (let i = 0; i < length; i++) {
-			const pixelBytePosition = dataStart + i;
-			const pixelType = this.getPixelType(buf, pixelBytePosition);
+			const pixelByte = buf.readUInt8(dataStart + i);
+			rasterCells[i] = pixelByte;
+
+			const pixelType = pixelByte & 0x07;
 
 			if (pixelType === 1) {
 				// Obstacle
@@ -525,7 +539,7 @@ export class MapParser {
 				// Floor
 				parameters.pixels.floor.push(i);
 
-				const segmentID = (buf.readUInt8(pixelBytePosition) & 248) >> 3;
+				const segmentID = (pixelByte & 248) >> 3;
 				segmentIDsInImage.add(segmentID);
 
 				parameters.pixels.segments.push(i | (segmentID << 21));
@@ -546,6 +560,9 @@ export class MapParser {
 				}
 			}
 		}
+
+		const raster = this.buildSegmentRaster(rasterCells, width_px, height_px);
+		if (raster) parameters.raster = raster;
 
 		// --- Process all found segments ---
 
@@ -580,10 +597,33 @@ export class MapParser {
 				id: segId,
 				name: roomName,
 				center: [centerX_robot, centerY_robot], // Store correct MM coordinates
+				count: bb.count,
+				bounds: { minX: bb.minX, maxX: bb.maxX, minY: bb.minY, maxY: bb.maxY },
 			});
 		}
 
 		return parameters;
+	}
+
+	/**
+	 * Run-length codes the grid, unless the result would be too big to put in a state.
+	 *
+	 * A floor plan is made of long runs of the same value, so the coding is normally two orders of
+	 * magnitude smaller than the cells it replaces. A grid without that structure is not a floor
+	 * plan, but a state this adapter writes should not be able to balloon on unexpected input
+	 * either - hence {@link MAX_RASTER_RUN_VALUES}, which no real map comes near.
+	 * @param cells One byte per grid cell, row-major.
+	 * @param width Cells per row.
+	 * @param height Rows.
+	 * @returns The coded raster, or `undefined` when it would exceed the ceiling.
+	 */
+	private buildSegmentRaster(cells: Uint8Array, width: number, height: number): SegmentRaster | undefined {
+		if (cells.length !== width * height || cells.length === 0) return undefined;
+
+		const runs = encodeRasterRuns(cells);
+		if (runs.length > MAX_RASTER_RUN_VALUES) return undefined;
+
+		return { encoding: "rle", width, height, runs };
 	}
 
 	private parsePathBlock(blockBuffer: Buffer, buf: Buffer, dataPosition: number, length: number): PathBlock {
