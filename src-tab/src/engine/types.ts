@@ -202,6 +202,17 @@ export interface RoomListModel {
 	 * (`map_edit_max_input_length_tip`).
 	 */
 	maxNameLength: number;
+	/**
+	 * The cleaning order the robot holds, as room names in that order. Empty means it decides.
+	 *
+	 * Names rather than segment ids, because the ids are invisible to the user. An id the current
+	 * map no longer has is dropped rather than shown as a number - that is the state a split leaves
+	 * behind, and the adapter clears the order for exactly that reason.
+	 *
+	 * **Shown, not proven.** That the robot accepted an order is observable; that it cleans in that
+	 * order is not, from here - only a real segment run shows it.
+	 */
+	cleanOrder: string[];
 }
 
 /** Zone selection state. */

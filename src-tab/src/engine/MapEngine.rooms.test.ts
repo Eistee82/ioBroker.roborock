@@ -223,6 +223,117 @@ describe("combining rooms", () => {
 	});
 });
 
+describe("the cleaning order", () => {
+	/** Picks rooms on the map, in the order given. */
+	function pick(engine: MapEngine, ids: number[]): void {
+		for (const id of ids) {
+			(engine as unknown as { toggleRoomSelection(id: number): void }).toggleRoomSelection(id);
+		}
+	}
+
+	/** Feeds the state the adapter publishes after reading the robot. */
+	function publishOrder(engine: MapEngine, raw: unknown): void {
+		const internals = engine as unknown as {
+			parseCleanOrderState(raw: unknown): number[] | null;
+			cleanOrder: number[];
+			renderRoomSelection(): void;
+		};
+		const parsed = internals.parseCleanOrderState(raw);
+		if (parsed !== null) {
+			internals.cleanOrder = parsed;
+			internals.renderRoomSelection();
+		}
+	}
+
+	it("shows the robot's order as room names, in order", async () => {
+		const { engine, internals, models } = await startEngine();
+		loadRooms(internals, [
+			{ id: 16, name: "Kitchen" },
+			{ id: 17, name: "Living room" },
+		]);
+
+		publishOrder(engine, "[17,16]");
+		expect(models[models.length - 1].cleanOrder).toEqual(["Living room", "Kitchen"]);
+	});
+
+	it("leaves out an id the current map no longer has", async () => {
+		// That is the state a split leaves behind. A bare number would say nothing to anybody.
+		const { engine, internals, models } = await startEngine();
+		loadRooms(internals, [{ id: 16, name: "Kitchen" }]);
+
+		publishOrder(engine, "[16,99]");
+		expect(models[models.length - 1].cleanOrder).toEqual(["Kitchen"]);
+	});
+
+	it("keeps the order it had when the state cannot be read", async () => {
+		// An invented empty order reads as "none set" and could talk somebody into overwriting one
+		// that exists - `set_clean_sequence` replaces the whole thing.
+		const { engine, internals, models } = await startEngine();
+		loadRooms(internals, [{ id: 16, name: "Kitchen" }]);
+
+		publishOrder(engine, "[16]");
+		publishOrder(engine, "not json");
+		publishOrder(engine, "[16,\"x\"]");
+
+		expect(models[models.length - 1].cleanOrder).toEqual(["Kitchen"]);
+	});
+
+	it("reads an empty order as an empty one, because that is a real value", async () => {
+		const { engine, internals, models } = await startEngine();
+		loadRooms(internals, [{ id: 16, name: "Kitchen" }]);
+
+		publishOrder(engine, "[16]");
+		publishOrder(engine, "[]");
+		expect(models[models.length - 1].cleanOrder).toEqual([]);
+	});
+
+	it("sends the selection in the order it was clicked", async () => {
+		const { engine, internals, sendTo } = await startEngine();
+		loadRooms(internals, [
+			{ id: 16, name: "Kitchen" },
+			{ id: 17, name: "Living room" },
+			{ id: 18, name: "Hallway" },
+		]);
+
+		pick(engine, [18, 16, 17]);
+		await engine.setCleanOrderFromSelection();
+
+		const sets = sendTo.mock.calls.filter((call) => call[2]?.command === "set_clean_sequence");
+		expect(sets).toHaveLength(1);
+		expect(JSON.parse(sets[0][2].value)).toEqual([18, 16, 17]);
+	});
+
+	it("refuses an empty selection and says what to do", async () => {
+		const { engine, internals, sendTo, errors } = await startEngine();
+		loadRooms(internals, [{ id: 16, name: "Kitchen" }]);
+
+		await engine.setCleanOrderFromSelection();
+
+		expect(sendTo.mock.calls.some((call) => call[2]?.command === "set_clean_sequence")).toBe(false);
+		expect(errors[errors.length - 1]).toMatch(/in the order/i);
+	});
+
+	it("clears the order with the empty array the app's own reset sends", async () => {
+		const { engine, internals, sendTo } = await startEngine();
+		loadRooms(internals, [{ id: 16, name: "Kitchen" }]);
+
+		await engine.clearCleanOrder();
+
+		const sets = sendTo.mock.calls.filter((call) => call[2]?.command === "set_clean_sequence");
+		expect(sets).toHaveLength(1);
+		expect(JSON.parse(sets[0][2].value)).toEqual([]);
+	});
+
+	it("forgets the order on a robot switch", async () => {
+		const { engine, internals, models } = await startEngine();
+		loadRooms(internals, [{ id: 16, name: "Kitchen" }]);
+		publishOrder(engine, "[16]");
+
+		engine.selectRobot("duid2");
+		expect(models[models.length - 1].cleanOrder).toEqual([]);
+	});
+});
+
 describe("renaming a room", () => {
 	it("names the room by its segment id, as a JSON string", async () => {
 		const { engine, internals, sendTo } = await startEngine();

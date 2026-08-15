@@ -88,14 +88,17 @@ export const MAP_ZONE_DEFAULT_HALF_MM = 500;
  */
 export const MAP_ZONE_MIN_EDGE_PX = 6;
 
-/** State below the device root that carries the confirmed set of walls and zones. */
-export const MAP_ZONE_CONFIRM_STATE = "mapEdit.zones";
+/** State below the device root that carries the cleaning order the robot holds. */
+export const CLEAN_SEQUENCE_STATE = "mapEdit.cleanSequence";
 
 /** Command state that renames rooms; the adapter rebuilds the whole assignment behind it. */
 export const ROOM_NAME_COMMAND = "name_segment";
 
 /** Command state that combines rooms; it renumbers the segments, so the shell asks first. */
 export const ROOM_MERGE_COMMAND = "merge_segment";
+
+/** Command state that sets the cleaning order; an empty array lets the robot decide again. */
+export const CLEAN_SEQUENCE_COMMAND = "set_clean_sequence";
 
 /** The app refuses a merge of fewer than this (`MIN_MERGE_SEGMENTS`, `map_edit_merge_restriction`). */
 export const MIN_MERGE_ROOMS = 2;
@@ -597,10 +600,6 @@ export class MapEngine {
 	 * in screen coordinates would drift with the picture underneath it.
 	 */
 	private mapZoneDraft: { kind: MapZoneKind; box: ZoneBox; origin: MapZone | null } | null = null;
-	/** The zone edit that is on its way to the robot and not yet confirmed, or null. */
-	private pendingMapZoneEdit: MapZoneExpectation | null = null;
-	/** Timer that turns an unconfirmed edit into a visible message; cleared on unload. */
-	private mapZoneConfirmTimeout: number | null = null;
 	/** Cache: "duid.mapFlag.roomId" -> room name (from get_room_names for cloud maps). */
 	private roomNamesFromStates: Record<string, string> = {};
 	/** Guard: "duid.mapFlag" of the floor whose room names have already been requested. */
@@ -614,6 +613,8 @@ export class MapEngine {
 	private roomLabelCount = 0;
 	/** The named rooms of the current map, in the order it lists them; see `renderRoomSelection`. */
 	private roomList: { segmentId: number; name: string }[] = [];
+	/** The cleaning order the robot holds, as segment ids; empty means it picks its own. */
+	private cleanOrder: number[] = [];
 
 	// Status bar values, all read from Devices.<duid>.deviceStatus.*
 	private statusValues: {
@@ -850,7 +851,6 @@ export class MapEngine {
 			clearTimeout(this.popupTimeout);
 			this.popupTimeout = null;
 		}
-		this.clearMapZoneConfirmation();
 		this.host.container.replaceChildren();
 	}
 
@@ -1247,9 +1247,6 @@ export class MapEngine {
 		this.mapZoneRefusal = null;
 		this.mapZoneDraft = null;
 		this.selectedMapZoneKey = null;
-		// An edit waiting on the previous robot can never be confirmed now, and its timer would
-		// otherwise fire a message about a robot the user has left.
-		this.clearMapZoneConfirmation();
 		this.mapZoneGroup.selectAll("*").remove();
 		this.publishMapZoneModel();
 		this.currentMapBase64Clean = null;
@@ -1259,6 +1256,7 @@ export class MapEngine {
 		this.selectedRoomIds.clear();
 		this.roomLabelCount = 0;
 		this.roomList = [];
+		this.cleanOrder = [];
 		this.userAdjustedView = false;
 		this.connectionChannel = "";
 		// The previous robot's modes are not this one's; they are filled in again by
@@ -1272,8 +1270,10 @@ export class MapEngine {
 		const deviceRoot = `${this.instanceId}.Devices.${duid}`;
 		const mapBase64CleanStateId = `${deviceRoot}.map.mapBase64Clean`;
 		const mapDataStateId = `${deviceRoot}.map.mapData`;
-		// The one channel that says a zone edit actually landed; see `awaitMapZoneConfirmation`.
-		const mapZonesStateId = `${deviceRoot}.${MAP_ZONE_CONFIRM_STATE}`;
+		// The cleaning order the robot holds. The panel may only offer to change an order it has
+		// shown: `set_clean_sequence` replaces the whole thing, so an interface that set one without
+		// displaying the current one would overwrite an order the user never saw.
+		const cleanSequenceStateId = `${deviceRoot}.${CLEAN_SEQUENCE_STATE}`;
 		const q10StatusStateId = `${deviceRoot}.deviceStatus.status`;
 		const q10CleaningInfoStateId = `${deviceRoot}.deviceStatus.cleaning_info`;
 		const q10CurrentCleanRoomIdsStateId = `${deviceRoot}.deviceStatus.current_clean_room_ids`;
@@ -1312,7 +1312,7 @@ export class MapEngine {
 			q10CurrentCleanRoomIdsStateId,
 			connectionPreferredStateId,
 			liveTrackStateId,
-			mapZonesStateId,
+			cleanSequenceStateId,
 			...statusKeyByStateId.keys()
 		];
 
@@ -1413,9 +1413,17 @@ export class MapEngine {
 					}
 					break;
 
-				case mapZonesStateId:
-					this.checkMapZoneConfirmation(state.val);
+				case cleanSequenceStateId: {
+					// The adapter publishes what the robot answered; anything unreadable leaves the
+					// order alone rather than showing an empty one, because empty is a real value
+					// here and means "the robot decides".
+					const parsed = this.parseCleanOrderState(state.val);
+					if (parsed !== null) {
+						this.cleanOrder = parsed;
+						this.renderRoomSelection();
+					}
 					break;
+				}
 
 				case q10StatusStateId:
 					this.q10Status = Number(state.val);
@@ -2786,6 +2794,11 @@ export class MapEngine {
 		this.host.onRoomList?.({
 			rooms: this.roomList.map((room) => ({ ...room, selected: this.selectedRoomIds.has(room.segmentId) })),
 			maxNameLength: MAX_ROOM_NAME_LENGTH,
+			// Segment ids become names here, because the ids mean nothing to a user. An id this map
+			// no longer has is left out rather than shown as a bare number.
+			cleanOrder: this.cleanOrder
+				.map((segmentId) => this.roomList.find((room) => room.segmentId === segmentId)?.name)
+				.filter((name): name is string => typeof name === "string"),
 		});
 	}
 
@@ -2819,6 +2832,85 @@ export class MapEngine {
 	 * test with, and the app words its own refusal `map_edit_merge_not_adjacent`. A robot that says
 	 * no leaves the map alone.
 	 */
+	/**
+	 * Sets the cleaning order to the rooms the user picked, in the order they picked them.
+	 *
+	 * That is what the app does: `setCleanSequence(this.selectedSegements)` (report section 1.9,
+	 * module 2657 Z. 797541). The selection is a `Set`, and a `Set` keeps insertion order, so
+	 * `Array.from` **is** the click order - the same list the app would send.
+	 *
+	 * **`set_clean_sequence` replaces the whole order**, which is why the panel shows the current
+	 * one first. An interface that set an order without displaying the existing one would overwrite
+	 * something the user never saw.
+	 *
+	 * **What cannot be checked from here is whether the robot then cleans in that order.** The
+	 * adapter reads the order back after every set, so "the robot accepted it" is observable - but
+	 * accepting is not applying, and only a real segment run shows the difference. Nothing in this
+	 * tab should be read as proof of the latter.
+	 */
+	/**
+	 * Reads the cleaning order out of its state.
+	 *
+	 * Answers null for anything it did not understand, so the caller keeps the order it had. An
+	 * invented empty order would read as "none set" and could talk somebody into overwriting one
+	 * that exists - `set_clean_sequence` replaces the whole thing.
+	 * @param raw Value of the state.
+	 * @returns The segment ids in order, or null when the value was not one.
+	 */
+	private parseCleanOrderState(raw: unknown): number[] | null {
+		let value: unknown = raw;
+		if (typeof value === "string") {
+			try {
+				value = JSON.parse(value);
+			} catch {
+				return null;
+			}
+		}
+		if (!Array.isArray(value)) return null;
+
+		const order: number[] = [];
+		for (const entry of value) {
+			const id = typeof entry === "number" ? entry : Number(entry);
+			if (!Number.isInteger(id) || id < 0) return null;
+			order.push(id);
+		}
+		return order;
+	}
+
+	public async setCleanOrderFromSelection(): Promise<void> {
+		if (!this.currentRobotDuid) return;
+
+		const ids = Array.from(this.selectedRoomIds);
+		if (ids.length === 0) {
+			this.showError(this.t("ui_clean_order_needs_rooms", "Pick the rooms on the map, in the order they should be cleaned."));
+			return;
+		}
+
+		await this.sendCommand("set_state", {
+			duid: this.currentRobotDuid,
+			folder: MAP_ZONE_COMMAND_FOLDER,
+			command: CLEAN_SEQUENCE_COMMAND,
+			value: JSON.stringify(ids),
+		});
+	}
+
+	/**
+	 * Clears the cleaning order, so the robot picks its own again.
+	 *
+	 * The empty array is the app's own reset (report section 1.9, module 2657 Z. 797275), and it is
+	 * the state every robot is in before anybody sets an order.
+	 */
+	public async clearCleanOrder(): Promise<void> {
+		if (!this.currentRobotDuid) return;
+
+		await this.sendCommand("set_state", {
+			duid: this.currentRobotDuid,
+			folder: MAP_ZONE_COMMAND_FOLDER,
+			command: CLEAN_SEQUENCE_COMMAND,
+			value: "[]",
+		});
+	}
+
 	public async mergeSelectedRooms(): Promise<void> {
 		if (!this.currentRobotDuid) return;
 
@@ -3955,13 +4047,6 @@ export class MapEngine {
 		this.drawMapZones();
 		this.publishMapZoneModel();
 
-		// Armed before the send, so a confirmation that arrives quickly cannot be missed.
-		this.awaitMapZoneConfirmation({
-			kind: draft.kind,
-			zone: zoneAddPayload(draft.kind, points),
-			present: true,
-		});
-
 		await this.sendCommand("set_state", {
 			duid: this.currentRobotDuid,
 			folder: MAP_ZONE_COMMAND_FOLDER,
@@ -3992,91 +4077,12 @@ export class MapEngine {
 		if (!zone || !this.currentRobotDuid) return;
 
 		this.selectedMapZoneKey = null;
-		this.awaitMapZoneConfirmation({
-			kind: zone.kind,
-			zone: zoneAddPayload(zone.kind, zone.points),
-			// A removal is confirmed by the zone being gone from the published set.
-			present: false,
-		});
-
 		await this.sendCommand("set_state", {
 			duid: this.currentRobotDuid,
 			folder: MAP_ZONE_COMMAND_FOLDER,
 			command: MAP_ZONE_REMOVE_COMMAND,
 			value: JSON.stringify(zoneRemovalPayload(zone)),
 		});
-	}
-
-	/**
-	 * Waits for the robot to confirm a zone edit, and says so when it does not.
-	 *
-	 * **Why this is needed at all.** `set_state` answers `{result:"ok"}` the moment the value is
-	 * written into the command state - before the robot has been asked anything
-	 * (`src/lib/socketHandler.ts:436-443`). Everything that can go wrong afterwards happens in the
-	 * adapter: the map cannot be fetched, the index no longer matches, the robot never confirms the
-	 * deferred call. All of it lands in the adapter log, where nobody is looking. Without this, a
-	 * user moves a zone, the interface agrees, and nothing has happened - the same fault class as
-	 * the water level "Extreme".
-	 *
-	 * **Why `mapEdit.zones` is the right channel.** The adapter republishes it only once the robot
-	 * has confirmed (`MapEditService.ts:1483-1487`, after `pollUntilConfirmed`). The expectation is
-	 * checked against its **content** rather than against the fact that it changed, because the same
-	 * state is also written before the edit, with the set the robot holds at that moment.
-	 * @param expectation What the published set has to show for the edit to have landed.
-	 */
-	private awaitMapZoneConfirmation(expectation: MapZoneExpectation): void {
-		this.clearMapZoneConfirmation();
-		this.pendingMapZoneEdit = expectation;
-		this.mapZoneConfirmTimeout = window.setTimeout(() => {
-			this.mapZoneConfirmTimeout = null;
-			this.pendingMapZoneEdit = null;
-			this.showError(
-				this.t(
-					"ui_map_zone_unconfirmed",
-					"The robot has not confirmed the change to the walls and zones. Nothing may have been changed - check the map and the adapter log."
-				)
-			);
-		}, MAP_ZONE_CONFIRM_TIMEOUT_MS);
-	}
-
-	/**
-	 * Reads a `mapEdit.zones` publication and closes the pending edit when it shows the change.
-	 * @param raw Value of the state.
-	 */
-	private checkMapZoneConfirmation(raw: unknown): void {
-		const pending = this.pendingMapZoneEdit;
-		if (!pending) return;
-
-		let published: unknown;
-		try {
-			published = typeof raw === "string" ? JSON.parse(raw) : raw;
-		} catch {
-			return;
-		}
-		if (!published || typeof published !== "object") return;
-
-		const list = (published as Record<string, unknown>)[pending.kind];
-		if (!Array.isArray(list)) return;
-
-		const holds = list.some(
-			(entry) =>
-				Array.isArray(entry) &&
-				entry.length === pending.zone.length &&
-				entry.every((value, index) => Number(value) === pending.zone[index])
-		);
-
-		// An addition and a move are confirmed by the zone being there, a removal by it being gone.
-		if (holds !== pending.present) return;
-		this.clearMapZoneConfirmation();
-	}
-
-	/** Drops a pending expectation and its timer; also called on unload and on a robot switch. */
-	private clearMapZoneConfirmation(): void {
-		if (this.mapZoneConfirmTimeout !== null) {
-			clearTimeout(this.mapZoneConfirmTimeout);
-			this.mapZoneConfirmTimeout = null;
-		}
-		this.pendingMapZoneEdit = null;
 	}
 
 	/** Why the adapter would refuse to edit this map's zones, already translated, or null. */

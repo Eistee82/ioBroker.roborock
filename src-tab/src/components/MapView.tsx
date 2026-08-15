@@ -140,7 +140,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [rooms, setRooms] = useState<RoomSelectionModel>({ selected: 0, available: 0 });
 	const [zones, setZones] = useState<ZoneModel>({ count: 0, max: 5, atLimit: false });
 	const [mapZones, setMapZones] = useState<MapZonesModel>(EMPTY_MAP_ZONES);
-	const [roomList, setRoomList] = useState<RoomListModel>({ rooms: [], maxNameLength: 30 });
+	const [roomList, setRoomList] = useState<RoomListModel>({ rooms: [], maxNameLength: 30, cleanOrder: [] });
 	/**
 	 * The segment edit waiting for a yes, or null.
 	 *
@@ -605,6 +605,8 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				<RoomsPanel
 					rooms={roomList}
 					onMergeRequest={() => setSegmentEdit("merge")}
+					onSetCleanOrder={() => void engineRef.current?.setCleanOrderFromSelection()}
+					onClearCleanOrder={() => void engineRef.current?.clearCleanOrder()}
 					onRename={(segmentId, name) => void engineRef.current?.renameRoom(segmentId, name)}
 				/>
 				<MapZonesPanel

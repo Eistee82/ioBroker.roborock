@@ -3,8 +3,6 @@ import { MapEngine } from "./MapEngine";
 import { MAP_ZONE_DEFAULT_HALF_MM } from "./MapEngine";
 import type { EngineConnection, MapEngineHost, MapZonesModel } from "./types";
 import type { MapZone, MapZoneKind, ZoneBox } from "./mapZones";
-import { MAP_ZONE_CONFIRM_TIMEOUT_MS } from "./MapEngine";
-import type { MapZoneExpectation } from "./MapEngine";
 
 /**
  * The robot's own walls and zones, as the engine wires them up.
@@ -28,7 +26,6 @@ interface EngineInternals {
 	map: unknown;
 	mapZones: MapZone[];
 	mapZoneDraft: { kind: MapZoneKind; box: ZoneBox; origin: MapZone | null } | null;
-	pendingMapZoneEdit: MapZoneExpectation | null;
 	selectedMapZoneKey: string | null;
 	refreshMapZones(): void;
 	mapZoneParams(): unknown;
@@ -403,222 +400,20 @@ describe("changing a zone the robot already holds", () => {
 	});
 });
 
-describe("confirming that an edit landed", () => {
-	/** The state the adapter republishes once the robot has confirmed. */
-	function publishConfirmation(internals: EngineInternals, overlays: Record<string, number[][]>): void {
-		(internals as unknown as { checkMapZoneConfirmation(raw: unknown): void }).checkMapZoneConfirmation(
-			JSON.stringify({ wall: [], no_go: [], no_mop: [], ...overlays }),
-		);
-	}
-
-	it("waits for the robot rather than trusting the socket's answer", async () => {
-		// `set_state` answers ok as soon as the value is written, before the robot is asked at all.
-		const { engine, internals } = await startEngine();
-		loadMap(internals, {});
-
-		engine.startMapZone("no_go");
-		await engine.saveMapZone();
-
-		expect(internals.pendingMapZoneEdit).not.toBeNull();
-		expect(internals.pendingMapZoneEdit?.present).toBe(true);
-	});
-
-	it("closes the wait when the published set shows the new zone", async () => {
-		const { engine, internals } = await startEngine();
-		loadMap(internals, {});
-
-		engine.startMapZone("no_go");
-		await engine.saveMapZone();
-		const expected = internals.pendingMapZoneEdit!.zone;
-
-		publishConfirmation(internals, { no_go: [expected] });
-		expect(internals.pendingMapZoneEdit).toBeNull();
-	});
-
-	it("keeps waiting on a publication that does not show it yet", async () => {
-		// The same state is also written *before* the edit, with the set the robot holds then. A
-		// check on "did the state change" rather than on its content would confirm that one.
-		const { engine, internals } = await startEngine();
-		loadMap(internals, {});
-
-		engine.startMapZone("no_go");
-		await engine.saveMapZone();
-
-		publishConfirmation(internals, { no_go: [] });
-		expect(internals.pendingMapZoneEdit).not.toBeNull();
-	});
-
-	it("waits for a removal to be gone, not for it to appear", async () => {
-		const { engine, internals } = await startEngine();
-		const zone = uprightZone(0, 0, 1000, 1000);
-		loadMap(internals, { FORBIDDEN_ZONES: [zone] });
-
-		await engine.deleteMapZone("no_go:0");
-		expect(internals.pendingMapZoneEdit?.present).toBe(false);
-
-		// Still there: not confirmed.
-		publishConfirmation(internals, { no_go: [zone] });
-		expect(internals.pendingMapZoneEdit).not.toBeNull();
-
-		publishConfirmation(internals, { no_go: [] });
-		expect(internals.pendingMapZoneEdit).toBeNull();
-	});
-
-	it("tells the user when nothing confirms it in time", async () => {
-		vi.useFakeTimers();
-		try {
-			const { engine, internals, errors } = await startEngine();
-			loadMap(internals, {});
-
-			engine.startMapZone("no_go");
-			await engine.saveMapZone();
-			expect(errors).toHaveLength(0);
-
-			vi.advanceTimersByTime(MAP_ZONE_CONFIRM_TIMEOUT_MS + 1);
-
-			expect(errors[errors.length - 1]).toMatch(/not confirmed/i);
-			expect(internals.pendingMapZoneEdit).toBeNull();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it("drops a pending wait when the user switches robots", async () => {
-		// Its timer would otherwise fire a message about a robot the user has left.
-		const { engine, internals } = await startEngine();
-		loadMap(internals, {});
-		engine.startMapZone("no_go");
-		await engine.saveMapZone();
-
-		engine.selectRobot("duid2");
-		expect(internals.pendingMapZoneEdit).toBeNull();
-	});
-});
-
-describe("leaving a selection", () => {
-	/**
-	 * The element the engine hangs its map gestures on.
-	 *
-	 * Not the host container the shell hands in: the engine builds its own div inside it and binds
-	 * there, so the map surface is that inner one - the parent of the SVG.
-	 */
-	function mapSurface(): HTMLElement {
-		return document.querySelector("svg")?.parentElement as HTMLElement;
-	}
-
-	/** A press and release at the same spot: a click, not a pan. */
-	function clickAt(target: Element | HTMLElement, x = 10, y = 10): void {
-		target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: x, clientY: y }));
-		target.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: x, clientY: y }));
-	}
-
-	it("drops the selection on a click past every zone", async () => {
-		// The user's report: the handles appear on a click and never go away again.
-		const { engine, internals } = await startEngine();
-		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
-		engine.selectMapZone("no_go:0");
-		expect(document.querySelectorAll("g.zone-handles")).toHaveLength(1);
-
-		clickAt(mapSurface());
-
-		expect(internals.selectedMapZoneKey).toBeNull();
-		expect(document.querySelectorAll("g.zone-handles")).toHaveLength(0);
-	});
-
-	it("keeps the selection when a handle is what was clicked", async () => {
-		// A handle sits outside its rectangle, so the click reaches the map behind it. Letting that
-		// count as "clicked beside the zone" would take the control away as it is being used.
-		const { engine, internals } = await startEngine();
-		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
-		engine.selectMapZone("no_go:0");
-
-		const handle = document.querySelector("g.zone-handle-scale circle.zone-handle-hit") as Element;
-		clickAt(handle);
-
-		expect(internals.selectedMapZoneKey).toBe("no_go:0");
-	});
-
-	it("lets the zone go when its own body is clicked again", async () => {
-		// The second way out, and the one closest to hand: clicking the selected zone toggles it
-		// off. Distinct from the handle case above, which must not.
-		const { engine, internals } = await startEngine();
-		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
-		engine.selectMapZone("no_go:0");
-
-		clickAt(document.querySelector("rect.map-zone-rect") as Element);
-		expect(internals.selectedMapZoneKey).toBeNull();
-	});
-
-	it("does not treat panning the map as a click beside a zone", async () => {
-		const { engine, internals } = await startEngine();
-		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
-		engine.selectMapZone("no_go:0");
-
-		const surface = mapSurface();
-		surface.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 10 }));
-		// Well past the five pixels that tell a click from a drag.
-		surface.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 120, clientY: 90 }));
-
-		expect(internals.selectedMapZoneKey).toBe("no_go:0");
-	});
-
-	it("drops the selection on Escape", async () => {
-		const { engine, internals } = await startEngine();
-		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
-		engine.selectMapZone("no_go:0");
-
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-		expect(internals.selectedMapZoneKey).toBeNull();
-	});
-
-	it("keeps an unsaved zone on the map when the selection is dropped", async () => {
-		// The work stays, dashed, and the panel keeps offering Save and Cancel. Throwing away an
-		// unsaved zone because somebody clicked past it would destroy work nobody confirmed away.
-		const { engine, internals, sendTo, models } = await startEngine();
-		loadMap(internals, {});
-		engine.startMapZone("no_go");
-
-		clickAt(mapSurface());
-
-		expect(internals.selectedMapZoneKey).toBeNull();
-		expect(internals.mapZoneDraft).not.toBeNull();
-		expect(document.querySelectorAll("g.map-zone-draft")).toHaveLength(1);
-		expect(models[models.length - 1].drafting).toBe(true);
-		expect(sendTo).not.toHaveBeenCalled();
-	});
-
-	it("lets the unsaved zone be picked up again", async () => {
-		const { engine, internals } = await startEngine();
-		loadMap(internals, {});
-		engine.startMapZone("no_go");
-		clickAt(mapSurface());
-
-		engine.selectMapZone("draft");
-		expect(internals.selectedMapZoneKey).toBe("draft");
-		expect(document.querySelectorAll("g.zone-handles")).toHaveLength(1);
-	});
-
-	it("still refuses to jump to another zone while one is unsaved", async () => {
-		const { engine, internals } = await startEngine();
-		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
-		engine.startMapZone("no_mop");
-
-		engine.selectMapZone("no_go:0");
-		expect(internals.selectedMapZoneKey).toBe("draft");
-	});
-
-	it("stops listening for Escape once the engine is gone", async () => {
-		// The tab outlives one engine; a listener left on the window would answer for a map that
-		// is no longer there.
-		const { engine, internals } = await startEngine();
-		loadMap(internals, { FORBIDDEN_ZONES: [uprightZone(0, 0, 1000, 1000)] });
-		engine.selectMapZone("no_go:0");
-
-		engine.destroy();
-		live = null;
-		expect(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))).not.toThrow();
-	});
-});
+/*
+ * The tab no longer waits thirty seconds for a zone edit to confirm itself.
+ *
+ * That wait existed because nothing said anything when an edit failed: the socket answers ok as
+ * soon as the value is written, and every later refusal went to the adapter log. The adapter now
+ * writes the outcome onto the command state itself - a quality and a reason on failure, both
+ * cleared on success - and the tab surfaces that through `feedback/commandFeedbackSource.ts`,
+ * which watches `commands.*` and therefore every zone command here.
+ *
+ * So the failure case is reported immediately and says **why**, instead of after thirty seconds
+ * saying only that nothing came. The success case needs no message at all: the map redraws with
+ * the change. Tests for the removed machinery went with it; what replaced it is tested in
+ * `src/feedback/`.
+ */
 
 describe("switching robots", () => {
 	it("takes the previous robot's zones and any draft with it", async () => {

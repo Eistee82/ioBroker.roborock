@@ -19,6 +19,10 @@ interface RoomsPanelProps {
 	 * dialog in between. This panel never sends it.
 	 */
 	onMergeRequest: () => void;
+	/** Sets the cleaning order to the rooms picked on the map, in the order they were picked. */
+	onSetCleanOrder: () => void;
+	/** Clears it, so the robot picks its own order again. */
+	onClearCleanOrder: () => void;
 }
 
 /**
@@ -46,7 +50,7 @@ interface RoomsPanelProps {
  * either, and a row showing nothing but a number would invite renaming a room the user cannot
  * identify.
  */
-export function RoomsPanel({ rooms, onRename, onMergeRequest }: RoomsPanelProps): React.JSX.Element | null {
+export function RoomsPanel({ rooms, onRename, onMergeRequest, onSetCleanOrder, onClearCleanOrder }: RoomsPanelProps): React.JSX.Element | null {
 	const [open, setOpen] = useState(false);
 	/** Segment id whose name is being edited, or null. Only one at a time. */
 	const [editing, setEditing] = useState<number | null>(null);
@@ -127,6 +131,56 @@ export function RoomsPanel({ rooms, onRename, onMergeRequest }: RoomsPanelProps)
 							</Button>
 						</span>
 					</Tooltip>
+
+					{/*
+					 * The cleaning order, from the same selection as combining - one selection, two
+					 * uses, rather than a second way of picking rooms.
+					 *
+					 * The current order is shown first because `set_clean_sequence` replaces the
+					 * whole thing: an interface that set one without displaying the existing one
+					 * would overwrite an order the user never saw. What it cannot say is whether the
+					 * robot actually cleans in that order - accepting is not applying, and only a
+					 * real segment run shows the difference.
+					 */}
+					<Box>
+						<Typography
+							variant="caption"
+							color="text.secondary"
+							sx={{ display: "block" }}
+						>
+							{I18n.t("ui_clean_order")}
+						</Typography>
+						<Typography
+							variant="body2"
+							sx={{ mb: 1, overflowWrap: "anywhere" }}
+						>
+							{rooms.cleanOrder.length ? rooms.cleanOrder.join(" → ") : I18n.t("ui_clean_order_none")}
+						</Typography>
+						<Stack
+							direction="row"
+							spacing={1}
+						>
+							<Tooltip title={selectedCount ? I18n.t("ui_clean_order_set") : I18n.t("ui_clean_order_needs_rooms")}>
+								<span>
+									<Button
+										size="small"
+										variant="outlined"
+										disabled={selectedCount === 0}
+										onClick={onSetCleanOrder}
+									>
+										{I18n.t("ui_clean_order_set")}
+									</Button>
+								</span>
+							</Tooltip>
+							<Button
+								size="small"
+								disabled={rooms.cleanOrder.length === 0}
+								onClick={onClearCleanOrder}
+							>
+								{I18n.t("ui_clean_order_clear")}
+							</Button>
+						</Stack>
+					</Box>
 
 					{rooms.rooms.map(room =>
 						editing === room.segmentId ? (

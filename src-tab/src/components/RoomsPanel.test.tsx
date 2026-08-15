@@ -20,6 +20,7 @@ function model(overrides: Partial<RoomListModel> = {}): RoomListModel {
 			{ segmentId: 17, name: "Living room", selected: true },
 		],
 		maxNameLength: 30,
+		cleanOrder: [],
 		...overrides,
 	};
 }
@@ -27,16 +28,20 @@ function model(overrides: Partial<RoomListModel> = {}): RoomListModel {
 function renderPanel(rooms: RoomListModel) {
 	const onRename = vi.fn();
 	const onMergeRequest = vi.fn();
+	const onSetCleanOrder = vi.fn();
+	const onClearCleanOrder = vi.fn();
 	const view = render(
 		<RoomsPanel
 			rooms={rooms}
 			onRename={onRename}
 			onMergeRequest={onMergeRequest}
+			onSetCleanOrder={onSetCleanOrder}
+			onClearCleanOrder={onClearCleanOrder}
 		/>,
 	);
 	const header = screen.queryByText(I18n.t("ui_rooms"));
 	if (header) fireEvent.click(header);
-	return { onRename, onMergeRequest, view };
+	return { onRename, onMergeRequest, onSetCleanOrder, onClearCleanOrder, view };
 }
 
 /** Opens the field of one room and returns it. */
@@ -65,6 +70,8 @@ describe("RoomsPanel", () => {
 				rooms={model()}
 				onRename={vi.fn()}
 				onMergeRequest={vi.fn()}
+				onSetCleanOrder={vi.fn()}
+				onClearCleanOrder={vi.fn()}
 			/>,
 		);
 		expect(screen.getByText("1")).toBeTruthy();
