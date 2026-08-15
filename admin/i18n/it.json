@@ -407,5 +407,14 @@
   "ui_clean_order_none": "Nessuno impostato: decide il robot.",
   "ui_clean_order_set": "Usa la selezione",
   "ui_clean_order_clear": "Cancella",
-  "ui_clean_order_needs_rooms": "Seleziona le stanze sulla mappa nell'ordine in cui devono essere pulite."
+  "ui_clean_order_needs_rooms": "Seleziona le stanze sulla mappa nell'ordine in cui devono essere pulite.",
+  "ui_split_adjust": "Regola la linea di demarcazione finché non appare una linea continua",
+  "ui_split_outside": "Traccia la linea nella stanza selezionata.",
+  "ui_split_pick_one": "Seleziona una stanza sulla mappa per dividerla.",
+  "ui_split_ready": "La linea è pronta. La divisione rinumera tutte le stanze.",
+  "ui_split_halves": "Risulterebbe in %s m² e %s m².",
+  "ui_split_room_too_small": "Questa stanza è di soli %s m². L'app non divide nulla sotto %s m².",
+  "ui_split_too_many_rooms": "La mappa ha già %s stanze e il limite è %s. Unisci prima due stanze.",
+  "ui_segment_edit_sequence_is": "L'ordine memorizzato: %s",
+  "ui_segment_edit_sequence_none": "Nessun ordine di pulizia impostato, qui non si perde nulla."
 }

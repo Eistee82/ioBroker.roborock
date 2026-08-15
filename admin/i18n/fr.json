@@ -407,5 +407,14 @@
   "ui_clean_order_none": "Aucun défini — le robot décide.",
   "ui_clean_order_set": "Utiliser la sélection",
   "ui_clean_order_clear": "Effacer",
-  "ui_clean_order_needs_rooms": "Sélectionnez les pièces sur la carte dans l’ordre où elles doivent être nettoyées."
+  "ui_clean_order_needs_rooms": "Sélectionnez les pièces sur la carte dans l’ordre où elles doivent être nettoyées.",
+  "ui_split_adjust": "Ajustez la ligne de séparation jusqu'à ce qu'une ligne continue apparaisse",
+  "ui_split_outside": "Placez une ligne dans la pièce à diviser.",
+  "ui_split_pick_one": "Sélectionnez une pièce sur la carte pour la diviser.",
+  "ui_split_ready": "La ligne est prête. La division renumérote toutes les pièces.",
+  "ui_split_halves": "Donnerait %s m² et %s m².",
+  "ui_split_room_too_small": "Cette pièce ne fait que %s m². L'application ne divise rien en dessous de %s m².",
+  "ui_split_too_many_rooms": "La carte compte déjà %s pièces, la limite est %s. Combinez d'abord deux pièces.",
+  "ui_segment_edit_sequence_is": "L'ordre enregistré : %s",
+  "ui_segment_edit_sequence_none": "Aucun ordre de nettoyage n'est défini, rien n'est perdu ici."
 }

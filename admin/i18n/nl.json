@@ -407,5 +407,14 @@
   "ui_clean_order_none": "Niet ingesteld — de robot beslist.",
   "ui_clean_order_set": "Selectie gebruiken",
   "ui_clean_order_clear": "Wissen",
-  "ui_clean_order_needs_rooms": "Selecteer de kamers op de kaart in de volgorde waarin ze moeten worden schoongemaakt."
+  "ui_clean_order_needs_rooms": "Selecteer de kamers op de kaart in de volgorde waarin ze moeten worden schoongemaakt.",
+  "ui_split_adjust": "Pas de scheidingslijn aan tot er een ononderbroken lijn verschijnt",
+  "ui_split_outside": "Teken een lijn in de geselecteerde kamer.",
+  "ui_split_pick_one": "Kies één kamer op de kaart om die op te delen.",
+  "ui_split_ready": "De lijn is klaar. Opdelen hernummert alle kamers.",
+  "ui_split_halves": "Levert %s m² en %s m² op.",
+  "ui_split_room_too_small": "Deze kamer is maar %s m². De app deelt niets onder %s m² op.",
+  "ui_split_too_many_rooms": "De kaart heeft al %s kamers, het maximum is %s. Voeg eerst twee kamers samen.",
+  "ui_segment_edit_sequence_is": "De opgeslagen volgorde: %s",
+  "ui_segment_edit_sequence_none": "Er is geen schoonmaakvolgorde ingesteld, dus hier gaat niets verloren."
 }

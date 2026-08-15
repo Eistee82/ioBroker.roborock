@@ -4,6 +4,7 @@ import ViewInArIcon from "@mui/icons-material/ViewInAr";
 import MapIcon from "@mui/icons-material/Map";
 import { I18n, type AdminConnection } from "@iobroker/adapter-react-v5";
 import { MapEngine } from "../engine/MapEngine";
+import type { SplitState } from "../engine/MapEngine";
 import { EMPTY_DOCK_ACTIVITY } from "../engine/dockActivity";
 import type {
 	CleaningModeTabsModel,
@@ -148,6 +149,23 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	 * that offers it - the dialog sits in between and this is what holds it open.
 	 */
 	const [segmentEdit, setSegmentEdit] = useState<SegmentEditKind | null>(null);
+	/**
+	 * The division in progress, mirrored out of the engine.
+	 *
+	 * Held here rather than read on every render because the engine changes it while the pointer is
+	 * moving: the line is re-snapped on every move, and the panel has to follow so that the hint and
+	 * the two areas track what the map already shows.
+	 */
+	const [split, setSplit] = useState<SplitState | null>(null);
+	/**
+	 * The room a division would apply to: the one picked on the map, and only when it is the one.
+	 *
+	 * The app refuses a division of anything but a single room (`map_edit_split_restriction`), and
+	 * the same selection already serves combining and the cleaning order.
+	 */
+	const splitSelectedRoomId = roomList.rooms.filter(room => room.selected).length === 1
+		? (roomList.rooms.find(room => room.selected)?.segmentId ?? null)
+		: null;
 	const [cleanCount, setCleanCount] = useState(1);
 	const [consumables, setConsumables] = useState<ConsumablePartModel[]>([]);
 	const [dock, setDock] = useState<DockModel>({ controls: [], status: [], faulty: false, activity: EMPTY_DOCK_ACTIVITY });
@@ -225,6 +243,9 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			},
 			onRooms: setRooms,
 			onRoomList: setRoomList,
+			// The engine re-snaps the dividing line on every pointer move, so the panel is told each
+			// time rather than on a poll: the hint and the two areas have to change with the line.
+			onSplitChanged: () => setSplit(engineRef.current?.getSplitState() ?? null),
 			onZones: setZones,
 			onMapZones: setMapZones,
 			onConsumables: setConsumables,
@@ -604,6 +625,19 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				/>
 				<RoomsPanel
 					rooms={roomList}
+					canSplit={engineRef.current?.canSplitRooms() ?? false}
+					splitRefusal={splitSelectedRoomId === null ? null : (engineRef.current?.splitRefusalFor(splitSelectedRoomId) ?? null)}
+					onSplitStart={() => {
+						if (splitSelectedRoomId === null) return;
+						engineRef.current?.beginSplit(splitSelectedRoomId);
+						setSplit(engineRef.current?.getSplitState() ?? null);
+					}}
+					split={split?.active ? split : null}
+					onSplitRequest={() => setSegmentEdit("split")}
+					onSplitCancel={() => {
+						engineRef.current?.cancelSplit();
+						setSplit(null);
+					}}
 					onMergeRequest={() => setSegmentEdit("merge")}
 					onSetCleanOrder={() => void engineRef.current?.setCleanOrderFromSelection()}
 					onClearCleanOrder={() => void engineRef.current?.clearCleanOrder()}
@@ -712,9 +746,17 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			<SegmentEditDialog
 				pending={segmentEdit}
 				roomNames={roomList.rooms.filter(room => room.selected).map(room => room.name)}
+				cleanOrderNames={roomList.cleanOrder}
 				onConfirm={() => {
 					setSegmentEdit(null);
 					if (segmentEdit === "merge") void engineRef.current?.mergeSelectedRooms();
+					if (segmentEdit === "split") {
+						void engineRef.current?.splitCurrentRoom();
+						// The engine stays in dividing mode on purpose (see `splitCurrentRoom`), but
+						// this division is over: the line and the selection both pointed at a segment
+						// id the robot is renumbering.
+						setSplit(null);
+					}
 				}}
 				onCancel={() => setSegmentEdit(null)}
 			/>

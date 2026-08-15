@@ -290,6 +290,13 @@ export interface MapEngineHost {
 	onRooms?: (rooms: RoomSelectionModel) => void;
 	/** The rooms of the current map and their names; republished with every map update. */
 	onRoomList?: (rooms: RoomListModel) => void;
+	/**
+	 * The dividing line changed.
+	 *
+	 * Fires on every pointer move while a line is dragged, because the ends are snapped again each
+	 * time and the panel's hint and areas have to follow what the map already shows.
+	 */
+	onSplitChanged?: () => void;
 	onZones?: (zones: ZoneModel) => void;
 	/** The robot's own walls and zones, republished after every map update and every edit. */
 	onMapZones?: (zones: MapZonesModel) => void;

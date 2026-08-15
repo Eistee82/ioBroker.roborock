@@ -538,9 +538,6 @@ export class MapEngine {
 	private map: FrontendMapData | undefined;
 	private mapImage: MapData["IMAGE"] | undefined;
 
-	/** Called whenever the dividing line changed, so the shell can repaint its panel. */
-	public onSplitChanged: (() => void) | null = null;
-
 	/** Room being divided, or null when no division is in progress. */
 	private splitRoomId: number | null = null;
 
@@ -3266,7 +3263,7 @@ export class MapEngine {
 
 	/** Lets the shell repaint its panel while the line is being dragged. */
 	private notifySplitChanged(): void {
-		this.onSplitChanged?.();
+		this.host.onSplitChanged?.();
 	}
 
 	public async renameRoom(segmentId: number, name: string): Promise<void> {
