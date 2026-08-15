@@ -1,6 +1,19 @@
 import { MapDecryptor } from "../../../map/v1/MapDecryptor";
 import { MapParser } from "../../../map/v1/MapParser";
 import { hasFeatureStrBit } from "../../../featureStr";
+import {
+	MAP_RECORD_MAP_SLOT,
+	MAP_RECORD_TYPES,
+	MAX_COUNT_WALL_OR_FBZ,
+	parseZoneInput,
+	UNREPRODUCIBLE_BLOCKS,
+	ZONE_ADD_COMMANDS,
+	ZONE_BLOCKS,
+	ZONE_LABELS,
+	ZONE_LENGTHS,
+	ZONE_REMOVE_COMMAND,
+} from "../../../../common/mapZoneKinds";
+import type { MapZoneKind } from "../../../../common/mapZoneKinds";
 import type { CommandSpec, FeatureDependencies } from "../../baseDeviceFeatures";
 
 /**
@@ -415,31 +428,22 @@ export function parseCleanSequence(raw: unknown): number[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Record type codes of the `save_map` payload (report section 1.6).
+ * The record types, block names, lengths and limits come from `src/common/mapZoneKinds.ts`.
  *
- * The payload is `walls.concat(fbz)`, so walls come first; the order is kept because it is the
- * order the app sends and nothing tells us the firmware ignores it.
+ * They live there rather than here because the admin tab needs the same four facts and cannot
+ * import this module - it would pull the map decryptor and the parser into a browser bundle. They
+ * are re-exported unchanged so this file stays the one address for everything about the zone
+ * commands.
  */
-export const MAP_RECORD_TYPES = { wall: 1, no_go: 0, no_mop: 2 } as const;
-
-/** The kinds of overlay this adapter can read back off the map and therefore rewrite safely. */
-export type MapZoneKind = keyof typeof MAP_RECORD_TYPES;
-
-/** `[100, mapFlag]` names the map slot; the app appends it only in multi-map operation. */
-export const MAP_RECORD_MAP_SLOT = 100;
-
-/** `MAX_COUNT_WALL_OR_FBZ` (module 1507, report section 1.6): ten per kind, not ten in total. */
-export const MAX_COUNT_WALL_OR_FBZ = 10;
-
-/** How many numbers a record of each kind carries after the type code. */
-const ZONE_LENGTHS: Readonly<Record<MapZoneKind, number>> = { wall: 4, no_go: 8, no_mop: 8 };
-
-/** What the user sees these called; matches the app's own labels (report section 1.6). */
-export const ZONE_LABELS: Readonly<Record<MapZoneKind, string>> = {
-	wall: "invisible wall",
-	no_go: "no-go zone",
-	no_mop: "no-mop zone",
+export {
+	MAP_RECORD_MAP_SLOT,
+	MAP_RECORD_TYPES,
+	MAX_COUNT_WALL_OR_FBZ,
+	ZONE_BLOCKS,
+	ZONE_LABELS,
+	ZONE_LENGTHS,
 };
+export type { MapZoneKind };
 
 /** The complete set of walls and zones on one map, in the robot's own millimetres. */
 export interface MapOverlays {
@@ -450,23 +454,6 @@ export interface MapOverlays {
 	/** `[x0,y0, x1,y1, x2,y2, x3,y3]` per zone. */
 	no_mop: number[][];
 }
-
-/**
- * Map blocks that `save_map` would carry but this adapter cannot rebuild.
- *
- * Record type 3 (`FBZ_TYPE_CLEANING`, the Garnet generation's cleaning-free zone) is in the app's
- * payload, but the report marks its device semantics as inferred rather than proven and never says
- * which map block it comes back in. Rather than guess, a map that has one of these blocks is left
- * alone entirely - writing without them would delete them.
- */
-const UNREPRODUCIBLE_BLOCKS = ["CL_FORBIDDEN_ZONES", "CLF_FORBIDDEN_ZONES"] as const;
-
-/** Which parsed map block each overlay kind is read from. */
-const ZONE_BLOCKS: Readonly<Record<MapZoneKind, string>> = {
-	wall: "VIRTUAL_WALLS",
-	no_go: "FORBIDDEN_ZONES",
-	no_mop: "NO_MOP_ZONE",
-};
 
 /**
  * Reads the complete set of walls and zones out of a parsed V1 map.
@@ -553,67 +540,10 @@ export function buildSaveMapPayload(overlays: MapOverlays, mapSlot: number | nul
 /**
  * Reads a zone or wall a user wrote into one of the `add_...` command states.
  *
- * Coordinates are the robot's own millimetres, the same unit the map states report. A zone may be
- * given either as its four corners (`[x0,y0, x1,y1, x2,y2, x3,y3]`, which is what a rotated zone
- * needs) or as two opposite corners of an upright rectangle; a wall is always its two end points.
- * @param kind Which overlay is being added.
- * @param raw Value of the command state, already JSON-parsed by the adapter where possible.
- * @returns The coordinates without the leading record type.
- * @throws If the value is not a well-formed zone.
+ * Defined in `src/common/mapZoneKinds.ts` so the admin tab can run its own payload through the same
+ * check before sending it, and re-exported here because this is where the zone commands live.
  */
-export function parseZoneInput(kind: MapZoneKind, raw: unknown): number[] {
-	if (!Array.isArray(raw)) {
-		throw new Error(kind === "wall"
-			? "add_virtual_wall expects [xStart, yStart, xEnd, yEnd] in millimetres."
-			: `A ${ZONE_LABELS[kind]} is [x0,y0, x1,y1, x2,y2, x3,y3] (four corners) or [x1,y1, x2,y2] (two opposite corners of an upright rectangle), in millimetres.`);
-	}
-
-	const values = raw.map((entry, index) => {
-		const value = typeof entry === "number" ? entry : Number(entry);
-		if (!Number.isFinite(value)) {
-			throw new Error(`Coordinate ${index} of the ${ZONE_LABELS[kind]} is not a number: ${JSON.stringify(entry)}`);
-		}
-		return Math.round(value);
-	});
-
-	if (kind === "wall") {
-		if (values.length !== 4) {
-			throw new Error(`An invisible wall is [xStart, yStart, xEnd, yEnd] - four numbers, got ${values.length}.`);
-		}
-		if (values[0] === values[2] && values[1] === values[3]) {
-			throw new Error("An invisible wall needs two different end points; start and end are the same point.");
-		}
-		return values;
-	}
-
-	if (values.length === 8) return values;
-	if (values.length === 4) return rectangleToCorners(values);
-
-	throw new Error(`A ${ZONE_LABELS[kind]} is either eight numbers (four corners) or four numbers (two opposite corners), got ${values.length}.`);
-}
-
-/**
- * Expands two opposite corners into the four-corner order the app uses.
- *
- * Report section 1.6: `x0,y0 = (x, y1+h); x1,y1 = (x+w, y1+h); x2,y2 = (x+w, y1); x3,y3 = (x, y1)`,
- * so the corners run from the top left clockwise with y counting upwards, the way SLAM coordinates
- * do.
- * @param rectangle `[x1, y1, x2, y2]`, any two opposite corners.
- * @returns The eight coordinates of the four corners.
- * @throws If the rectangle has no area.
- */
-function rectangleToCorners(rectangle: number[]): number[] {
-	const left = Math.min(rectangle[0], rectangle[2]);
-	const right = Math.max(rectangle[0], rectangle[2]);
-	const bottom = Math.min(rectangle[1], rectangle[3]);
-	const top = Math.max(rectangle[1], rectangle[3]);
-
-	if (left === right || bottom === top) {
-		throw new Error(`A zone needs a width and a height; [${rectangle.join(", ")}] describes a line.`);
-	}
-
-	return [left, top, right, top, right, bottom, left, bottom];
-}
+export { parseZoneInput };
 
 /** What a user asked to be removed from the map. */
 export interface ZoneRemoval {
@@ -858,14 +788,10 @@ export class MapEditService {
 	 * zones, so a state that passed a payload straight through would let a caller delete everything
 	 * else by sending one zone (report section 2.1).
 	 */
-	public static readonly ZONE_ADD_COMMANDS: Readonly<Record<string, MapZoneKind>> = {
-		add_virtual_wall: "wall",
-		add_no_go_zone: "no_go",
-		add_no_mop_zone: "no_mop",
-	};
+	public static readonly ZONE_ADD_COMMANDS: Readonly<Record<string, MapZoneKind>> = ZONE_ADD_COMMANDS;
 
 	/** Command that removes one wall or zone, or clears them all. */
-	public static readonly ZONE_REMOVE_COMMAND = "remove_map_zone";
+	public static readonly ZONE_REMOVE_COMMAND = ZONE_REMOVE_COMMAND;
 
 	/** The two commands that change segment ids and therefore invalidate room-bound settings. */
 	public static readonly SEGMENT_EDIT_COMMANDS: readonly string[] = ["split_segment", "merge_segment"];

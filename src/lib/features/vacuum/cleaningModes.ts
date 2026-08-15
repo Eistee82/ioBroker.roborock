@@ -18,6 +18,21 @@
  *    `fan_power` 108 to 102 the moment the mode no longer allows them, so sending them anyway
  *    produces a state the app itself would immediately undo.
  *
+ * ## Do not read the mode back with `get_clean_motor_mode`
+ *
+ * There is a getter of that name, and it looks like the obvious way to ask the robot which mode it
+ * is in. It is not. Measured at the test device
+ * (`_appanalysis/19-geraetefaehigkeiten.md` §6.2):
+ *
+ * ```
+ * get_clean_motor_mode -> [{"water_box_mode":203,"fan_power":101,"mop_mode":-1225003008}]
+ * get_prop get_status  ->   … "water_box_mode":203,"fan_power":101,"mop_mode":300 …
+ * ```
+ *
+ * Two of the three agree with the status packet; `mop_mode` is rubbish. The adapter is not affected
+ * because it derives the mode from `get_status`, and that is exactly where it has to stay - the
+ * status is the only source that was measured to carry all three correctly.
+ *
  * ## What is proven and what is not
  *
  * Every value, predicate and model list here has a line number in the bundle. Where this module

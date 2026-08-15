@@ -223,6 +223,50 @@ export abstract class BaseDeviceFeatures {
 	 */
 	public abstract detectAndApplyRuntimeFeatures(_statusData: Readonly<Record<string, any>>): Promise<boolean>;
 
+	/**
+	 * Runs the runtime feature detection and writes the objects it added.
+	 *
+	 * ## Why this exists
+	 *
+	 * `initialize()` writes the command objects in step 3 and only asks the robot for its status in
+	 * step 4. The status is the only thing that can say what a robot really has - it is what
+	 * switches on mop drying, Do Not Disturb and the child lock - so every command those features
+	 * register arrived **after** the objects had been written, and nothing wrote them afterwards.
+	 * `detectAndApplyRuntimeFeatures` even reported that something had changed; its return value was
+	 * discarded at all three call sites. The result was a feature that existed in memory and nowhere
+	 * else: no object, no control in the admin tab, no way to use it.
+	 *
+	 * ## Why it re-runs `createCommandObjects()` and not `initialize()`
+	 *
+	 * `initialize()` would be the wrong call and would look like the right one.
+	 * `setupProtocolFeatures()` resets `this.commands` and `this.extraCommandGroups` to the base set,
+	 * and `applyFeature()` skips a feature that is already applied - so a second `initialize()` would
+	 * throw away exactly the commands this is meant to publish and never put them back.
+	 *
+	 * ## Why running it twice is cheap
+	 *
+	 * `processCommand` compares the stored `common` against the one it would write and only touches
+	 * the object when they differ, so everything that already exists costs one read and no write.
+	 * Where a definition really did change, the write goes through `applyCommonUpdate`, which
+	 * replaces the object outright when the update *removes* something - js-controller's own merge
+	 * can add and overwrite but never delete (`main.ts`, `applyCommonUpdate`;
+	 * `test/unit/object_common_shrink.test.ts`).
+	 *
+	 * @param statusData The robot's status, as the caller received it.
+	 * @returns Whether the detection reported a change.
+	 */
+	protected async applyRuntimeFeatureDetection(statusData: Readonly<Record<string, any>>): Promise<boolean> {
+		// The same guard all three call sites carried before, kept in one place so the pairing of
+		// "detect" and "publish what was detected" cannot come apart again.
+		if (this.runtimeDetectionComplete) return false;
+
+		const changed = await this.detectAndApplyRuntimeFeatures(statusData);
+		if (!changed) return false;
+
+		await this.createCommandObjects();
+		return true;
+	}
+
 	// --- Core Initialization Logic ---
 
 	/**

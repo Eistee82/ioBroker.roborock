@@ -14,9 +14,15 @@ import * as d3 from "d3";
  *    509886/509893). Rotating is offered only for no-go zones, carpets and furniture
  *    (A65:521757, 527094, 528128) - `app_zoned_clean` takes axis-parallel rectangles, so a
  *    rotate handle would promise something the RPC cannot carry.
+ *  - A **no-go or no-mop zone gets four**: the same three plus rotate (§B.4, A65:521728/521734/
+ *    521762/521774). Those are stored as four corners, so a turned rectangle is a shape the map
+ *    can actually hold. An **invisible wall gets three again** (A65:523201/523224/523247) - the
+ *    app offers it no rotate handle either, and its record is two end points that already say
+ *    which way it runs. Which kind gets which is passed in; nothing here decides it.
  *  - `rectOperateBoarderDis` = **16 px** (A65:342576-342596) is how far the dashed focus frame
  *    reaches past the rectangle, and by the same amount the handles move outwards from its
- *    corners: delete on the top left, scale on the bottom right (§B.3).
+ *    corners: delete on the top left, rotate on the top right, scale on the bottom right (§B.3,
+ *    the table at A65:511607/511442/511516).
  *  - Move does **not** sit on a corner. It hangs below left on a diagonal line, 30 px further
  *    out in each axis (§B.3, "Der Verschieben-Griff hängt an einer Diagonale", A65:511331-511366).
  *  - The **hit area is 1.5× the glyph**: 24 px picture, 36 px target (§B.3, A65:512721-512731).
@@ -51,10 +57,21 @@ import * as d3 from "d3";
  * {@link zoneHandleLayout} returns.
  */
 
-/** The three handles of a cleaning zone, in drawing order. */
+/** The three handles of a cleaning zone, in drawing order. Also the default set. */
 export const ZONE_HANDLE_KINDS = ["delete", "scale", "move"] as const;
 
-export type ZoneHandleKind = (typeof ZONE_HANDLE_KINDS)[number];
+/**
+ * The four handles a no-go or no-mop zone carries (§B.4).
+ *
+ * The order is the one the app lays them out in, going round the frame: delete top left, rotate
+ * top right, scale bottom right, move on its leash below left.
+ */
+export const ZONE_HANDLE_KINDS_ROTATABLE = ["delete", "rotate", "scale", "move"] as const;
+
+export type ZoneHandleKind = (typeof ZONE_HANDLE_KINDS_ROTATABLE)[number];
+
+/** Every handle that can be built, whether or not a given rectangle shows it. */
+const ALL_ZONE_HANDLE_KINDS: readonly ZoneHandleKind[] = ZONE_HANDLE_KINDS_ROTATABLE;
 
 /** The part of a zone rectangle the handles are laid out around. Sizes are world units. */
 export interface ZoneHandleRect {
@@ -142,6 +159,14 @@ export const ZONE_HANDLE_GLYPHS: Record<ZoneHandleKind, string> = {
 	scale: "M21 11V3h-8l3.29 3.29-10 10L3 13v8h8l-3.29-3.29 10-10z",
 	/** `OpenWith` - the four-direction arrow the user described as "ein kreuz mit pfeilen". */
 	move: "M10 9h4V6h3l-5-5-5 5h3zm-1 1H6V7l-5 5 5 5v-3h3zm14 2-5-5v3h-3v4h3v3zm-9 3h-4v3H7l5 5 5-5h-3z",
+	/**
+	 * `RotateRight` - the circular arrow, turning the way a drag to the right turns the zone.
+	 *
+	 * The app's own `rotateImg` cannot be copied: §B.5.2 followed all six theme images to resource
+	 * indices the downloaded plugin does not contain. Only the handle's position is proved.
+	 */
+	rotate:
+		"M15.55 5.55 11 1v3.07C7.06 4.56 4 7.92 4 12s3.05 7.44 7 7.93v-2.02c-2.84-.48-5-2.94-5-5.91s2.16-5.43 5-5.91V10zM19.93 11c-.17-1.39-.72-2.73-1.62-3.89l-1.42 1.42c.54.75.88 1.6 1.02 2.47zM13 17.9v2.02c1.39-.17 2.74-.71 3.9-1.61l-1.44-1.44c-.75.54-1.59.89-2.46 1.03m3.89-2.42 1.42 1.41c.9-1.16 1.45-2.5 1.62-3.89h-2.02c-.14.87-.48 1.72-1.02 2.48",
 };
 
 /**
@@ -160,6 +185,8 @@ export const ZONE_HANDLE_GLYPH_ROTATION: Record<ZoneHandleKind, number> = {
 	delete: 0,
 	scale: 90,
 	move: 0,
+	// `RotateRight` is drawn upright and means the same thing whichever corner it sits on.
+	rotate: 0,
 };
 
 /** Translation key of each handle's tooltip. */
@@ -167,6 +194,7 @@ export const ZONE_HANDLE_LABEL_KEYS: Record<ZoneHandleKind, string> = {
 	delete: "ui_zone_handle_delete",
 	scale: "ui_zone_handle_resize",
 	move: "ui_zone_handle_move",
+	rotate: "ui_zone_handle_rotate",
 };
 
 /** English fallback, used when the admin has no translation loaded for a key. */
@@ -174,6 +202,7 @@ export const ZONE_HANDLE_LABEL_FALLBACKS: Record<ZoneHandleKind, string> = {
 	delete: "Delete this zone",
 	scale: "Resize zone",
 	move: "Move zone",
+	rotate: "Turn zone",
 };
 
 /** Centre of one handle, in the coordinates of its zone group (0,0 is the zone's top left). */
@@ -197,17 +226,21 @@ export interface ZoneHandleLayout {
 }
 
 /**
- * Places frame, leash and the three handles around a zone.
+ * Places frame, leash and handles around a zone.
  * @param rect Size of the zone rectangle in world units.
  * @param zoom Current map zoom; one world unit is `zoom` screen pixels.
  * @param forceVisible Keeps the handles while a gesture is running on this very zone, so
  *   shrinking it with its own scale handle cannot pull that handle out from under the pointer.
+ * @param kinds Which handles this rectangle offers. Defaults to the three of a cleaning zone;
+ *   a no-go or no-mop zone passes {@link ZONE_HANDLE_KINDS_ROTATABLE}. Positions are fixed per
+ *   kind, so a set in any order lands on the same corners.
  * @returns Positions in the zone group's coordinates, plus the scale factor of a handle group.
  */
 export function zoneHandleLayout(
 	rect: { width: number; height: number },
 	zoom: number,
 	forceVisible = false,
+	kinds: readonly ZoneHandleKind[] = ZONE_HANDLE_KINDS,
 ): ZoneHandleLayout {
 	const usableZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
 	const unit = 1 / usableZoom;
@@ -219,14 +252,26 @@ export function zoneHandleLayout(
 
 	const smallestEdgeOnScreen = Math.min(width, height) * usableZoom;
 
+	// One place per kind, taken from §B.3 - not from the order the caller happens to pass.
+	const places: Record<ZoneHandleKind, { cx: number; cy: number }> = {
+		delete: { cx: -outset, cy: -outset },
+		rotate: { cx: width + outset, cy: -outset },
+		scale: { cx: width + outset, cy: height + outset },
+		move: { cx: -reach, cy: height + reach },
+	};
+
+	const wanted = new Set(kinds);
+
 	return {
 		visible: forceVisible || smallestEdgeOnScreen >= ZONE_HANDLE_MIN_ZONE_PX,
 		unit,
-		handles: [
-			{ kind: "delete", cx: -outset, cy: -outset },
-			{ kind: "scale", cx: width + outset, cy: height + outset },
-			{ kind: "move", cx: -reach, cy: height + reach },
-		],
+		// Emitted in the app's own order round the frame, so the list reads the way the picture
+		// looks whatever order the caller asked in.
+		handles: ZONE_HANDLE_KINDS_ROTATABLE.filter((kind) => wanted.has(kind)).map((kind) => ({
+			kind,
+			cx: places[kind].cx,
+			cy: places[kind].cy,
+		})),
 		frame: { x: -outset, y: -outset, width: width + 2 * outset, height: height + 2 * outset },
 		leash: { x1: -outset, y1: height + outset, x2: -reach, y2: height + reach },
 	};
@@ -238,6 +283,28 @@ export interface ZoneHandleLayoutOptions {
 	zoom: number;
 	/** Zone currently being dragged or resized; it keeps its handles however small it got. */
 	activeZoneId?: number | null;
+	/**
+	 * Which handles this selection offers, or a function when it differs per rectangle.
+	 *
+	 * Defaults to the three of a cleaning zone. A rectangle that does not ask for a handle keeps it
+	 * hidden rather than losing it: the handles are built once per zone and only laid out
+	 * afterwards, so a set that changes with the datum must not change the DOM.
+	 */
+	kinds?: readonly ZoneHandleKind[] | ((datum: any) => readonly ZoneHandleKind[]);
+}
+
+/**
+ * Resolves the handle set for one rectangle.
+ * @param option The `kinds` option as given.
+ * @param datum The rectangle being laid out.
+ * @returns The handles this rectangle shows.
+ */
+function resolveKinds(
+	option: ZoneHandleLayoutOptions["kinds"],
+	datum: unknown,
+): readonly ZoneHandleKind[] {
+	if (typeof option === "function") return option(datum);
+	return option ?? ZONE_HANDLE_KINDS;
 }
 
 /**
@@ -252,8 +319,21 @@ export interface ZoneHandleRenderOptions<Datum extends ZoneHandleRect> extends Z
 	t: (key: string, fallback: string) => string;
 	/** Removes exactly the zone whose delete handle was pressed. */
 	onDelete: (id: number) => void;
-	/** The engine's resize gesture, attached to the scale handle. */
-	scaleDrag: d3.DragBehavior<SVGGElement, Datum, unknown>;
+	/**
+	 * The engine's resize gesture, attached to the scale handle.
+	 *
+	 * Optional, like {@link ZoneHandleRenderOptions.rotateDrag}: a layer that only offers deleting
+	 * has no resize gesture to give, and an empty `d3.drag()` would not be the same thing - it
+	 * would still swallow the press and stop the map from panning under it.
+	 */
+	scaleDrag?: d3.DragBehavior<SVGGElement, Datum, unknown>;
+	/**
+	 * The engine's turn gesture, attached to the rotate handle.
+	 *
+	 * Optional: a selection whose rectangles never show a rotate handle has no gesture to give it,
+	 * and a handle that is never shown must not silently acquire one either.
+	 */
+	rotateDrag?: d3.DragBehavior<SVGGElement, Datum, unknown>;
 }
 
 /**
@@ -276,7 +356,10 @@ export function renderZoneHandles<Datum extends ZoneHandleRect>(
 		group.append("rect").attr("class", "zone-focus-frame");
 		group.append("line").attr("class", "zone-leash");
 
-		for (const kind of ZONE_HANDLE_KINDS) {
+		// Every handle is built, whether this rectangle shows it or not. Building the DOM from the
+		// datum would mean rebuilding it whenever the datum changes, and the listeners with it;
+		// `layoutZoneHandles` hides the ones this rectangle does not offer instead.
+		for (const kind of ALL_ZONE_HANDLE_KINDS) {
 			const handle = group.append("g").attr("class", `zone-handle zone-handle-${kind}`).attr("role", "button");
 			const label = options.t(ZONE_HANDLE_LABEL_KEYS[kind], ZONE_HANDLE_LABEL_FALLBACKS[kind]);
 			// A `title` child is the tooltip an SVG element gets natively; `aria-label` is what a
@@ -310,9 +393,16 @@ export function renderZoneHandles<Datum extends ZoneHandleRect>(
 				options.onDelete(rect.id);
 			});
 
-		// Resize gets its own gesture; it stops the press itself, exactly as the old corner
-		// handle did.
-		group.select<SVGGElement>("g.zone-handle-scale").call(options.scaleDrag);
+		// Resize and turn get their own gestures; each stops the press itself, exactly as the old
+		// corner handle did. Without a gesture the handle is left inert rather than falling through
+		// to the zone's own drag - a press that promised a resize and moved the zone instead is
+		// worse than one that does nothing.
+		for (const kind of ["scale", "rotate"] as const) {
+			const gesture = kind === "scale" ? options.scaleDrag : options.rotateDrag;
+			const handle = group.select<SVGGElement>(`g.zone-handle-${kind}`);
+			if (gesture) handle.call(gesture);
+			else handle.on("pointerdown", (event: Event) => event.stopPropagation());
+		}
 
 		// Move needs no gesture of its own: the press travels on to `g.zone`, whose drag handler
 		// moves the zone. That is what the app does too - it hands the move handle the zone's
@@ -340,7 +430,12 @@ export function layoutZoneHandles<Datum extends ZoneHandleRect>(
 		const group = zone.select<SVGGElement>("g.zone-handles");
 		if (!rect || group.empty()) return;
 
-		const layout = zoneHandleLayout(rect, options.zoom, options.activeZoneId === rect.id);
+		const layout = zoneHandleLayout(
+			rect,
+			options.zoom,
+			options.activeZoneId === rect.id,
+			resolveKinds(options.kinds, rect),
+		);
 
 		// The data join rebinds `g.zone` only; the handles carry their own reference so the
 		// delete callback can never be handed a rectangle that has since moved on.
@@ -366,11 +461,17 @@ export function layoutZoneHandles<Datum extends ZoneHandleRect>(
 			.attr("y2", layout.leash.y2)
 			.style("stroke-width", ZONE_FRAME_STROKE_PX * layout.unit);
 
-		for (const placement of layout.handles) {
-			group
-				.select<SVGGElement>(`g.zone-handle-${placement.kind}`)
-				.datum(rect)
-				.attr("transform", `translate(${placement.cx}, ${placement.cy}) scale(${layout.unit})`);
+		const placements = new Map(layout.handles.map((placement) => [placement.kind, placement]));
+		for (const kind of ALL_ZONE_HANDLE_KINDS) {
+			const handle = group.select<SVGGElement>(`g.zone-handle-${kind}`).datum(rect);
+			const placement = placements.get(kind);
+			// A handle this rectangle does not offer is hidden, not left where it was: it was built
+			// with all the others, and an unplaced one would keep the transform of whatever
+			// rectangle it last belonged to.
+			handle.style("display", placement ? "" : "none");
+			if (placement) {
+				handle.attr("transform", `translate(${placement.cx}, ${placement.cy}) scale(${layout.unit})`);
+			}
 		}
 	});
 }

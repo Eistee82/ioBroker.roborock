@@ -175,6 +175,35 @@ export interface ZoneModel {
 	atLimit: boolean;
 }
 
+/**
+ * The walls and zones stored on the robot's own map.
+ *
+ * Not to be confused with {@link ZoneModel}, which is about the rectangles a user draws for one
+ * cleaning run. These survive on the robot, and every change rewrites the complete set - see
+ * `engine/mapZones.ts`.
+ */
+export interface MapZonesModel {
+	/** How many of each kind the map holds; each has its own limit. */
+	counts: { no_go: number; no_mop: number; wall: number };
+	/** Ten per kind, the limit the app and the adapter both enforce. */
+	limit: number;
+	/** Key of the selected wall or zone, or null. */
+	selectedKey: string | null;
+	/** Kind of the selected one, or of the one being placed. */
+	selectedKind: "no_go" | "no_mop" | "wall" | null;
+	/** True while a new wall or zone is being placed and nothing has been sent yet. */
+	drafting: boolean;
+	/** False on maps that carry no such overlays at all; the controls then stay away. */
+	supported: boolean;
+	/**
+	 * Why this map's zones cannot be changed, already translated, or null when they can.
+	 *
+	 * The adapter refuses a map it cannot rewrite completely rather than write a short list, and
+	 * saying so here is what keeps the user from pressing a button that only fails in the log.
+	 */
+	refusalText: string | null;
+}
+
 /** The obstacle photo the user opened from the map. */
 export interface ObstaclePhotoModel {
 	/** Complete data URL. */
@@ -205,6 +234,8 @@ export interface MapEngineHost {
 	onFloors?: (floors: SelectOption[], selected: string | null) => void;
 	onRooms?: (rooms: RoomSelectionModel) => void;
 	onZones?: (zones: ZoneModel) => void;
+	/** The robot's own walls and zones, republished after every map update and every edit. */
+	onMapZones?: (zones: MapZonesModel) => void;
 	onConsumables?: (parts: ConsumablePartModel[]) => void;
 	onDock?: (dock: DockModel) => void;
 	/** True as soon as any map content arrived; the shell then hides the "waiting for map" hint. */

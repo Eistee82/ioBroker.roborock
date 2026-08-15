@@ -389,33 +389,61 @@ export function getLiveMapIntervalSeconds(context: LiveMapContext): number {
  * cannot overlap itself by construction, runs as fast as the link allows, and slows itself down on
  * a slow link without being told to.
  *
+ * ## The device sets the pace, not the link
+ *
+ * That was an open question until it was measured at a **driving** robot -
+ * `_appanalysis/positionstakt-fahrt-d.log`, 2026-08-15, three minutes on a 100 ms grid, read-only.
+ * The three earlier attempts had all run against a robot standing in its dock and therefore proved
+ * nothing. The answer:
+ *
+ * ```
+ * 1090 fetches in 180 s        answer time local: median 12 ms, min 7, max 247
+ * 1031 of them returned the same value as their predecessor  (95 %)
+ * 58 real position changes     gap between changes: median 3014 ms, min 79, max 6267, mean 3105
+ * channel nonce changes: 0     jump per change: median 272 mm, max 999 mm
+ * ```
+ *
+ * **The robot advances its own position roughly every three seconds - about 0.33 Hz.** The link is
+ * not the bottleneck at 12 ms; behind it there is simply nothing new. Every number below follows
+ * from that one fact, and the earlier justification - "the floor is what the connection allows" -
+ * is void.
+ *
  * ## Where the numbers come from
  *
- *  - **{@link activePauseMs} = 200 while working.** One pass costs about 115 ms of round trip
- *    (58 + 57), so this is roughly 3 passes and 6 requests per second, about 3 KB/s - measured
- *    numbers, not estimates. It is the value the user described as visibly smooth. At 216 mm/s, the
- *    fastest the test device was measured at, the drawn robot then moves in steps of 43 mm against
- *    a machine 350 mm wide.
- *  - **{@link MIN_LIVE_TRACK_PAUSE_MS} = 100 as the floor.** That is what was asked for and it is
- *    reachable: at 115 ms of round trip a 100 ms pause gives about 4.6 passes per second.
- *    **Whether the robot updates its position that often is not measured** - three attempts
- *    (`_appanalysis/positionstakt*.log`) all timed out on a robot standing in its dock, and
- *    `position-fahrt2.log` got 80 samples at a 100 ms grid with exactly one distinct position for
- *    the same reason. So this floor is bounded by the link, not by the device; if the device turns
- *    out to be slower, the floor should follow the device.
- *  - **{@link idlePauseMs} = 2000 while idle.** A standing robot appends no path points and does not
- *    move, so a faster pass provably cannot deliver anything. What the idle pause really bounds is
- *    how long the *start* of a movement can stay invisible, and 2 s is the value the app itself uses
- *    in that situation (report section 15, §1.3).
- *  - **{@link cloudPauseMs} = 2000 without a local link.** Everything above is measured on the local
- *    socket. Over the cloud the same pass is an MQTT round trip through Roborock's broker, and
- *    several requests per second there is not something this adapter should generate against
- *    somebody else's infrastructure. A device reachable only through the cloud is therefore held at
- *    the idle pace no matter what is configured.
+ *  - **{@link activePauseMs} = 1500 while working.** Half the measured update period, so the cycle
+ *    samples the device about twice per update: a change is seen after 750 ms on average, and one
+ *    poll in two carries something new instead of one in fourteen. Sampling twice per period is
+ *    also what keeps two device updates from falling between two polls, which would make the drawn
+ *    robot skip a step. What it costs is bounded and known: the device's own grid already puts the
+ *    delivered position at 1507 ms of age on average, so the pause adds 750 ms to roughly 2.3 s
+ *    total, against 1.6 s at the old 200 ms - 40 % more age for a seventh of the requests.
+ *  - **{@link MIN_LIVE_TRACK_PAUSE_MS} = 250 as the floor.** Two measured bounds meet here. Below
+ *    the slowest answer the local link produced (247 ms) the configured pause stops describing the
+ *    resulting rate, because the link's own spread of 7-247 ms then dominates it. And 250 ms still
+ *    lets a robot that updates **twelve times faster** than the measured one be followed without
+ *    loss, so a model this project has never seen is not throttled by a number taken from one
+ *    device. The old floor of 100 ms was bounded by the link alone and is gone with that reasoning.
+ *  - **{@link idlePauseMs} = 2000 while idle.** Unchanged, and still above the active pause, so it
+ *    still means something. A standing robot appends no path points and does not move, so a faster
+ *    pass provably cannot deliver anything; what this really bounds is how long the *start* of a
+ *    movement can stay invisible, and 2 s is the value the app itself uses in that situation
+ *    (report section 15, §1.3).
+ *  - **{@link cloudPauseMs} = 2000 without a local link.** Unchanged. Over the cloud the same pass
+ *    is an MQTT round trip through Roborock's broker, and this adapter should not generate several
+ *    requests per second against somebody else's infrastructure. With the active pause now at
+ *    1500 ms the two are close together, which is fine: the cap exists for the user who configures
+ *    the floor, not for the one who leaves the default alone.
+ *
+ * ## What this does not do
+ *
+ * It does not make the drawn robot glide. The measurement shows the steps come from the device -
+ * 272 mm every three seconds - so only interpolation could smooth them, and interpolation can only
+ * show where the robot **was**. That trade is the user's to make and has not been made; nothing
+ * here anticipates it.
  */
 export const LIVE_TRACK_POLICY = Object.freeze({
 	/** Minimum pause (ms) between one answer and the next question while the robot is working. */
-	activePauseMs: 200,
+	activePauseMs: 1500,
 	/** Pause (ms) while the robot is idle or paused. */
 	idlePauseMs: 2000,
 	/** Pause (ms) while the device is only reachable through the cloud. */
@@ -440,8 +468,8 @@ export const LIVE_TRACK_REQUEST_PRIORITY = -10;
 
 /** Value of `liveTrackInterval` that switches the live position channel off entirely. */
 export const LIVE_TRACK_DISABLED = 0;
-/** Shortest configurable pause; see {@link LIVE_TRACK_POLICY} for what bounds it. */
-export const MIN_LIVE_TRACK_PAUSE_MS = 100;
+/** Shortest configurable pause; see {@link LIVE_TRACK_POLICY} for the two measurements that bound it. */
+export const MIN_LIVE_TRACK_PAUSE_MS = 250;
 /** Longest configurable pause. */
 export const MAX_LIVE_TRACK_PAUSE_MS = 30_000;
 /**
@@ -452,7 +480,8 @@ export const MAX_LIVE_TRACK_PAUSE_MS = 30_000;
  * collide: the new unit never goes below {@link MIN_LIVE_TRACK_PAUSE_MS}, so no value between 1 and
  * 30 is a legal millisecond setting and no legal millisecond setting can be mistaken for seconds.
  * A migration would have had to guess whether a stored 1 came from a user or from the old default;
- * this way it does not have to.
+ * this way it does not have to. Raising the floor from 100 to 250 keeps that separation intact -
+ * 250 is still far above 30.
  */
 export const LEGACY_LIVE_TRACK_MAX_SECONDS = 30;
 

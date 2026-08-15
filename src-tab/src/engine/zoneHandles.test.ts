@@ -19,6 +19,7 @@ import {
 	ZONE_HANDLE_ICON_PX,
 	ZONE_HANDLE_LEASH_PX,
 	ZONE_HANDLE_KINDS,
+	ZONE_HANDLE_KINDS_ROTATABLE,
 	ZONE_HANDLE_LABEL_KEYS,
 	ZONE_HANDLE_MIN_ZONE_PX,
 	ZONE_HANDLE_OUTSET_PX,
@@ -156,6 +157,88 @@ describe("zoneHandleLayout", () => {
 	});
 });
 
+describe("the rotate handle", () => {
+	const rect = { width: 200, height: 100 };
+
+	it("is offered to a no-go zone and lands on the top right corner", () => {
+		// §B.4: the no-go zone calls all four (A65:521728/521734/521762/521774), and §B.3 puts
+		// rotate on the top right - the one corner the three-handle set leaves free.
+		const layout = zoneHandleLayout(rect, 1, false, ZONE_HANDLE_KINDS_ROTATABLE);
+		expect(layout.handles.map((handle) => handle.kind)).toEqual(["delete", "rotate", "scale", "move"]);
+
+		const rotate = layout.handles[1];
+		expect([rotate.cx, rotate.cy]).toEqual([rect.width + ZONE_HANDLE_OUTSET_PX, -ZONE_HANDLE_OUTSET_PX]);
+	});
+
+	it("is not offered to an invisible wall, because the app does not offer it either", () => {
+		// A65:523201/523224/523247 - delete, scale and move, no rotate. A wall is two end points;
+		// it already says which way it runs.
+		expect(zoneHandleLayout(rect, 1, false, ZONE_HANDLE_KINDS).handles.map((handle) => handle.kind)).toEqual([
+			"delete",
+			"scale",
+			"move",
+		]);
+	});
+
+	it("comes out in the app's order round the frame whatever order it was asked for", () => {
+		const layout = zoneHandleLayout(rect, 1, false, ["move", "rotate", "delete"]);
+		expect(layout.handles.map((handle) => handle.kind)).toEqual(["delete", "rotate", "move"]);
+	});
+
+	it("keeps its distance on screen at every zoom, like the other three", () => {
+		for (const zoom of [0.1, 1, 10]) {
+			const rotate = zoneHandleLayout(rect, zoom, false, ZONE_HANDLE_KINDS_ROTATABLE).handles[1];
+			expect((rotate.cx - rect.width) * zoom).toBeCloseTo(ZONE_HANDLE_OUTSET_PX, 10);
+			expect(rotate.cy * zoom).toBeCloseTo(-ZONE_HANDLE_OUTSET_PX, 10);
+		}
+	});
+
+	it("is hidden on a rectangle that does not offer it, not left where another one put it", () => {
+		// The handles are built once per zone and only laid out afterwards, so all four exist in
+		// the DOM. One that stayed visible without being placed would sit at the coordinates of
+		// whichever rectangle it last belonged to - a live control on the wrong zone.
+		const zones = makeZones([{ id: 1, width: 200, height: 200 }]);
+		renderZoneHandles(zones, renderOptions({ kinds: ZONE_HANDLE_KINDS_ROTATABLE }));
+		const rotate = document.querySelector("g.zone-handle-rotate") as SVGGElement;
+		expect(rotate.style.display).toBe("");
+
+		layoutZoneHandles(zones, { zoom: 1, kinds: ZONE_HANDLE_KINDS });
+		expect(rotate.style.display).toBe("none");
+	});
+
+	it("follows the datum when the handle set differs from zone to zone", () => {
+		const zones = makeZones([
+			{ id: 1, width: 200, height: 200 },
+			{ id: 2, width: 200, height: 200 },
+		]);
+		renderZoneHandles(
+			zones,
+			renderOptions({
+				kinds: (rect: ZoneHandleRect) => (rect.id === 1 ? ZONE_HANDLE_KINDS_ROTATABLE : ZONE_HANDLE_KINDS),
+			}),
+		);
+
+		const groups = document.querySelectorAll("g.zone");
+		expect((groups[0].querySelector("g.zone-handle-rotate") as SVGGElement).style.display).toBe("");
+		expect((groups[1].querySelector("g.zone-handle-rotate") as SVGGElement).style.display).toBe("none");
+	});
+
+	it("swallows the press when it has no gesture, instead of dragging the zone away", () => {
+		// A handle drawn but left inert must still not fall through to `g.zone`: a press that
+		// promised a turn and moved the zone instead is worse than one that does nothing.
+		const zones = makeZones([{ id: 1, width: 200, height: 200 }]);
+		renderZoneHandles(zones, renderOptions({ kinds: ZONE_HANDLE_KINDS_ROTATABLE }));
+
+		const reachedTheZone = vi.fn();
+		(document.querySelector("g.zone") as SVGGElement).addEventListener("pointerdown", reachedTheZone);
+		document
+			.querySelector("g.zone-handle-rotate circle.zone-handle-hit")
+			?.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+
+		expect(reachedTheZone).not.toHaveBeenCalled();
+	});
+});
+
 describe("a zone too small to carry its handles", () => {
 	it("keeps them while it is at least as large on screen as one glyph", () => {
 		const size = ZONE_HANDLE_MIN_ZONE_PX;
@@ -229,8 +312,11 @@ describe("renderZoneHandles", () => {
 		const remove = document.querySelector("g.zone-handle-delete") as SVGGElement;
 		expect(remove.querySelector("title")?.textContent).toBe("Delete this zone [ui_zone_handle_delete]");
 		expect(remove.getAttribute("aria-label")).toBe("Delete this zone [ui_zone_handle_delete]");
+		// All four are built and therefore all four are labelled; which of them a given rectangle
+		// shows is decided when it is laid out, not when it is built.
 		expect(translate.mock.calls.map((call) => call[0])).toEqual([
 			"ui_zone_handle_delete",
+			"ui_zone_handle_rotate",
 			"ui_zone_handle_resize",
 			"ui_zone_handle_move",
 		]);
@@ -244,7 +330,7 @@ describe("renderZoneHandles", () => {
 		renderZoneHandles(zones, options);
 
 		expect(document.querySelectorAll("g.zone-handles")).toHaveLength(1);
-		expect(document.querySelectorAll("g.zone-handle")).toHaveLength(3);
+		expect(document.querySelectorAll("g.zone-handle")).toHaveLength(ZONE_HANDLE_KINDS_ROTATABLE.length);
 
 		// And the delete listener was attached once, not three times.
 		(document.querySelector("g.zone-handle-delete") as SVGGElement).dispatchEvent(

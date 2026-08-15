@@ -148,4 +148,16 @@ export interface DrawMapV1Options {
 	 * the adapter produced before the dark scheme existed.
 	 */
 	colors?: MapSurfaceColors;
+	/**
+	 * Leaves `FORBIDDEN_ZONES`, `NO_MOP_ZONE` and `VIRTUAL_WALLS` to the caller.
+	 *
+	 * The admin tab draws those three in a layer of its own, where they are controls rather than
+	 * decoration: they can be selected, turned and deleted. Drawing them here as well would put a
+	 * second, unturned copy of every zone underneath - the rectangles above are reduced to the
+	 * bounding box of their four corners, which is a different shape as soon as a zone is turned.
+	 *
+	 * Omitted, and therefore false, everywhere else: the adapter's own PNG has no such layer and
+	 * must keep drawing all five overlays.
+	 */
+	editableZonesDrawnElsewhere?: boolean;
 }

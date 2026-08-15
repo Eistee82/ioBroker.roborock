@@ -673,9 +673,10 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			return;
 		}
 
-		// Anything that is not a number state is left alone. `set_dnd_timer` is the reason for the
-		// guard: its state carries the window as text, and the field checked for it is
-		// `dnd_enabled` - writing a 1 into it would replace "22:00-07:00" with a number.
+		// Anything that is not a number state is left alone. No verified command has a text state
+		// today - `set_dnd_timer` had one and was removed from the check, see
+		// `commandVerification.ts` - but the settings folder is where text states live, and writing
+		// a status number into one would replace something like "22:00-07:00" with a 1.
 		if (type !== undefined && type !== "number") return;
 
 		await this.deps.adapter.setState(path, { val: value, ack: true });
@@ -1229,9 +1230,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			const statusData = Array.isArray(result) ? result[0] : result;
 
 			if (statusData && typeof statusData === "object") {
-				if (!this.runtimeDetectionComplete) {
-					await this.detectAndApplyRuntimeFeatures(statusData);
-				}
+				await this.applyRuntimeFeatureDetection(statusData);
 				await this.processStatus(statusData);
 				const c = await this.deps.adapter.getStateAsync(`Devices.${this.duid}.cleaningInfo.clean_count`);
 				this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined, `status=${statusData.state ?? "?"}, clean_count=${c?.val ?? "?"}`, "debug");

@@ -249,6 +249,11 @@ export async function drawMapV1(
 	renderer.drawActiveZones(activeZones);
 
 	// --- Restricted zones + virtual walls ---
+	//
+	// `editableZonesDrawnElsewhere` covers the three the admin tab draws itself, because there they
+	// are not decoration but controls: they can be selected, turned and deleted, and a turned zone
+	// has to be drawn turned rather than as the bounding box `toRect` produces below. The other two
+	// overlays (`CURTAIN`, `MISS_ZONE`) are not editable and stay here either way.
 	const restrictedZones: DrawZoneRectInput[] = [];
 	const toRect = (zone: number[]) => {
 		const xs = [zone[0], zone[2], zone[4], zone[6]];
@@ -257,13 +262,14 @@ export async function drawMapV1(
 		const p2 = robotToPx(Math.max(...xs), Math.min(...ys));
 		return { x: p1.x, y: p2.y, w: p2.x - p1.x, h: p1.y - p2.y };
 	};
-	if (mapData.FORBIDDEN_ZONES?.length) {
+	const skipEditable = options.editableZonesDrawnElsewhere === true;
+	if (!skipEditable && mapData.FORBIDDEN_ZONES?.length) {
 		for (const z of mapData.FORBIDDEN_ZONES) {
 			const r = toRect(z);
 			restrictedZones.push({ ...r, fill: "rgba(255, 0, 0, 0.5)", stroke: "rgba(255, 0, 0, 1)" });
 		}
 	}
-	if (mapData.NO_MOP_ZONE?.length) {
+	if (!skipEditable && mapData.NO_MOP_ZONE?.length) {
 		for (const z of mapData.NO_MOP_ZONE) {
 			const r = toRect(z);
 			restrictedZones.push({ ...r, fill: "rgba(0, 0, 255, 0.5)", stroke: "rgba(0, 0, 255, 1)" });
@@ -282,7 +288,7 @@ export async function drawMapV1(
 		}
 	}
 	const virtualWalls: DrawVirtualWallInput[] = [];
-	if (mapData.VIRTUAL_WALLS?.length) {
+	if (!skipEditable && mapData.VIRTUAL_WALLS?.length) {
 		for (const wall of mapData.VIRTUAL_WALLS) {
 			const p1 = robotToPx(wall[0], wall[1]);
 			const p2 = robotToPx(wall[2], wall[3]);

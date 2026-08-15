@@ -149,6 +149,45 @@ body,
 	pointer-events: none;
 }
 
+/*
+ * The walls and zones stored on the robot's own map.
+ *
+ * Colours come from the app's own `theme.displayZones` table, per map scheme, through
+ * `engine/mapOverlayColors.ts` - `allFBZColor` for a no-go zone, `mopFBZColor` for a no-mop zone,
+ * and `allFBZBorderColor` for an invisible wall, which the app gives no colour of its own.
+ *
+ * Edge weights are inline styles written by the layer, divided by the zoom, because these shapes
+ * span world points and would otherwise thicken as the map is zoomed out.
+ */
+.map-zone {
+	cursor: pointer;
+}
+
+.map-zone-no_go .map-zone-rect {
+	fill: var(--rr-map-no-go-fill);
+	stroke: var(--rr-map-no-go-stroke);
+}
+
+.map-zone-no_mop .map-zone-rect {
+	fill: var(--rr-map-no-mop-fill);
+	stroke: var(--rr-map-no-mop-stroke);
+}
+
+.map-zone-line {
+	stroke: var(--rr-map-wall-stroke);
+	stroke-linecap: round;
+}
+
+/*
+ * A wall is a four pixel line, which is a hard thing to hit with a finger. This one is invisible
+ * and several times wider, and it takes the click - the same trick the zone handles use with their
+ * hit circle.
+ */
+.map-zone-hit {
+	stroke: transparent;
+	fill: none;
+}
+
 .obstacle-marker {
 	fill: rgba(45, 156, 219, 0.7);
 	stroke: #ffffff;

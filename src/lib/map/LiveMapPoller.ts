@@ -365,12 +365,19 @@ export class LiveMapPoller {
 	}
 
 	/**
-	 * Asks what the dynamic channel currently holds and fetches it when it moved.
+	 * Asks what the dynamic channel currently holds and fetches it - unconditionally.
 	 *
 	 * The two requests are the ones the app uses as well: `get_dynamic_map_diff` names the nonce
 	 * and the length of the channel, `get_dynamic_data` returns position, path and mop markers in
 	 * one answer. The diff cannot be skipped — the nonce it reports is a parameter of the second
 	 * call — but it can be shared with the map cycle, see {@link readSharedDiff}.
+	 *
+	 * **The nonce must never become the test for whether to fetch.** It looks like a change counter
+	 * and is not one: measured at a driving robot over three minutes, the channel nonce did not
+	 * change once while the position changed 58 times
+	 * (`_appanalysis/positionstakt-fahrt-d.log`, 2026-08-15). A gate on it would freeze the
+	 * position completely - which is the class of fault this cycle was split off to remove. The
+	 * only thing the diff decides here is whether the channel holds anything at all (`maxLen`).
 	 *
 	 * @param duid Device Unique ID.
 	 * @param state Bookkeeping for this device.

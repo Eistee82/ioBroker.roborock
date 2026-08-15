@@ -11,6 +11,7 @@ import type {
 	ModeModel,
 	ObstaclePhotoModel,
 	RobotEntry,
+	MapZonesModel,
 	RoomSelectionModel,
 	SelectOption,
 	StatusModel,
@@ -22,6 +23,7 @@ import { ActionDock } from "./ActionDock";
 import { ModeBar } from "./ModeBar";
 import { ConsumablesPanel } from "./ConsumablesPanel";
 import { DockPanel } from "./DockPanel";
+import { MapZonesPanel } from "./MapZonesPanel";
 import { LiveTrackLegend } from "./LiveTrackLegend";
 import { ObstacleDialog } from "./ObstacleDialog";
 import { HistoryPanel } from "./HistoryPanel";
@@ -50,6 +52,23 @@ const EMPTY_STATUS: StatusModel = {
 	connectionChannel: "",
 	phase: "unknown",
 	dockActivity: null
+};
+
+/**
+ * No robot selected yet, so no map and therefore no editable walls or zones.
+ *
+ * `supported: false` is the state that keeps the panel away entirely, which is the right starting
+ * point: a panel offering to add a no-go zone before any map has been read would promise something
+ * that cannot be sent.
+ */
+const EMPTY_MAP_ZONES: MapZonesModel = {
+	counts: { no_go: 0, no_mop: 0, wall: 0 },
+	limit: 10,
+	selectedKey: null,
+	selectedKind: null,
+	drafting: false,
+	supported: false,
+	refusalText: null
 };
 
 /**
@@ -100,6 +119,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [assetBase, setAssetBase] = useState<string | null>(null);
 	const [rooms, setRooms] = useState<RoomSelectionModel>({ selected: 0, available: 0 });
 	const [zones, setZones] = useState<ZoneModel>({ count: 0, max: 5, atLimit: false });
+	const [mapZones, setMapZones] = useState<MapZonesModel>(EMPTY_MAP_ZONES);
 	const [cleanCount, setCleanCount] = useState(1);
 	const [consumables, setConsumables] = useState<ConsumablePartModel[]>([]);
 	const [dock, setDock] = useState<DockModel>({ controls: [], status: [], faulty: false, activity: EMPTY_DOCK_ACTIVITY });
@@ -152,6 +172,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 			},
 			onRooms: setRooms,
 			onZones: setZones,
+			onMapZones: setMapZones,
 			onConsumables: setConsumables,
 			onDock: setDock,
 			onMapPresence: setHasMap,
@@ -352,6 +373,12 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 					phase={status.phase}
 					dockActivity={status.dockActivity}
 					onCommand={(command, value) => engineRef.current?.sendDockValue(command, value)}
+				/>
+				<MapZonesPanel
+					zones={mapZones}
+					onAdd={kind => engineRef.current?.startMapZone(kind)}
+					onSave={() => void engineRef.current?.saveMapZone()}
+					onCancel={() => engineRef.current?.cancelMapZone()}
 				/>
 				<SettingsPanel
 					settings={robotSettings}

@@ -257,10 +257,18 @@ describe("what the silent-failure check expects of these commands", () => {
 		expect(expectationFor(SET_CHILD_LOCK_STATUS, [{ lock_status: 0 }])).toEqual({ lock_status: 0 });
 	});
 
-	it("expects the two Do Not Disturb commands to switch dnd_enabled, whatever they carry", () => {
-		// A65:851190-851262 - the two are the two positions of one switch.
-		expect(expectationFor(SET_DND_TIMER, [22, 0, 7, 0])).toEqual({ dnd_enabled: 1 });
-		expect(expectationFor(CLOSE_DND_TIMER, [])).toEqual({ dnd_enabled: 0 });
+	it("checks neither Do Not Disturb command against the status", () => {
+		// They were checked against `dnd_enabled` until a measurement at the device showed that the
+		// field reports whether the quiet period is *running*, not whether one is configured:
+		// `dnd_enabled = 0` at 12:43 while the robot held an enabled 22:00-08:00 window
+		// (`_appanalysis/19-geraetefaehigkeiten.md` §6.1). Setting a window during the day would
+		// therefore have produced a false "did not take effect" warning.
+		//
+		// This assertion is the guard against putting them back: leaving them in the table while
+		// dropping only the fixed expectation would be worse than the original fault - the payload
+		// of `set_dnd_timer` is `[22,0,7,0]`, so the generic path would derive `dnd_enabled: 22`.
+		expect(expectationFor(SET_DND_TIMER, [22, 0, 7, 0])).toBeNull();
+		expect(expectationFor(CLOSE_DND_TIMER, [])).toBeNull();
 	});
 
 	it("still derives the old commands from their payload", () => {

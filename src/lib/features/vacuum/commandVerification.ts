@@ -46,26 +46,39 @@ export const VERIFIABLE_SET_COMMANDS: Readonly<Record<string, readonly string[]>
 	set_clean_motor_mode: Object.freeze(["fan_power", "water_box_mode", "mop_mode"]),
 	// `{lock_status: 0|1}` on the wire, `lock_status` in the status - the same name on both sides,
 	// so the payload is read by field name like the triple above.
-	set_child_lock_status: Object.freeze(["lock_status"]),
-	// The two Do Not Disturb commands carry no value the status could be compared against: one
-	// sends four times, the other nothing at all. What they do is switch `dnd_enabled`, and that
-	// is what {@link FIXED_COMMAND_EXPECTATIONS} states for them.
-	set_dnd_timer: Object.freeze(["dnd_enabled"]),
-	close_dnd_timer: Object.freeze(["dnd_enabled"])
+	set_child_lock_status: Object.freeze(["lock_status"])
 });
 
 /**
- * Commands whose effect on the status is fixed rather than derived from what was sent.
+ * ## Why the two Do Not Disturb commands are **not** in the table above
  *
- * `set_dnd_timer` switches Do Not Disturb **on** whatever window it carries, and `close_dnd_timer`
- * switches it off - both proven from the app's own switch handler,
- * `onDonotDisturbSwitchValueChanged` (a65 control plugin, A65:851190-851262), which calls exactly
- * these two for the two positions of one switch.
+ * They were, briefly, against the status field `dnd_enabled` - `set_dnd_timer` was expected to
+ * make it 1 and `close_dnd_timer` to make it 0. A read-only measurement at the device took that
+ * apart (`_appanalysis/19-geraetefaehigkeiten.md` §6.1):
+ *
+ * ```
+ * 12:43 Uhr   get_status.dnd_enabled = 0
+ * 12:43 Uhr   get_dnd_timer          = {start 22:00, end 08:00, enabled: 1}
+ * ```
+ *
+ * The status said off while the robot held an enabled window. The earlier live capture
+ * (`_appanalysis/local-mitschnitt.log:15`) shows `dnd_enabled: 1` at 23:44 - inside that same
+ * window, where 12:43 is outside it.
+ *
+ * **Both samples fit one reading: `dnd_enabled` says whether the quiet period is running right
+ * now, not whether one is configured.** Two agreeing samples are a strong hint and not a proof -
+ * this was not read back in the plugin, and the alternative (the user toggled the mode between the
+ * two measurements, coincidentally matching the window) is not excluded. Whoever reads it in the
+ * plugin later should see what the decision rested on.
+ *
+ * Either way the consequence is certain: a window set during the day is followed by
+ * `dnd_enabled: 0`, so the check would have announced after ten seconds that the command had not
+ * taken effect. That is precisely the false alarm this module exists to avoid, and a check that
+ * cries wolf is worse than no check.
+ *
+ * The honest test for these two is the robot's own answer to `get_dnd_timer`, which
+ * `V1VacuumFeatures.onCommandResult` already fetches after every set and every close.
  */
-export const FIXED_COMMAND_EXPECTATIONS: Readonly<Record<string, Readonly<Record<string, number>>>> = Object.freeze({
-	set_dnd_timer: Object.freeze({ dnd_enabled: 1 }),
-	close_dnd_timer: Object.freeze({ dnd_enabled: 0 })
-});
 
 /**
  * How long a mismatch is tolerated before it is reported.
@@ -126,10 +139,6 @@ interface PendingCommand {
 export function expectationFor(command: string, params: unknown): Record<string, number> | null {
 	const fields = VERIFIABLE_SET_COMMANDS[command];
 	if (!fields) return null;
-
-	// A command whose effect does not depend on its payload states it outright.
-	const fixed = FIXED_COMMAND_EXPECTATIONS[command];
-	if (fixed) return { ...fixed };
 
 	const payload = Array.isArray(params) ? params[0] : params;
 

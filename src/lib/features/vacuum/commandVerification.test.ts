@@ -272,16 +272,18 @@ describe("the vacuum handler wired to the verifier", () => {
 describe("the boundaries of the check", () => {
 	it("only covers commands the status can answer for", () => {
 		// Every entry has to name a field the robot really reports in `get_status`. The three
-		// cleaning modes and the mode triple were the first four; `lock_status` and `dnd_enabled`
-		// joined them because the live capture of the test device carries both
-		// (`_appanalysis/local-mitschnitt.log:15`) and `VACUUM_CONSTANTS.deviceStates` has always
-		// declared them.
+		// The three cleaning modes and the mode triple were the first four; `set_child_lock_status`
+		// joined them because `lock_status` really is in the status packet of the test device
+		// (`_appanalysis/local-mitschnitt.log:15`).
+		//
+		// The two Do Not Disturb commands were in here too and are deliberately gone again: the
+		// field they were checked against, `dnd_enabled`, turned out to report whether the quiet
+		// period is *running* rather than whether one is set, which made the check fire falsely on
+		// any window set during the day. The reasoning is at the top of `commandVerification.ts`.
 		expect(Object.keys(VERIFIABLE_SET_COMMANDS).sort()).toEqual([
-			"close_dnd_timer",
 			"set_child_lock_status",
 			"set_clean_motor_mode",
 			"set_custom_mode",
-			"set_dnd_timer",
 			"set_mop_mode",
 			"set_water_box_custom_mode"
 		]);

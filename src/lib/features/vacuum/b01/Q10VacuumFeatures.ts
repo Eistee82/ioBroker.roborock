@@ -496,9 +496,7 @@ export class Q10VacuumFeatures extends B01BaseVacuumFeatures {
 	}
 
 	private async applyQ10StatusSnapshot(resultObj: Record<string, unknown>): Promise<void> {
-		if (!this.runtimeDetectionComplete) {
-			await this.detectAndApplyRuntimeFeatures(resultObj);
-		}
+		await this.applyRuntimeFeatureDetection(resultObj);
 
 		await this.processStatus(resultObj);
 

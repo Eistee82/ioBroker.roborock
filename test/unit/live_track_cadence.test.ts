@@ -17,6 +17,14 @@ import {
 
 const DUID = "duid-track";
 const NONCE = 4711;
+/**
+ * The pause the cycle tests below run at.
+ *
+ * Tied to the floor rather than spelled out, so that changing the floor moves the tests with it
+ * instead of silently clamping them: a literal below the floor would still be accepted by the
+ * config, be raised to the floor, and then make every `advance()` in this file one pass short.
+ */
+const FAST_PAUSE_MS = MIN_LIVE_TRACK_PAUSE_MS;
 /** `new_feature_info_str` with bit 22 set: the robot offers the incremental map. */
 const FEATURE_STR_WITH_BIT = (1n << 22n).toString(16);
 /** Same string without that bit, which puts the map on the full-transfer branch. */
@@ -177,10 +185,27 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe("live track pacing policy", () => {
-	it("defaults to a 200 ms pause while the robot works", () => {
-		expect(LIVE_TRACK_POLICY.activePauseMs).toBe(200);
-		expect(resolveLiveTrackPauseMs(undefined)).toBe(200);
-		expect(getLiveTrackPauseMs({ isActive: true, isLocal: true })).toBe(200);
+	it("defaults to a 1500 ms pause while the robot works", () => {
+		// Half the update period the robot was measured at: it advances its own position every
+		// 3014 ms (median, `_appanalysis/positionstakt-fahrt-d.log`), so this samples it about
+		// twice per update. The former 200 ms were justified by the link, which the same
+		// measurement showed is not the constraint - 95 % of the requests returned a repeat.
+		expect(LIVE_TRACK_POLICY.activePauseMs).toBe(1500);
+		expect(resolveLiveTrackPauseMs(undefined)).toBe(1500);
+		expect(getLiveTrackPauseMs({ isActive: true, isLocal: true })).toBe(1500);
+	});
+
+	it("keeps both automatic floors at or above the default, so they still mean something", () => {
+		// An idle or cloud cap below the active pause would be a cap that never applies.
+		expect(LIVE_TRACK_POLICY.idlePauseMs).toBeGreaterThanOrEqual(LIVE_TRACK_POLICY.activePauseMs);
+		expect(LIVE_TRACK_POLICY.cloudPauseMs).toBeGreaterThanOrEqual(LIVE_TRACK_POLICY.activePauseMs);
+	});
+
+	it("allows a good deal faster than the default, for a robot that is faster than the measured one", () => {
+		// The floor is not the default: only one device was ever measured, and a model that
+		// updates more often must not be held to this one's grid.
+		expect(MIN_LIVE_TRACK_PAUSE_MS).toBeLessThan(LIVE_TRACK_POLICY.activePauseMs);
+		expect(MIN_LIVE_TRACK_PAUSE_MS).toBe(250);
 	});
 
 	it("reads a stored whole-second setting in its old unit", () => {
@@ -192,9 +217,9 @@ describe("live track pacing policy", () => {
 	});
 
 	it("reads everything above that range as milliseconds", () => {
-		expect(resolveLiveTrackPauseMs(200)).toBe(200);
 		expect(resolveLiveTrackPauseMs(MIN_LIVE_TRACK_PAUSE_MS)).toBe(MIN_LIVE_TRACK_PAUSE_MS);
 		expect(resolveLiveTrackPauseMs(750)).toBe(750);
+		expect(resolveLiveTrackPauseMs(3000)).toBe(3000);
 	});
 
 	it("keeps the two units from overlapping", () => {
@@ -215,11 +240,11 @@ describe("live track pacing policy", () => {
 	});
 
 	it("slows down to the idle pause while the robot stands still", () => {
-		expect(getLiveTrackPauseMs({ configuredPause: 200, isActive: false, isLocal: true })).toBe(LIVE_TRACK_POLICY.idlePauseMs);
+		expect(getLiveTrackPauseMs({ configuredPause: FAST_PAUSE_MS, isActive: false, isLocal: true })).toBe(LIVE_TRACK_POLICY.idlePauseMs);
 	});
 
 	it("slows down to the cloud pause without a local link", () => {
-		expect(getLiveTrackPauseMs({ configuredPause: 200, isActive: true, isLocal: false })).toBe(LIVE_TRACK_POLICY.cloudPauseMs);
+		expect(getLiveTrackPauseMs({ configuredPause: FAST_PAUSE_MS, isActive: true, isLocal: false })).toBe(LIVE_TRACK_POLICY.cloudPauseMs);
 	});
 
 	it("never speeds a slow setting up in the name of slowing it down", () => {
@@ -264,13 +289,13 @@ describe("live track cycle", () => {
 		// The regression this change is really about. The channel gate compared nonce and max_len,
 		// and max_len is the length of the driven path, which grows about once a second - so it was
 		// a 1 Hz rate limit on a position that moves continuously.
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.start();
 		await env.settle();
 		expect(env.countOf(DYNAMIC_DATA_METHOD)).toBe(1);
 
 		env.movePosition(33000);
-		await env.advance(200);
+		await env.advance(FAST_PAUSE_MS);
 		env.stop();
 
 		expect(env.countOf(DYNAMIC_DATA_METHOD)).toBe(2);
@@ -295,12 +320,12 @@ describe("live track cycle", () => {
 	it("counts the pause from the answer, so a slow link slows the cycle instead of stacking it", async () => {
 		// This is the difference to a fixed cadence: the round trip is never subtracted from the
 		// pause, so two requests can never be in the air at once however slow the robot answers.
-		const env = createEnv({ liveTrackInterval: 200, roundTripMs: 400 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS, roundTripMs: 400 });
 		env.start();
 		await env.settle();
 		expect(env.countOf(MAP_DIFF_METHOD)).toBe(1);
 
-		await env.advance(199);
+		await env.advance(FAST_PAUSE_MS - 1);
 		expect(env.countOf(MAP_DIFF_METHOD)).toBe(1);
 
 		await env.advance(1);
@@ -309,7 +334,7 @@ describe("live track cycle", () => {
 	});
 
 	it("uses the idle pause while the robot stands still", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.setActive(false);
 		env.start();
 		await env.settle();
@@ -323,7 +348,7 @@ describe("live track cycle", () => {
 	});
 
 	it("uses the cloud pause when the local socket is down", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.setLocal(false);
 		env.start();
 		await env.settle();
@@ -339,7 +364,7 @@ describe("live track cycle", () => {
 	it("picks the pace up again when the robot starts working", async () => {
 		// The context is read on every pass, not once at the start. A cycle started while the robot
 		// was in its dock would otherwise stay at the idle pace for the whole cleaning run.
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.setActive(false);
 		env.start();
 		await env.settle();
@@ -349,8 +374,8 @@ describe("live track cycle", () => {
 		await env.advance(LIVE_TRACK_POLICY.idlePauseMs);
 		expect(env.countOf(DYNAMIC_DATA_METHOD)).toBe(2);
 
-		// The next pass is now 200 ms away rather than 2000, which is the whole point.
-		await env.advance(200);
+		// The next pass is now one active pause away rather than 2000 ms, which is the whole point.
+		await env.advance(FAST_PAUSE_MS);
 		env.stop();
 		expect(env.countOf(DYNAMIC_DATA_METHOD)).toBe(3);
 	});
@@ -358,13 +383,13 @@ describe("live track cycle", () => {
 	it("reuses its own diff answer while it is still fresh, but never the position", async () => {
 		// At a pause shorter than the sharing window the cycle meets its own previous diff. That is
 		// deliberate and it halves the request count: what the diff carries is the channel nonce and
-		// length, and a 200 ms old length is at most one path point short of the truth on a channel
+		// length, and a length one pause old is at most one path point short of the truth on a channel
 		// that grows about once a second. The position is not in the diff at all - it comes from
 		// get_dynamic_data, which every single pass issues.
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.start();
 		await env.settle();
-		await env.advance(200);
+		await env.advance(FAST_PAUSE_MS);
 		env.stop();
 
 		expect(env.countOf(DYNAMIC_DATA_METHOD)).toBe(2);
@@ -392,20 +417,20 @@ describe("live track cycle", () => {
 	});
 
 	it("starting twice does not run two loops", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.start();
 		env.start();
 		await env.settle();
 		// One pass, not two: a second loop would have doubled every count from here on.
 		expect(env.countOf(DYNAMIC_DATA_METHOD)).toBe(1);
 
-		await env.advance(200);
+		await env.advance(FAST_PAUSE_MS);
 		env.stop();
 		expect(env.countOf(DYNAMIC_DATA_METHOD)).toBe(2);
 	});
 
 	it("stops for good when it is stopped", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.start();
 		await env.settle();
 		env.stop();
@@ -416,7 +441,7 @@ describe("live track cycle", () => {
 	});
 
 	it("leaves no pending pause behind on dispose", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.start();
 		await env.settle();
 		expect(env.isLooping()).toBe(true);
@@ -429,7 +454,7 @@ describe("live track cycle", () => {
 	});
 
 	it("sends both requests below normal priority", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.start();
 		await env.settle();
 		env.stop();
@@ -439,13 +464,13 @@ describe("live track cycle", () => {
 	});
 
 	it("gives up after repeated diff failures and ends the loop", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.failDiffWith(new Error("unknown method"));
 
 		env.start();
 		await env.settle();
-		await env.advance(200);
-		await env.advance(200);
+		await env.advance(FAST_PAUSE_MS);
+		await env.advance(FAST_PAUSE_MS);
 
 		expect(env.countOf(MAP_DIFF_METHOD)).toBe(3);
 		expect(env.state().trackDiffGaveUp).toBe(true);
@@ -456,13 +481,13 @@ describe("live track cycle", () => {
 	});
 
 	it("does not count a dead channel against the robot", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		const unavailable = Object.assign(new Error("channel down"), { code: "CHANNEL_UNAVAILABLE" });
 		env.failDiffWith(unavailable);
 
 		env.start();
 		await env.settle();
-		for (let round = 0; round < 3; round++) await env.advance(200);
+		for (let round = 0; round < 3; round++) await env.advance(FAST_PAUSE_MS);
 		env.stop();
 
 		expect(env.state().trackDiffGaveUp).toBe(false);
@@ -485,7 +510,7 @@ describe("live track is independent of the map cycle", () => {
 		// The regression this whole change began with: the map cycle held one shared in-flight flag,
 		// so the position stood still for exactly as long as a map took to arrive - seconds, over
 		// the cloud, precisely while the robot was moving.
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.setDiffAnswer([{ result: 0, nonce: NONCE, diff: { "3": { max_len: 2, nonce: NONCE, count: 4 } } }]);
 		env.updateMap.mockReturnValue(new Promise<void>(() => undefined));
 
@@ -504,7 +529,7 @@ describe("live track is independent of the map cycle", () => {
 	it("runs for a robot that has no incremental map at all", async () => {
 		// Such a robot never reached `refreshDynamicTrack` before, because the only call site sat
 		// inside the incremental branch it never takes.
-		const env = createEnv({ liveTrackInterval: 200, featureStr: FEATURE_STR_WITHOUT_BIT });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS, featureStr: FEATURE_STR_WITHOUT_BIT });
 		env.start();
 		await env.settle();
 		env.stop();
@@ -513,7 +538,7 @@ describe("live track is independent of the map cycle", () => {
 	});
 
 	it("runs while the live map refresh is switched off", async () => {
-		const env = createEnv({ liveTrackInterval: 200, liveMapInterval: 0 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS, liveMapInterval: 0 });
 
 		expect(env.poller.isEnabled()).toBe(false);
 		env.start();
@@ -533,7 +558,7 @@ describe("live track is independent of the map cycle", () => {
 	});
 
 	it("keeps polling the position when the map cycle gave up on the diff", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.state().diffGaveUp = true;
 
 		env.start();
@@ -556,7 +581,7 @@ describe("shared diff answer", () => {
 	});
 
 	it("asks once when both cycles fall due in the same moment", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 
 		await env.map();
 		env.start();
@@ -568,7 +593,7 @@ describe("shared diff answer", () => {
 	});
 
 	it("works in the other order as well", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 
 		env.start();
 		await env.settle();
@@ -579,7 +604,7 @@ describe("shared diff answer", () => {
 	});
 
 	it("asks again once the answer is no longer fresh", async () => {
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 
 		await env.map();
 		await vi.advanceTimersByTimeAsync(400);
@@ -593,7 +618,7 @@ describe("shared diff answer", () => {
 	it("never reuses an answer that was asked with a different nonce", async () => {
 		// What a diff reports depends on the nonce it was given, so an answer to another question
 		// must not decide this one.
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 
 		await env.map();
 		env.setMapNonce(NONCE + 1);
@@ -608,7 +633,7 @@ describe("shared diff answer", () => {
 	it("falls back to nonce 1 while no map has been parsed yet", async () => {
 		// Measured at the device: a made-up nonce still returns the valid per-channel nonces, which
 		// is all this cycle needs.
-		const env = createEnv({ liveTrackInterval: 200 });
+		const env = createEnv({ liveTrackInterval: FAST_PAUSE_MS });
 		env.setMapNonce(null);
 
 		env.start();

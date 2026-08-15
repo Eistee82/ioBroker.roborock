@@ -26,6 +26,25 @@ import {
 } from "./mapOverlayColors";
 import type { MapColorScheme } from "./mapOverlayColors";
 import { layoutZoneHandles, renderZoneHandles } from "./zoneHandles";
+import {
+	boxPoints,
+	countZonesOfKind,
+	MAP_ZONE_ADD_COMMANDS,
+	MAP_ZONE_COMMAND_FOLDER,
+	MAP_ZONE_KINDS,
+	MAP_ZONE_LIMIT,
+	MAP_ZONE_REMOVE_COMMAND,
+	mapZoneKey,
+	parseZoneInput,
+	pointsBox,
+	pointsFitTheMap,
+	readMapZones,
+	zoneAddPayload,
+	zoneRemovalPayload,
+} from "./mapZones";
+import type { MapZone, MapZoneKind, MapZonePoint, MapZoneRefusal, ZoneBox } from "./mapZones";
+import { layoutMapZoneHandles, renderMapZoneLayer } from "./mapZoneLayer";
+import type { MapZoneShape } from "./mapZoneLayer";
 import type { Furniture } from "@adapter/lib/map/v1/types";
 
 /**
@@ -41,6 +60,31 @@ import type { Furniture } from "@adapter/lib/map/v1/types";
  * with an absolute prefix and silently rendered as broken images in every installation.
  */
 export const ASSET_BASE = "../../files/roborock/assets";
+
+/**
+ * Key of the wall or zone the user is placing.
+ *
+ * A saved zone is named `kind:index` after the position `remove_map_zone` counts, so no saved one
+ * can ever collide with this.
+ */
+export const MAP_ZONE_DRAFT_KEY = "draft";
+
+/**
+ * Half the edge of a freshly placed wall or zone, in millimetres.
+ *
+ * One metre across, which is the smallest thing worth drawing on a floor plan and large enough to
+ * carry its own handles at the default zoom. The user resizes from there; nothing is sent until
+ * they do.
+ */
+export const MAP_ZONE_DEFAULT_HALF_MM = 500;
+
+/**
+ * Smallest edge a zone can be dragged down to, in screen pixels.
+ *
+ * The adapter refuses a zone without area (`A zone needs a width and a height`), and a zone the
+ * size of its own handles cannot be aimed at any more either.
+ */
+export const MAP_ZONE_MIN_EDGE_PX = 6;
 import { buildCleaningModeTabs } from "./cleaningModes";
 import { CONSUMABLE_LABEL_OVERRIDES, consumableGroup } from "./consumables";
 import { DOCK_ACTIVITY_STATES, EMPTY_DOCK_ACTIVITY, readDockActivity } from "./dockActivity";
@@ -458,6 +502,8 @@ export class MapEngine {
 	private robotGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private roomNameGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private zoneGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
+	/** The robot's own walls and zones; see {@link MapEngine.drawMapZones}. */
+	private mapZoneGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private zonesOverlayGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private obstacleGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private pinGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
@@ -487,6 +533,19 @@ export class MapEngine {
 	 * handle out from under the pointer.
 	 */
 	private zoneGestureId: number | null = null;
+	/** The robot's own walls and zones, as last read off `map.mapData`. */
+	private mapZones: MapZone[] = [];
+	/** Why the adapter would refuse to rewrite them, or null when it would not. */
+	private mapZoneRefusal: MapZoneRefusal | null = null;
+	/** Key of the wall or zone whose handles are shown, or null. */
+	private selectedMapZoneKey: string | null = null;
+	/**
+	 * The wall or zone being placed, in the robot's own millimetres, or null.
+	 *
+	 * Kept in millimetres rather than in pixels because the map is redrawn on every poll; a draft
+	 * in screen coordinates would drift with the picture underneath it.
+	 */
+	private mapZoneDraft: { kind: MapZoneKind; box: ZoneBox } | null = null;
 	/** Cache: "duid.mapFlag.roomId" -> room name (from get_room_names for cloud maps). */
 	private roomNamesFromStates: Record<string, string> = {};
 	/** Guard: "duid.mapFlag" of the floor whose room names have already been requested. */
@@ -619,6 +678,7 @@ export class MapEngine {
 		this.robotGroup = d3.select(null) as any;
 		this.roomNameGroup = d3.select(null) as any;
 		this.zoneGroup = d3.select(null) as any;
+		this.mapZoneGroup = d3.select(null) as any;
 		this.zonesOverlayGroup = d3.select(null) as any;
 		this.obstacleGroup = d3.select(null) as any;
 		this.pinGroup = d3.select(null) as any;
@@ -792,6 +852,11 @@ export class MapEngine {
 		this.liveRobotGroup = this.mainGroup.append("g").attr("class", "live-robot-marker");
 		this.pinGroup = this.mainGroup.append("g").attr("class", "pins");
 		this.roomNameGroup = this.mainGroup.append("g").attr("class", "room-names");
+
+		// The robot's own walls and zones sit directly below the cleaning zones: they are operated
+		// too - selected, turned, deleted - so everything that is merely drawn has to stay under
+		// them. Above them is only the layer that is operated more often and lives for seconds.
+		this.mapZoneGroup = this.mainGroup.append("g").attr("class", "map-zones");
 
 		// The zones the user draws go last, and therefore on top of everything else.
 		//
@@ -1082,6 +1147,14 @@ export class MapEngine {
 		this.drawLiveOverlay();
 		this.rects = [];
 		this.drawZones();
+		// The previous robot's walls and zones are not this one's, and a draft left over from it
+		// would be saved onto the wrong map.
+		this.mapZones = [];
+		this.mapZoneRefusal = null;
+		this.mapZoneDraft = null;
+		this.selectedMapZoneKey = null;
+		this.mapZoneGroup.selectAll("*").remove();
+		this.publishMapZoneModel();
 		this.currentMapBase64Clean = null;
 		this.q10Status = null;
 		this.q10CleaningInfo = null;
@@ -1844,8 +1917,13 @@ export class MapEngine {
 			scaleFactor: VISUAL_BLOCK_SIZE,
 			dimensionsAreScaled: false,
 			roomLabels: roomLabels?.length ? roomLabels : undefined,
+			// The three editable overlays are drawn by `drawMapZones()` instead, in a layer where
+			// they can be selected, turned and deleted. Letting both draw them would put a second,
+			// unturned copy of every zone underneath.
+			editableZonesDrawnElsewhere: true,
 		});
 		renderer.drawFurniture(this.buildFurnitureItems(this.map.FURNITURES, params, baseUrl));
+		this.refreshMapZones();
 		// The map geometry may have changed with this redraw, so the overlay has to be converted
 		// again - otherwise it would keep sitting on the geometry of the previous map.
 		this.drawLiveOverlay();
@@ -2919,6 +2997,256 @@ export class MapEngine {
 		});
 	}
 
+	// -----------------------------------------------------------------------------
+	// The robot's own walls and zones
+	//
+	// Everything below works on `map.mapData`, which carries the parse result of the robot's own
+	// map unchanged, and writes through the `commands.add_*` / `commands.remove_map_zone` states.
+	// It never touches `save_map`: that call keeps only what it is sent, and the read-change-write
+	// cycle that makes it safe lives in the adapter (`MapEditService.buildSaveMap`).
+	// -----------------------------------------------------------------------------
+
+	/**
+	 * Re-reads the walls and zones off the current map and redraws the layer.
+	 *
+	 * Called after every map update, so a zone the phone app added shows up here too.
+	 */
+	private refreshMapZones(): void {
+		const reading = readMapZones(this.map);
+		this.mapZones = reading.zones;
+		this.mapZoneRefusal = reading.refusal;
+
+		// A selection that no longer names an existing zone would leave handles on a rectangle the
+		// map has moved on from, and its delete handle would then remove whatever took that index.
+		if (this.selectedMapZoneKey !== null && this.selectedMapZoneKey !== MAP_ZONE_DRAFT_KEY) {
+			const stillThere = this.mapZones.some((zone) => mapZoneKey(zone) === this.selectedMapZoneKey);
+			if (!stillThere) this.selectedMapZoneKey = null;
+		}
+
+		this.drawMapZones();
+		this.publishMapZoneModel();
+	}
+
+	/**
+	 * Converts every wall and zone into screen geometry and hands them to the layer.
+	 *
+	 * The conversion goes through `robotToSvg`, the same one the robot, the charger and the
+	 * furniture use, so a zone lands where the map says it is rather than where a second formula
+	 * would put it.
+	 */
+	private drawMapZones(): void {
+		if (this.mapZoneGroup.empty()) return;
+
+		const shapes = this.buildMapZoneShapes();
+		renderMapZoneLayer(this.mapZoneGroup, shapes, {
+			zoom: this.wheelZoom,
+			selectedKey: this.selectedMapZoneKey,
+			t: (key: string, fallback: string) => this.t(key, fallback),
+			onSelect: (key: string | null) => this.selectMapZone(key),
+			onDelete: (key: string) => this.deleteMapZone(key),
+			// Only the zone being placed can be moved: an existing one would have to be removed and
+			// added again, which is two `save_map` cycles with a fresh read in between, and whether
+			// the second read already shows the first write is not decidable from the code. See the
+			// note in `PROJECT_STATE.md`.
+			moveDrag: this.mapZoneDraft ? this.mapZoneMoveDrag() : undefined,
+			scaleDrag: this.mapZoneDraft ? this.mapZoneScaleDrag() : undefined,
+			rotateDrag: this.mapZoneDraft ? this.mapZoneRotateDrag() : undefined,
+		});
+	}
+
+	/**
+	 * The zones of the current map plus the draft, in SVG pixels.
+	 * @returns Everything the layer draws, or nothing when the map has no usable geometry.
+	 */
+	private buildMapZoneShapes(): MapZoneShape[] {
+		const params = this.mapZoneParams();
+		if (!params) return [];
+
+		const shapes: MapZoneShape[] = [];
+		for (const zone of this.mapZones) {
+			const shape = this.mapZoneShape(mapZoneKey(zone), zone.kind, zone.points, false, shapes.length, params);
+			if (shape) shapes.push(shape);
+		}
+
+		if (this.mapZoneDraft) {
+			const points = boxPoints(this.mapZoneDraft.kind, this.mapZoneDraft.box);
+			const shape = this.mapZoneShape(MAP_ZONE_DRAFT_KEY, this.mapZoneDraft.kind, points, true, shapes.length, params);
+			if (shape) shapes.push(shape);
+		}
+		return shapes;
+	}
+
+	/**
+	 * Geometry of the current map, but only where editable zones exist at all.
+	 *
+	 * A Q10 map answers `getMapParams()` as well, yet places everything through `Q10MapGeometry`
+	 * instead - converting a zone with the V1 formula would draw it in the wrong place rather than
+	 * not at all. Those maps carry no `FORBIDDEN_ZONES` block either, so there is nothing lost.
+	 * @returns The V1 geometry, or null.
+	 */
+	private mapZoneParams(): MapParams | null {
+		if (!this.map || isQ10MapData(this.map)) return null;
+		return this.getMapParams();
+	}
+
+	/**
+	 * Turns one record into the shape the layer draws.
+	 *
+	 * The rotation is read off the **converted** points rather than off the millimetres: the map's
+	 * y axis counts upwards and the screen's downwards, so the two angles differ in sign, and
+	 * reading the one that is actually drawn removes that trap entirely.
+	 * @param key Identity of the zone within one render.
+	 * @param kind Which overlay.
+	 * @param points Its points in millimetres.
+	 * @param draft True for the zone being placed.
+	 * @param id Position in the current list; the handle layer keys on a number.
+	 * @param params Geometry of the current map.
+	 * @returns The shape, or null when the record has no readable geometry.
+	 */
+	private mapZoneShape(
+		key: string,
+		kind: MapZoneKind,
+		points: MapZonePoint[],
+		draft: boolean,
+		id: number,
+		params: MapParams
+	): MapZoneShape | null {
+		const onScreen = points.map((point) => this.robotToSvg(point, params));
+		const box = pointsBox(kind, onScreen);
+		if (!box) return null;
+
+		return {
+			key,
+			kind,
+			id,
+			cx: box.cx,
+			cy: box.cy,
+			width: box.halfWidth * 2,
+			height: box.halfHeight * 2,
+			angleDeg: (box.angle * 180) / Math.PI,
+			draft,
+		};
+	}
+
+	/**
+	 * Applies a change made on screen back onto the draft, which is kept in millimetres.
+	 *
+	 * **Why the round trip.** The draft has to be stored in the robot's own millimetres: the map is
+	 * redrawn on every poll, and a draft kept in pixels would drift with the picture. The gestures,
+	 * on the other hand, arrive in pixels. Rather than reason about the sign of the rotation - the
+	 * map counts y upwards, the screen downwards - the changed shape is converted point by point
+	 * with `localCoordsToRobotCoords`, the exact inverse of the drawing conversion, and the box is
+	 * read back off those points.
+	 * @param change Receives the drawn shape and returns the changed one.
+	 */
+	private editMapZoneDraft(change: (shape: MapZoneShape) => MapZoneShape): void {
+		const draft = this.mapZoneDraft;
+		const params = this.mapZoneParams();
+		if (!draft || !params) return;
+
+		const current = this.mapZoneShape(
+			MAP_ZONE_DRAFT_KEY,
+			draft.kind,
+			boxPoints(draft.kind, draft.box),
+			true,
+			0,
+			params
+		);
+		if (!current) return;
+
+		const changed = change(current);
+		const onScreen = boxPoints(draft.kind, {
+			cx: changed.cx,
+			cy: changed.cy,
+			halfWidth: changed.width / 2,
+			halfHeight: changed.height / 2,
+			angle: (changed.angleDeg * Math.PI) / 180,
+		});
+
+		const inMillimetres = onScreen.map((point) => localCoordsToRobotCoords(point, params));
+		const box = pointsBox(draft.kind, inMillimetres);
+		if (!box) return;
+
+		// A zone dragged past the edge of what a uint16 block holds would wrap and turn up somewhere
+		// else entirely, so the last good position is kept instead.
+		if (!pointsFitTheMap(boxPoints(draft.kind, box))) return;
+
+		draft.box = box;
+		this.drawMapZones();
+	}
+
+	/** Moves the draft; the body and the move handle share it, exactly as the app does (§B.2). */
+	private mapZoneMoveDrag(): d3.DragBehavior<SVGGElement, MapZoneShape, unknown> {
+		return d3
+			.drag<SVGGElement, MapZoneShape>()
+			.on("start", (event: any) => event.sourceEvent?.stopPropagation?.())
+			.on("drag", (event: any) => {
+				this.editMapZoneDraft((shape) => ({ ...shape, cx: shape.cx + event.dx, cy: shape.cy + event.dy }));
+			});
+	}
+
+	/**
+	 * Resizes the draft from its bottom right corner.
+	 *
+	 * The drag arrives in screen axes, but the zone may be turned, so the movement is projected onto
+	 * the zone's **own** axes - otherwise dragging the handle of a turned zone would stretch it in a
+	 * direction its corner does not point in. The centre follows by half the growth so the opposite
+	 * corner stays put, which is what a corner handle promises.
+	 */
+	private mapZoneScaleDrag(): d3.DragBehavior<SVGGElement, MapZoneShape, unknown> {
+		return d3
+			.drag<SVGGElement, MapZoneShape>()
+			.on("start", (event: any) => event.sourceEvent?.stopPropagation?.())
+			.on("drag", (event: any) => {
+				this.editMapZoneDraft((shape) => {
+					const radians = (shape.angleDeg * Math.PI) / 180;
+					const cos = Math.cos(radians);
+					const sin = Math.sin(radians);
+					const alongWidth = event.dx * cos + event.dy * sin;
+					const alongHeight = -event.dx * sin + event.dy * cos;
+
+					const width = Math.max(MAP_ZONE_MIN_EDGE_PX, shape.width + alongWidth);
+					// A wall has no height and must not gain one; only its length can change.
+					const height = shape.kind === "wall" ? 0 : Math.max(MAP_ZONE_MIN_EDGE_PX, shape.height + alongHeight);
+
+					const grewWidth = width - shape.width;
+					const grewHeight = height - shape.height;
+					return {
+						...shape,
+						width,
+						height,
+						cx: shape.cx + ((grewWidth / 2) * cos - (grewHeight / 2) * sin),
+						cy: shape.cy + ((grewWidth / 2) * sin + (grewHeight / 2) * cos),
+					};
+				});
+			});
+	}
+
+	/**
+	 * Turns the draft about its own centre.
+	 *
+	 * Follows the pointer rather than accumulating deltas, so the handle stays under the finger
+	 * through the whole gesture. The container is fixed to the map's main group, which is what makes
+	 * `event.x`/`event.y` world pixels - the same space the zone's centre is in.
+	 */
+	private mapZoneRotateDrag(): d3.DragBehavior<SVGGElement, MapZoneShape, unknown> {
+		let grabOffset = 0;
+		return d3
+			.drag<SVGGElement, MapZoneShape>()
+			.container(() => this.mainGroup.node() as any)
+			.on("start", (event: any, shape: MapZoneShape) => {
+				event.sourceEvent?.stopPropagation?.();
+				const pointer = Math.atan2(event.y - shape.cy, event.x - shape.cx);
+				grabOffset = pointer - (shape.angleDeg * Math.PI) / 180;
+			})
+			.on("drag", (event: any) => {
+				this.editMapZoneDraft((shape) => {
+					const pointer = Math.atan2(event.y - shape.cy, event.x - shape.cx);
+					return { ...shape, angleDeg: ((pointer - grabOffset) * 180) / Math.PI };
+				});
+			});
+	}
+
 	/** Puts the handles of every zone back where the current zoom wants them. */
 	private layoutAllZoneHandles(): void {
 		layoutZoneHandles(this.zoneGroup.selectAll<SVGGElement, Rect>("g.zone"), {
@@ -2972,6 +3300,7 @@ export class MapEngine {
 		// The zone scales with the map because it stands for an area on the floor; its handles
 		// must not, or they are unusable at either end of the zoom range.
 		this.layoutAllZoneHandles();
+		if (!this.mapZoneGroup.empty()) layoutMapZoneHandles(this.mapZoneGroup, this.wheelZoom);
 
 		const q10Geometry = isQ10MapData(this.map)
 			? new Q10MapGeometry(this.map, 1, this.getQ10CanvasScale(this.map))
@@ -3221,6 +3550,186 @@ export class MapEngine {
 		this.drawZones();
 		this.renderZoneHint();
 		this.updateRobotZones();
+	}
+
+	// -----------------------------------------------------------------------------
+	// The robot's own walls and zones - what the shell calls
+	// -----------------------------------------------------------------------------
+
+	/**
+	 * Selects a wall or zone, or drops the selection.
+	 *
+	 * Only the selected one carries handles, which is what the app does too (§B.1) and what keeps a
+	 * map holding up to thirty of them readable.
+	 * @param key `kind:index` of the zone, or null.
+	 */
+	public selectMapZone(key: string | null): void {
+		if (this.selectedMapZoneKey === key) return;
+		// Selecting a saved zone while one is being placed would leave the draft on the map with no
+		// way back to it, so the draft wins and the click is spent on dropping it.
+		if (this.mapZoneDraft && key !== MAP_ZONE_DRAFT_KEY) return;
+
+		this.selectedMapZoneKey = key;
+		this.drawMapZones();
+		this.publishMapZoneModel();
+	}
+
+	/**
+	 * Starts placing a new wall or zone in the middle of the current view.
+	 *
+	 * Nothing is sent yet. The draft lives in the browser until {@link MapEngine.saveMapZone}, so it
+	 * can be moved, resized and turned as often as the user likes for exactly one write to the
+	 * robot - which matters because every write rewrites the complete set of walls and zones.
+	 * @param kind Which overlay to place.
+	 */
+	public startMapZone(kind: MapZoneKind): void {
+		if (this.mapZoneRefusal) {
+			this.showError(this.mapZoneRefusalText() ?? "");
+			return;
+		}
+		if (countZonesOfKind(this.mapZones, kind) >= MAP_ZONE_LIMIT) return;
+
+		const params = this.mapZoneParams();
+		if (!params) return;
+
+		// Placing a zone and placing a go-to target are the same gesture; only one can be active.
+		if (this.goToTarget) this.cancelGoTo();
+
+		const svgWidth = parseFloat(this.svg.attr("width"));
+		const svgHeight = parseFloat(this.svg.attr("height"));
+		const centre = localCoordsToRobotCoords(this.screenToWorldCoords(svgWidth / 2, svgHeight / 2), params);
+
+		this.mapZoneDraft = {
+			kind,
+			box: {
+				cx: centre.x,
+				cy: centre.y,
+				halfWidth: MAP_ZONE_DEFAULT_HALF_MM,
+				// A wall is a line: it starts with a length and no thickness at all.
+				halfHeight: kind === "wall" ? 0 : MAP_ZONE_DEFAULT_HALF_MM,
+				angle: 0,
+			},
+		};
+		this.selectedMapZoneKey = MAP_ZONE_DRAFT_KEY;
+		this.drawMapZones();
+		this.publishMapZoneModel();
+	}
+
+	/** Drops the zone being placed without sending anything. */
+	public cancelMapZone(): void {
+		if (!this.mapZoneDraft) return;
+		this.mapZoneDraft = null;
+		this.selectedMapZoneKey = null;
+		this.drawMapZones();
+		this.publishMapZoneModel();
+	}
+
+	/**
+	 * Sends the zone being placed to the robot.
+	 *
+	 * The payload is checked with `parseZoneInput` first - the adapter's own parser, shared through
+	 * `src/common/mapZoneKinds.ts`. Without that the tab would have no way of learning that a
+	 * payload was refused: `set_state` answers `{result:"ok"}` as soon as the value is written,
+	 * before the robot is asked at all (`src/lib/socketHandler.ts:436-443`).
+	 */
+	public async saveMapZone(): Promise<void> {
+		const draft = this.mapZoneDraft;
+		if (!draft || !this.currentRobotDuid) return;
+
+		const points = boxPoints(draft.kind, draft.box);
+		let payload: number[];
+		try {
+			payload = parseZoneInput(draft.kind, zoneAddPayload(draft.kind, points));
+		} catch (e: unknown) {
+			this.showError(this.errorText(e));
+			return;
+		}
+
+		// The draft goes as soon as the command is accepted. It must not stay on the map next to the
+		// zone the robot now holds, which would read as two.
+		this.mapZoneDraft = null;
+		this.selectedMapZoneKey = null;
+		this.drawMapZones();
+		this.publishMapZoneModel();
+
+		await this.sendCommand("set_state", {
+			duid: this.currentRobotDuid,
+			folder: MAP_ZONE_COMMAND_FOLDER,
+			command: MAP_ZONE_ADD_COMMANDS[draft.kind],
+			// A `type: "json"` command state takes a string: `coerceCommandValue` stringifies
+			// whatever it is given (`socketHandler.ts:580-582`), so an array would arrive as
+			// "0,0,100,100" and be refused.
+			value: JSON.stringify(payload),
+		});
+	}
+
+	/**
+	 * Removes one wall or zone from the robot's map.
+	 *
+	 * The index is the position within its own kind, which is what `remove_map_zone` counts. The
+	 * coordinates travel with it so an adapter that compares them can refuse a stale index rather
+	 * than delete the neighbour; today's adapter ignores the extra key.
+	 * @param key `kind:index` of the zone, as the layer reports it.
+	 */
+	public async deleteMapZone(key: string): Promise<void> {
+		if (key === MAP_ZONE_DRAFT_KEY) {
+			this.cancelMapZone();
+			return;
+		}
+		const zone = this.mapZones.find((candidate) => mapZoneKey(candidate) === key);
+		if (!zone || !this.currentRobotDuid) return;
+
+		this.selectedMapZoneKey = null;
+		await this.sendCommand("set_state", {
+			duid: this.currentRobotDuid,
+			folder: MAP_ZONE_COMMAND_FOLDER,
+			command: MAP_ZONE_REMOVE_COMMAND,
+			value: JSON.stringify(zoneRemovalPayload(zone)),
+		});
+	}
+
+	/** Why the adapter would refuse to edit this map's zones, already translated, or null. */
+	private mapZoneRefusalText(): string | null {
+		const refusal = this.mapZoneRefusal;
+		if (!refusal) return null;
+
+		if (refusal.reason === "unreproducible") {
+			return this.t(
+				"ui_map_zones_unreproducible",
+				"This map carries a '%s' overlay the adapter cannot write back, so its walls and zones cannot be changed from here.",
+				refusal.block
+			);
+		}
+		if (refusal.reason === "malformed") {
+			return this.t(
+				"ui_map_zones_malformed",
+				"The '%s' block of this map was not understood, so its walls and zones cannot be changed from here.",
+				refusal.block
+			);
+		}
+		return this.t("ui_map_zones_no_map", "The map has not been read yet; walls and zones cannot be changed from here.");
+	}
+
+	/** Hands the shell everything the zone controls need. */
+	private publishMapZoneModel(): void {
+		const counts = {} as Record<MapZoneKind, number>;
+		for (const kind of MAP_ZONE_KINDS) {
+			counts[kind] = countZonesOfKind(this.mapZones, kind);
+		}
+
+		const selected = this.mapZones.find((zone) => mapZoneKey(zone) === this.selectedMapZoneKey);
+		this.host.onMapZones?.({
+			counts,
+			limit: MAP_ZONE_LIMIT,
+			selectedKey: this.selectedMapZoneKey,
+			selectedKind: this.mapZoneDraft ? this.mapZoneDraft.kind : (selected?.kind ?? null),
+			drafting: this.mapZoneDraft !== null,
+			// Q10 and B01 maps carry none of these blocks and place their overlays through a
+			// different pipeline; offering the controls there would promise something that cannot
+			// work.
+			supported: this.mapZoneParams() !== null,
+			refusalText: this.mapZoneRefusalText(),
+		});
 	}
 
 	/** Starts a run: a zoned one while zones are drawn, otherwise the plain start. */

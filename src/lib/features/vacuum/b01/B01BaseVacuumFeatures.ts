@@ -384,9 +384,7 @@ export class B01BaseVacuumFeatures extends BaseDeviceFeatures {
 			}
 
 			if (resultObj) {
-				if (!this.runtimeDetectionComplete) {
-					await this.detectAndApplyRuntimeFeatures(resultObj);
-				}
+				await this.applyRuntimeFeatureDetection(resultObj);
 				await this.processStatus(resultObj);
 				const c = await this.deps.adapter.getStateAsync(`Devices.${this.duid}.cleaningInfo.clean_count`);
 				this.deps.adapter.rLog("System", this.duid, "Debug", "B01", undefined, `status=${resultObj.status ?? "?"}, clean_count=${c?.val ?? "?"}`, "debug");

@@ -84,6 +84,24 @@ export interface MapOverlayColors {
 	roomSelectionFill: string;
 	/** Rim of that pill and the name on it; the contrast to {@link roomSelectionFill}. */
 	roomSelectionInk: string;
+	/** Body of a no-go zone stored on the robot's map (`allFBZColor`). */
+	noGoFill: string;
+	/** Edge of that zone (`allFBZBorderColor`). */
+	noGoStroke: string;
+	/** Body of a no-mop zone (`mopFBZColor`). */
+	noMopFill: string;
+	/** Edge of that zone (`mopFBZBorderColor`). */
+	noMopStroke: string;
+	/**
+	 * An invisible wall.
+	 *
+	 * The app gives it no colour of its own: its `wallColor` getter falls back to
+	 * `theme.displayZones.allFBZBorderColor` whenever the caller passes none (a65 control plugin,
+	 * A65:522741-522758), and no caller in the bundle passes one. So a wall is drawn in the same
+	 * tone as the edge of a no-go zone, which is also what it is - a boundary the robot must not
+	 * cross.
+	 */
+	wallStroke: string;
 }
 
 /**
@@ -106,6 +124,13 @@ export const LIGHT_MAP_OVERLAY_COLORS: MapOverlayColors = {
 	deleteInk: "#ffffff",
 	roomSelectionFill: "rgba(0, 122, 255, 0.92)",
 	roomSelectionInk: "#ffffff",
+	// Straight out of the app's own `theme.displayZones` table for the light theme
+	// (a65 control plugin, A65:303524). The `66` suffix is the alpha the app itself writes.
+	noGoFill: "#FF5E4A66",
+	noGoStroke: "#FF5E4A",
+	noMopFill: "#65ACFA66",
+	noMopStroke: "#65ACFA",
+	wallStroke: "#FF5E4A",
 };
 
 /**
@@ -125,6 +150,12 @@ export const DARK_MAP_OVERLAY_COLORS: MapOverlayColors = {
 	deleteInk: "#ffffff",
 	roomSelectionFill: "rgba(255, 255, 255, 0.95)",
 	roomSelectionInk: "#111111",
+	// The same table for the dark theme (A65:313366).
+	noGoFill: "#E4432E66",
+	noGoStroke: "#E4432E",
+	noMopFill: "#2083EE66",
+	noMopStroke: "#2083EE",
+	wallStroke: "#E4432E",
 };
 
 /**
@@ -158,6 +189,11 @@ export const MAP_OVERLAY_CSS_VARIABLES: Record<keyof MapOverlayColors, string> =
 	deleteInk: "--rr-zone-delete-ink",
 	roomSelectionFill: "--rr-room-selection-fill",
 	roomSelectionInk: "--rr-room-selection-ink",
+	noGoFill: "--rr-map-no-go-fill",
+	noGoStroke: "--rr-map-no-go-stroke",
+	noMopFill: "--rr-map-no-mop-fill",
+	noMopStroke: "--rr-map-no-mop-stroke",
+	wallStroke: "--rr-map-wall-stroke",
 };
 
 /**
