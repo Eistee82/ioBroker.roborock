@@ -332,10 +332,20 @@ export class MapParser {
 						// offsets that stay put as the count changes - `count` again at +240, 5000 at
 						// +420, two -1 at +572 and +672, two small negative floats at +688. So this
 						// reader is right, and the space beyond the zones belongs to something else.
-						// The proof that the front really is coordinates: all five zones of the
-						// reference map come out as exact rectangles - four right angles, opposite
-						// edges equal to the millimetre, same corner order as `FORBIDDEN_ZONES` beside
-						// them, edges of 100 to 2837 mm. Bytes read at the wrong stride do not do that.
+						// The proof that the front really is coordinates is a counter-check, not the
+						// eyeball test: rectangles that *look* plausible prove nothing if any 16 bytes
+						// in this value range would. So the same shape test was run on **shifted**
+						// offsets. Across both stored maps, 8 of 8 records at the reader's offsets are
+						// rectangles - four right angles, opposite edges equal, same corner order as
+						// the `FORBIDDEN_ZONES` beside them, edges of 100 to 2837 mm - against 0 of 42
+						// at every window shifted by 2 to 14 bytes, and only those same 8 of 169
+						// non-zero windows across the whole block. Two bytes of shift destroy the
+						// shape completely.
+						//
+						// Mind the tolerance if you repeat this: a **turned** zone misses equality of
+						// opposite edges by up to 1 mm, because the coordinates are whole millimetres.
+						// One zone failed a stricter test by 0.002 mm and is perfectly good.
+						//
 						// What the padding carries is **not** established; do not write this block back.
 						case TYPES.DS_FORBIDDEN_ZONES:
 						case TYPES.CLF_FORBIDDEN_ZONES:
