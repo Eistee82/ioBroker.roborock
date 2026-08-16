@@ -112,6 +112,7 @@
  * Nothing is lost by leaving it out: deleting needs the identifier, and both lists already carry it.
  */
 
+import { unwrapTimerRows } from "./deviceTimers";
 import type { CommandOutcome } from "../../commandFeedback";
 
 /** Deletes a schedule the robot keeps in its own memory. See section 1. */
@@ -230,24 +231,4 @@ export function timerIsGone(response: unknown, timerId: string): boolean {
 	const rows = unwrapTimerRows(response);
 	if (rows === null) return false;
 	return !rows.some((row) => Array.isArray(row) && row.length > 0 && String(row[0]) === timerId);
-}
-
-/**
- * Digs the list of rows out of the answer, or reports that there is none.
- * @param response Raw answer.
- * @returns The rows, or `null` when the answer is not a list of rows.
- */
-function unwrapTimerRows(response: unknown): unknown[] | null {
-	let payload: unknown = response;
-	if (payload && typeof payload === "object" && !Array.isArray(payload) && "data" in (payload as Record<string, unknown>)) {
-		payload = (payload as Record<string, unknown>).data;
-	}
-	if (!Array.isArray(payload)) return null;
-
-	// A single-element wrapper around the list, as several answers of this robot carry. Unwrapped only
-	// when the inner element is itself a list of rows, so a genuine one-timer answer is left alone.
-	if (payload.length === 1 && Array.isArray(payload[0]) && Array.isArray(payload[0][0])) {
-		return payload[0];
-	}
-	return payload;
 }

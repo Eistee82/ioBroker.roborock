@@ -301,6 +301,16 @@ the same reason the switch of such a schedule is read-only here: turning a serve
 or off needs a command whose form has not been established, and a switch wired to the wrong command
 would look like it works and do nothing.
 
+**Switching a device schedule is confirmed by the robot's list, not by its answer.** The robot
+answers the switch command with `ok`, and that only says it took the command - so after switching,
+the adapter reads the robot's timer list again (up to three times over two seconds, because a robot
+may need a moment) and acknowledges the switch with what the list reports. If the schedule is still
+the other way round, the state shows the robot's value and carries the reason why the switch did not
+take. The same happens when the command could not be sent, was refused or timed out: the reason is
+written onto the state itself, as a quality and a comment, instead of only into the log. One case is
+deliberately quiet - if the schedule has vanished from the list in the meantime, nothing is claimed
+about it at all, because there is no longer a schedule the claim could be about.
+
 **A schedule can be deleted, though.** Every schedule carries a `delete` button and a `source`
 saying which of the two kinds it is; the adapter sends the command that matches, and afterwards asks
 the robot for its list again. Only when the identifier is gone from that list is the schedule

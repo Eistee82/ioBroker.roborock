@@ -323,6 +323,17 @@ Aus demselben Grund ist der Schalter eines solchen Zeitplans hier nur lesbar: Ih
 auszuschalten bräuchte einen Befehl, dessen Form nicht belegt ist — und ein Schalter am falschen
 Befehl sähe aus, als arbeite er, und täte nichts.
 
+**Einen Gerätezeitplan zu schalten, bestätigt die Liste des Roboters, nicht seine Antwort.** Der
+Roboter antwortet auf den Schaltbefehl mit `ok`, und das heißt nur, dass er ihn angenommen hat —
+deshalb liest der Adapter danach die Zeitplanliste erneut (bis zu dreimal über zwei Sekunden, weil
+ein Roboter einen Moment brauchen kann) und bestätigt den Schalter mit dem, was die Liste meldet.
+Steht der Zeitplan weiterhin andersherum, zeigt der State den Wert des Roboters und trägt den Grund,
+warum das Schalten nicht angekommen ist. Genauso bei einem Befehl, der nicht hinausging, abgelehnt
+wurde oder in eine Zeitüberschreitung lief: Der Grund steht als Qualität und Kommentar am State
+selbst statt nur im Log. Ein Fall bleibt bewusst still — ist der Zeitplan zwischenzeitlich aus der
+Liste verschwunden, wird über ihn gar nichts behauptet, weil es keinen Zeitplan mehr gibt, über den
+sich etwas behaupten ließe.
+
 **Löschen geht dagegen.** Jeder Zeitplan hat einen Knopf `delete` und daneben ein `source`, das
 sagt, welche der beiden Arten er ist; der Adapter schickt den passenden Befehl und fragt danach die
 Liste des Roboters erneut ab. Erst wenn die Kennung darin nicht mehr auftaucht, gilt der Zeitplan

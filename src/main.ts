@@ -12,6 +12,7 @@ import { AppPluginManager } from "./lib/AppPluginManager";
 import { B01Variant, getB01VariantFromModel } from "./lib/b01Variant";
 import { OUTCOME_QUALITY, buildCommandComment, classifyRequestFailure, isProblemOutcome, isShutdownFailure, outcomeArgs } from "./lib/commandFeedback";
 import type { CommandOrigin, CommandOutcome, CommandOutcomeReport } from "./lib/commandFeedback";
+import { timerSwitchState } from "./lib/features/vacuum/deviceTimers";
 import { canDeleteSchedules, parseTimerSource } from "./lib/features/vacuum/timerDeletion";
 import { ConnectionStatusManager } from "./lib/connectionStatus";
 import { DeviceManager } from "./lib/deviceManager";
@@ -2690,6 +2691,21 @@ export class Roborock extends utils.Adapter {
 	}
 
 	/**
+	 * How often the robot's own timer list is asked before the switch is called ineffective.
+	 *
+	 * Not a measurement, and said so plainly: the test device keeps no device timers at all
+	 * (`get_timer` -> `[]`, see `serverTimers.ts`), so how quickly a switched schedule appears
+	 * switched in `get_timer` has never been observed here. Asking once would turn an unmeasured lag
+	 * into a false alarm - the mistake this project keeps removing - and asking for ever would turn a
+	 * genuine failure into silence. The same shape, for the same reason, as the sync window in
+	 * `handleFloorSwitch`, which says of itself: the robot answers `ok` and may still need a moment.
+	 */
+	private static readonly SCHEDULE_VERIFY_ATTEMPTS = 3;
+
+	/** How long to wait between two of those reads. See {@link Roborock.SCHEDULE_VERIFY_ATTEMPTS}. */
+	private static readonly SCHEDULE_VERIFY_DELAY_MS = 1000;
+
+	/**
 	 * Enables or disables an existing device schedule (timer).
 	 *
 	 * `updateTimers()` publishes every timer of the robot as `schedules.<timerId>.enabled`.
@@ -2698,9 +2714,43 @@ export class Roborock extends utils.Adapter {
 	 *   `{"method":"upd_timer","params":["1498595904821","off"]}` -> `["ok"]`
 	 * The timer id is exactly the one `get_timer` returned, so no id translation is needed.
 	 *
-	 * The switch is only acknowledged after the robot confirmed the change. On any other answer
-	 * the timers are re-read so the state keeps showing what the robot actually does instead of
-	 * the value the user just clicked.
+	 * ## `["ok"]` is not the confirmation
+	 *
+	 * It used to be: the answer was compared against `["ok"]` and the switch was then written with
+	 * `ack: true`, which claims "this is how it is". `["ok"]` says the robot took the command, no
+	 * more - the same lie that was removed from `set_dnd_timer` and from the floor switch. So the
+	 * answer is still checked, and strictly, because `upd_timer` has a defined one; but what the
+	 * switch is acknowledged from is the robot's own list, read again afterwards.
+	 *
+	 * The check is kept here rather than handed to `classifyRobotAnswer`: this command has a defined
+	 * answer, and that function judges only `set_*` methods, so it would call every answer `accepted`.
+	 *
+	 * ## What is written down, in the vocabulary of `commandFeedback.ts`
+	 *
+	 * | the list says | outcome | the switch shows |
+	 * | --- | --- | --- |
+	 * | the requested state | `confirmed` | that state, `ack: true` |
+	 * | the other state | `ineffective` | the state the robot reports, `ack: true` |
+	 * | nothing at all - no read came back | `no_answer` | what was clicked, unacknowledged |
+	 * | it does not list this schedule any more | `accepted` | untouched |
+	 *
+	 * plus `rejected` when the answer was not `["ok"]`, and what `classifyRequestFailure` makes of a
+	 * request that threw.
+	 *
+	 * **The order matters twice.** The true value is written **before** the outcome is marked, because
+	 * `markCommandOutcome` keeps `val` and `ack` as it finds them and a later value write would clear
+	 * the mark again. And in the one case where the schedule is gone from the list, the mark is
+	 * written **before** the timers are re-read, because the tree is rebuilt from that read.
+	 *
+	 * ## Why a vanished identifier is `accepted` and not a failure
+	 *
+	 * Both `confirmed` and `ineffective` claim something about a schedule, and there is none left to
+	 * claim it about; `accepted` is the one word that is literally true - the robot answered, and
+	 * nothing beyond that is known. It also covers the second reading of the same observation: a
+	 * single incomplete list answer. Calling that `ineffective` would raise an alarm about a command
+	 * that worked. No `ack: true` either, for the value being acknowledged would be one nobody can
+	 * see any more.
+	 *
 	 * @param duid Device unique id.
 	 * @param timerId Timer id as reported by `get_timer`.
 	 * @param state The state that was written by the user.
@@ -2714,26 +2764,89 @@ export class Roborock extends utils.Adapter {
 		}
 		if (!timerId) return;
 
+		const report = (outcome: CommandOutcome, detail?: string, extraArgs?: string[]): Promise<void> =>
+			this.markCommandOutcome(duid, { command: "upd_timer", outcome, stateId, folder: "schedules", detail, extraArgs });
+		const refreshTimers = (): Promise<void> =>
+			handler.updateTimers().catch((refreshError: unknown) => this.catchError(refreshError, "scheduleToggle(refresh)", duid));
+
 		const enabled = this.isTruthy(state.val);
 		const mode = enabled ? "on" : "off";
+		const startedAt = Date.now();
 
+		let result: unknown;
 		try {
 			this.rLog("Requests", duid, "Info", handler.protocolVersion || undefined, undefined, `[scheduleToggle] Switching timer ${timerId} ${mode}`, "info");
-			const result = await this.requestsHandler.sendRequest(duid, "upd_timer", [timerId, mode]);
-
-			const data = (result && typeof result === "object" && "data" in result) ? (result as { data: unknown }).data : result;
-			if (Array.isArray(data) && data.length === 1 && data[0] === "ok") {
-				await this.setState(stateId, { val: enabled, ack: true });
-				return;
-			}
-
-			this.rLog("Requests", duid, "Warn", handler.protocolVersion || undefined, undefined, `[scheduleToggle] upd_timer for ${timerId} returned unexpected result: ${JSON.stringify(data)} (expected ["ok"])`, "warn");
-			await handler.updateTimers();
+			result = await this.requestsHandler.sendRequest(duid, "upd_timer", [timerId, mode]);
 		} catch (e: unknown) {
 			this.catchError(e, "scheduleToggle", duid);
-			// Re-read so the switch falls back to the timer state the robot really has.
-			await handler.updateTimers().catch((refreshError: unknown) => this.catchError(refreshError, "scheduleToggle(refresh)", duid));
+			const message = this.errorMessage(e);
+			if (isShutdownFailure(message)) return;
+			// Re-read first so the switch falls back to the timer state the robot really has; the mark
+			// goes on afterwards, because that re-read would clear it.
+			await refreshTimers();
+			const outcome = classifyRequestFailure(message, isChannelUnavailableError(e));
+			await report(outcome, outcome === "error" ? message : undefined);
+			return;
 		}
+
+		const data = (result && typeof result === "object" && "data" in result) ? (result as { data: unknown }).data : result;
+		if (!Array.isArray(data) || data.length !== 1 || data[0] !== "ok") {
+			this.rLog("Requests", duid, "Warn", handler.protocolVersion || undefined, undefined, `[scheduleToggle] upd_timer for ${timerId} returned unexpected result: ${JSON.stringify(data)} (expected ["ok"])`, "warn");
+			await refreshTimers();
+			await report("rejected", JSON.stringify(data));
+			return;
+		}
+
+		// The robot took the command. Whether the schedule moved is a different question, and only its
+		// own list answers it.
+		let answered = false;
+		let listed: string | null = null;
+		let stillListed = true;
+		for (let attempt = 0; attempt < Roborock.SCHEDULE_VERIFY_ATTEMPTS; attempt++) {
+			if (attempt > 0) await this.delay(Roborock.SCHEDULE_VERIFY_DELAY_MS);
+
+			let listing: unknown;
+			try {
+				listing = await this.requestsHandler.sendRequest(duid, "get_timer", []);
+			} catch (e: unknown) {
+				if (isShutdownFailure(this.errorMessage(e))) return;
+				this.catchError(e, "scheduleToggle(verify)", duid);
+				break;
+			}
+
+			answered = true;
+			listed = timerSwitchState(listing, timerId);
+			if (listed === null) {
+				stillListed = false;
+				break;
+			}
+			if ((listed === "on") === enabled) break;
+		}
+
+		if (!answered) {
+			this.rLog("Requests", duid, "Warn", handler.protocolVersion || undefined, undefined, `[scheduleToggle] upd_timer for ${timerId} was answered, but get_timer was not; whether the schedule moved is unknown`, "warn");
+			await report("no_answer");
+			return;
+		}
+
+		if (!stillListed) {
+			this.rLog("Requests", duid, "Warn", handler.protocolVersion || undefined, undefined, `[scheduleToggle] The robot no longer lists schedule ${timerId}; it took the command, and there is nothing left to check it against`, "warn");
+			await report("accepted");
+			await refreshTimers();
+			return;
+		}
+
+		const active = listed === "on";
+		await this.setState(stateId, { val: active, ack: true });
+		if (active === enabled) {
+			// Says nothing new about the value - it clears a mark an earlier attempt may have left.
+			await report("confirmed");
+			return;
+		}
+
+		const waited = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+		this.rLog("Requests", duid, "Warn", handler.protocolVersion || undefined, undefined, `[scheduleToggle] upd_timer for ${timerId} was acknowledged, but after ${waited}s get_timer still reports '${listed}' instead of '${mode}'`, "warn");
+		await report("ineffective", undefined, [`${waited}s`, listed || "an unreadable value"]);
 	}
 
 	/**
