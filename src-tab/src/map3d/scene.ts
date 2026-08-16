@@ -26,6 +26,7 @@
 import { WALL_HEIGHT_CELLS } from "./units";
 import type { Map3DModel } from "./map3dModel";
 import { VIRTUAL_WALL_THICKNESS, ZONE_FLOOR_HEIGHT, ZONE_HEIGHT, ZONE_WALL_THICKNESS } from "./zones3d";
+import type { RoborockModel } from "./roborockModels";
 
 /**
  * The parts of the three.js namespace this module uses.
@@ -48,6 +49,9 @@ export interface ThreeLike {
 	InstancedMesh: new (geometry: any, material: any, count: number) => any;
 	Object3D: new () => any;
 	Group: new () => any;
+	/** For Roborock's own furniture models, which arrive as flat buffers. */
+	BufferGeometry: new () => any;
+	BufferAttribute: new (array: ArrayLike<number>, itemSize: number) => any;
 	Texture: new (image: any) => any;
 	DoubleSide: number;
 	SRGBColorSpace: string;
@@ -153,7 +157,13 @@ const DIRECTIONALS: ReadonlyArray<{ intensity: number; direction: [number, numbe
  * @param palette Colours for the current theme.
  * @returns The scene, its camera, and everything that has to be disposed of.
  */
-export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, palette: ScenePalette): BuiltScene {
+export function buildScene(
+	three: ThreeLike,
+	model: Map3DModel,
+	texture: any,
+	palette: ScenePalette,
+	models?: Record<string, RoborockModel> | null
+): BuiltScene {
 	const scene = new three.Scene();
 	// No background of its own. The renderer clears to transparent and the panel behind the canvas
 	// supplies the colour, which is the tab's own and therefore already correct in both themes -
@@ -268,7 +278,35 @@ export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, pa
 		// sign and by nothing else.
 		group.rotation.y = (-piece.angle * Math.PI) / 180;
 
-		// No shape for this type: the plain block it always had.
+		// Roborock's own model where there is one. It is scaled onto the footprint the robot
+		// measured rather than drawn at its own size: the footprint is the one measurement in this
+		// scene, and a model at its native size would sit beside the outline instead of in it.
+		// Height follows the mean of the two ground scales, so a piece is never stretched upwards
+		// by a footprint that happens to be narrow.
+		const own = piece.model ? models?.[piece.model] : undefined;
+		if (own) {
+			const geometry = new three.BufferGeometry();
+			geometry.setAttribute("position", new three.BufferAttribute(own.position, 3));
+			geometry.setAttribute("normal", new three.BufferAttribute(own.normal, 3));
+			geometry.setIndex(new three.BufferAttribute(own.index, 1));
+
+			const sx = own.size.x > 0 ? piece.width / own.size.x : 1;
+			const sz = own.size.z > 0 ? piece.depth / own.size.z : 1;
+			const sy = (sx + sz) / 2;
+
+			const mesh = new three.Mesh(geometry, material);
+			mesh.scale.set(sx, sy, sz);
+			// The models are not centred on their own origin, and they sit on their own floor: the
+			// centre is pulled to 0 across the ground and the bottom of the box to y = 0.
+			mesh.position.set(-own.centre.x * sx, (own.size.y / 2 - own.centre.y) * sy, -own.centre.z * sz);
+			group.add(mesh);
+			disposables.push(geometry);
+			scene.add(group);
+			continue;
+		}
+
+		// No model: the shape from `furnitureShapes.ts`, or the plain block for a type that has
+		// neither.
 		const parts = piece.parts ?? [{ dx: 0, dz: 0, w: 1, d: 1, y0: 0, h: 1 }];
 		for (const part of parts) {
 			const w = piece.width * part.w;

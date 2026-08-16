@@ -146,6 +146,17 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 			}
 			public dispose(): void {}
 		},
+		BufferGeometry: class {
+			public setAttribute(): void {}
+			public setIndex(): void {}
+			public dispose(): void {}
+		},
+		BufferAttribute: class {
+			public constructor(
+				public array: ArrayLike<number>,
+				public itemSize: number
+			) {}
+		},
 		Object3D: Obj,
 		Group: class extends Obj {
 			public constructor() {
@@ -284,8 +295,8 @@ describe("the walls", () => {
 });
 
 describe("the furniture", () => {
-	const SOFA = { x: 6, z: 26, width: 6, depth: 4, height: 16, angle: 0, type: 46, subType: 1, known: true, parts: shapeFor(46, 1) };
-	const STRANGE = { x: 2, z: 2, width: 3, depth: 2, height: 8, angle: 90, type: 99, subType: 0, known: false, parts: null };
+	const SOFA = { x: 6, z: 26, width: 6, depth: 4, height: 16, angle: 0, type: 46, subType: 1, known: true, parts: shapeFor(46, 1), model: null };
+	const STRANGE = { x: 2, z: 2, width: 3, depth: 2, height: 8, angle: 90, type: 99, subType: 0, known: false, parts: null, model: null };
 
 	it("stands a piece without a shape on the floor at its own size", () => {
 		// No shape means the plain block it always had: the full footprint, standing on the ground
@@ -312,6 +323,41 @@ describe("the furniture", () => {
 		expect(log.groups).toHaveLength(1);
 		expect(log.groups[0].rotation.y).toBeCloseTo(-Math.PI / 2);
 		expect([log.groups[0].position.x, log.groups[0].position.y, log.groups[0].position.z]).toEqual([2, 0, 2]);
+	});
+
+	it("draws Roborock's own model when it has been loaded, and falls back when it has not", () => {
+		// The model wins over the substitute shape, and a piece whose model failed to load still
+		// gets drawn - a missing download costs detail, never the piece.
+		const withModel = { ...SOFA, model: "sofa1" };
+		const roborock = {
+			sofa1: {
+				position: new Float32Array([0, 0, 0, 2, 0, 0, 2, 1, 3]),
+				normal: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]),
+				index: new Uint16Array([0, 1, 2]),
+				size: { x: 2, y: 1, z: 3 },
+				centre: { x: 1, y: 0.5, z: 1.5 }
+			}
+		};
+
+		// Counted as a difference against a scene with no furniture at all: the robot and the dock
+		// are meshes too, and counting from a fixed index breaks the moment one is added.
+		const bare = stubThree();
+		buildScene(bare.three, model({ furniture: [] }), {}, PALETTE, roborock);
+		const baseline = bare.log.meshes.length;
+
+		const loaded = stubThree();
+		buildScene(loaded.three, model({ furniture: [withModel] }), {}, PALETTE, roborock);
+		// One mesh for the piece, not one per part of the substitute shape.
+		expect(loaded.log.meshes.length - baseline).toBe(1);
+		// Scaled from the model's own box onto the footprint the robot measured. Furniture is drawn
+		// after the floor and before the robot, so it is the second mesh.
+		const drawn = loaded.log.meshes[1];
+		expect(drawn.scale.x).toBeCloseTo(SOFA.width / 2);
+		expect(drawn.scale.z).toBeCloseTo(SOFA.depth / 3);
+
+		const missing = stubThree();
+		buildScene(missing.three, model({ furniture: [withModel] }), {}, PALETTE, null);
+		expect(missing.log.meshes.length - baseline).toBeGreaterThan(1);
 	});
 
 	it("draws a known piece from several parts rather than as one block", () => {

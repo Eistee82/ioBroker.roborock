@@ -19,3 +19,25 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Third-party material
+--------------------
+
+The MIT licence above covers this adapter's own code. It does not cover material
+that belongs to Roborock and is only reproduced here so the adapter can show the
+same things their app shows:
+
+  * src-tab/src/map3d/roborockModels.json
+    3D furniture models, extracted from assets/models_g3db/ of the Roborock app
+    and converted by scripts/convert_g3db_models.js. The geometry is Roborock's.
+
+  * The furniture and dock icons drawn on the map. These are not shipped at all:
+    they are read at runtime from the control plugin the user's own Roborock
+    account downloads, so an installation that never signs in simply has none of
+    them.
+
+Roborock holds the rights to both. They are used here to render a user's own
+device, they are not part of this project's licensed work, and they must not be
+redistributed as if they were.

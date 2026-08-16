@@ -3,6 +3,7 @@ import { Box, CircularProgress, Typography } from "@mui/material";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { buildScene } from "./scene";
 import type { BuiltScene, ScenePalette } from "./scene";
+import { loadRoborockModels } from "./roborockModels";
 import type { CellPoint, Map3DModel } from "./map3dModel";
 
 /**
@@ -85,7 +86,15 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 				texture.colorSpace = three.SRGBColorSpace;
 				texture.needsUpdate = true;
 
-				built = buildScene(three, model, texture, palette);
+				// Roborock's own furniture models, in a chunk of their own. Awaited rather than
+				// applied later so the first frame already shows the furniture the way every later
+				// frame will - a piece that turns from a box into a sofa a second after the view
+				// opens looks like a fault. A failed load returns null and the view draws its own
+				// shapes, which is what it did before the models existed.
+				const furnitureModels = await loadRoborockModels();
+				if (cancelled) return;
+
+				built = buildScene(three, model, texture, palette, furnitureModels);
 				builtRef.current = built;
 
 				// Transparent rather than filled: the canvas sits on the panel the tab already

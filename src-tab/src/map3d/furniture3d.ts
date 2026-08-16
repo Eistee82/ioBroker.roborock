@@ -29,7 +29,7 @@ import { FURNITURE_TYPES, furnitureRect } from "../engine/furniture";
 import type { FurniturePoint } from "../engine/furniture";
 import { MM_PER_CELL } from "./units";
 import type { CellPoint } from "./map3dModel";
-import { shapeFor } from "./furnitureShapes";
+import { modelNameFor, shapeFor } from "./furnitureShapes";
 import type { ShapePart } from "./furnitureShapes";
 
 /**
@@ -102,6 +102,13 @@ export interface FurnitureBox {
 	 * them.
 	 */
 	parts: readonly ShapePart[] | null;
+	/**
+	 * Name of Roborock's own model for this piece, or null.
+	 *
+	 * The scene draws that model when it has been loaded and falls back to {@link parts} when it
+	 * has not - so a piece is never lost to a failed download.
+	 */
+	model: string | null;
 }
 
 /** The fields of one furniture entry this module reads. */
@@ -171,6 +178,7 @@ export function buildFurnitureBoxes(value: unknown, left: number, top: number, g
 			// A type with no height of its own gets no shape either: the shape would claim to know
 			// what the piece is, and the height table is where that knowledge is recorded.
 			parts: known ? shapeFor(type, subType) : null,
+			model: known ? modelNameFor(type, subType) : null,
 			known
 		});
 	}

@@ -9,11 +9,15 @@
  * {@link modelNameFor} unchanged, down to the two sofa corner variants and the two coffee tables.
  * `FT_CATTREE` has no entry there and gets none here either.
  *
- * **Invented** is what each model looks like. The app's own models are 35 `.g3db` files inside the
- * APK and nowhere else - not in the control plugin the adapter downloads for the 2D artwork - so
- * there is nothing to fetch and shipping them is the line this project already drew once. Every
- * part list below is therefore an ordinary piece of furniture drawn from scratch: a bed is a
- * mattress with a headboard and two pillows because beds are, not because a file said so.
+ * **Invented** is what each model looks like here. Every part list below is an ordinary piece of
+ * furniture drawn from scratch: a bed is a mattress with a headboard and two pillows because beds
+ * are, not because a file said so.
+ *
+ * These shapes are the **fallback**. Roborock's own models are converted alongside them
+ * (`roborockModels.ts`, `scripts/convert_g3db_models.js`) and are drawn whenever they have loaded;
+ * that geometry belongs to Roborock and is not covered by this adapter's licence. What is below
+ * takes over when the models cannot be fetched, and it is also all there is for a type Roborock
+ * has no model for.
  *
  * That is a weaker claim than the footprint, which the map carries, and than the model choice,
  * which is read out of the app. It is a stronger one than the single block it replaces, because a
