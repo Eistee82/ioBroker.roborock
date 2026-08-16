@@ -62,23 +62,33 @@ import type { MapInventory, MapSlot } from "./v1MapInventory";
  * ## The name is written raw, and that is now proven rather than assumed
  *
  * `specEncode(s)` is `isSpecSupported() ? global.escape(s) : s`, so on a host where that predicate
- * holds the app stores map names percent-escaped. It does not hold in the Roborock app:
+ * holds the app stores map names percent-escaped. It does not hold in the Roborock app, and the
+ * chain is unbroken from the encoder to the value it tests:
  *
  * ```js
- * // A65:182830-182848, all of module 438 (lines 176421-185678)
+ * // A65:213035-213056, module 484 - and `specDecode` is its mirror at A65:213058-213079
+ * specEncode(s) = deps[6].isSpecSupported() ? global.escape(s) : s
+ * // A65:213845: deps of module 484 = [1, 2, 15, 452, 485, 486, 439, 460, 522]
+ * //             index 6 -> module 439
+ *
+ * // A65:182832-182849, module 439 (its factory spans lines 176421-185677,
+ * // registered as 439 at A65:185678)
  * isSpecSupported() = _closure1_slot21 && (isA14orA15() || isA19())
- * // A65:185232-185234 and A65:185247-185249
+ * // A65:185232-185234 and A65:185247-185249, same module
  * _closure1_slot16 = NativeModules.RRPluginSDK
- * _closure1_slot21 = !_closure1_slot16          // exported as `isMiApp`
+ * _closure1_slot21 = !_closure1_slot16          // exported as `isMiApp` at A65:185248
  * ```
  *
  * The model half is two fixed lists (A65:178869-178886): `a14`, `a14v2`-`a14v5`, `a15`,
- * `a15v2`-`a15v5` and `a19`, `a19v2`-`a19v5`. The half in front of it is the **absence** of
- * Roborock's own native bridge, which is what the plugin calls running inside Mi Home. In the
- * Roborock app that bridge is present - the same module dereferences it for
- * `isSmartSceneSupported` and requires it for `isSupport3DMap`, and a Roborock app without 3D maps
- * is not the app this plugin was read out of - so `isSpecSupported()` is falsy there for **every**
- * model, escaping included.
+ * `a15v2`-`a15v5` and `a19`, `a19v2`-`a19v5`. **They are the second half of an `&&`**, and the
+ * first half is the **absence** of Roborock's own native bridge - what the plugin itself calls
+ * running inside Mi Home. In the Roborock app that bridge is present: the same module dereferences
+ * it for `isSmartSceneSupported` (A65:182816-182830) and requires it for `isSupport3DMap`
+ * (A65:182851-182868), and a Roborock app whose 3D map is switched off is not the app this plugin
+ * was read out of. So `isSpecSupported()` is falsy there for **every** model, escaping included.
+ *
+ * **Escaping is a Mi Home path, not a model path.** Reading the model lists on their own inverts
+ * the conclusion for eighteen models.
  *
  * Therefore the adapter sends the name exactly as it was given, and reads it back exactly as the
  * robot returns it. The one honest limit: the inference above is that `RRPluginSDK` exists in the
