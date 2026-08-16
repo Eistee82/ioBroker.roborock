@@ -3,7 +3,7 @@ import * as crypto from "node:crypto";
 import type { Roborock } from "../../../main";
 import type { Furniture, SegmentInfo } from "./types";
 import type { SegmentRaster } from "../../../common/segmentRaster";
-import { encodeRasterRuns, MAX_RASTER_RUN_VALUES } from "../../../common/segmentRaster";
+import { encodeRasterRuns, imagePixelsFromCells, MAX_RASTER_RUN_VALUES } from "../../../common/segmentRaster";
 
 export type { Furniture };
 
@@ -111,13 +111,22 @@ interface ImageBlock {
 	};
 	position: { top: number; left: number };
 	dimensions: { height: number; width: number };
-	pixels: { floor: number[]; obstacle: number[]; segments: number[] };
+	/**
+	 * Floor, obstacle and segment cells, the way this block was published until the raster replaced
+	 * them.
+	 *
+	 * **Present only when {@link ImageBlock.raster} is not.** They are derived views of the raster -
+	 * one filter each, see `imagePixels` - and sending both cost 472 KiB of every map cycle on the
+	 * reference device against the raster's 23 KiB. Readers go through `imagePixels`, which prefers
+	 * these lists when a `mapData` state written by an older adapter version still carries them.
+	 */
+	pixels?: { floor: number[]; obstacle: number[]; segments: number[] };
 	/**
 	 * The grid as the robot sends it, one byte per cell, run-length coded.
 	 *
-	 * The three `pixels` arrays are derived views and cannot replace it: `pixels.obstacle` keeps
-	 * only the cell index and throws the segment id away, which is exactly what dividing a room
-	 * needs. See {@link SegmentRaster} for the coding and for why it is not gzipped.
+	 * Richer than the `pixels` lists above, not just smaller: `pixels.obstacle` keeps only the cell
+	 * index and throws the segment id away, which is exactly what dividing a room needs. See
+	 * {@link SegmentRaster} for the coding and for why it is not gzipped.
 	 *
 	 * Absent when the raster does not compress - see {@link MapParser.buildSegmentRaster}.
 	 */
@@ -510,7 +519,6 @@ export class MapParser {
 			},
 			position: { top, left },
 			dimensions: { height: height_px, width: width_px },
-			pixels: { floor: [], obstacle: [], segments: [] },
 		};
 
 		if (height_px <= 0 || width_px <= 0) return parameters;
@@ -522,8 +530,8 @@ export class MapParser {
 		const dataStart = dataPosition + offset;
 
 		// The grid as it arrives, kept verbatim so that the segment id of a *wall* cell survives -
-		// `pixels.obstacle` below drops it, and dividing a room needs it. Copied in this loop rather
-		// than sliced afterwards so the block is walked exactly once.
+		// the `pixels.obstacle` view drops it, and dividing a room needs it. Copied in this loop
+		// rather than sliced afterwards so the block is walked exactly once.
 		const rasterCells = new Uint8Array(length);
 
 		for (let i = 0; i < length; i++) {
@@ -532,37 +540,35 @@ export class MapParser {
 
 			const pixelType = pixelByte & 0x07;
 
-			if (pixelType === 1) {
-				// Obstacle
-				parameters.pixels.obstacle.push(i);
-			} else if (pixelType !== 0) {
-				// Floor
-				parameters.pixels.floor.push(i);
+			// Walls take no further part here: their segment id lives in the raster, and the room
+			// metrics below are counted over floor cells only.
+			if (pixelType === 0 || pixelType === 1) continue;
 
-				const segmentID = (pixelByte & 248) >> 3;
-				segmentIDsInImage.add(segmentID);
+			const segmentID = (pixelByte & 248) >> 3;
+			segmentIDsInImage.add(segmentID);
 
-				parameters.pixels.segments.push(i | (segmentID << 21));
+			// Calculate UN-SCALED pixel coordinates relative to the data block (0, 0)
+			const x = i % width_px;
+			const y = Math.floor(i / width_px);
 
-				// Calculate UN-SCALED pixel coordinates relative to the data block (0, 0)
-				const x = i % width_px;
-				const y = Math.floor(i / width_px);
-
-				const bb = segBB[segmentID];
-				if (!bb) {
-					segBB[segmentID] = { minX: x, maxX: x, minY: y, maxY: y, count: 1 };
-				} else {
-					if (x < bb.minX) bb.minX = x;
-					if (x > bb.maxX) bb.maxX = x;
-					if (y < bb.minY) bb.minY = y;
-					if (y > bb.maxY) bb.maxY = y;
-					bb.count++;
-				}
+			const bb = segBB[segmentID];
+			if (!bb) {
+				segBB[segmentID] = { minX: x, maxX: x, minY: y, maxY: y, count: 1 };
+			} else {
+				if (x < bb.minX) bb.minX = x;
+				if (x > bb.maxX) bb.maxX = x;
+				if (y < bb.minY) bb.minY = y;
+				if (y > bb.maxY) bb.maxY = y;
+				bb.count++;
 			}
 		}
 
+		// The raster is what gets published; the three cell lists are derived from it at every
+		// reader. Only when it has to be dropped do the lists go on the wire in its place, because a
+		// map with neither draws as an empty picture - see `imagePixels`.
 		const raster = this.buildSegmentRaster(rasterCells, width_px, height_px);
 		if (raster) parameters.raster = raster;
+		else parameters.pixels = imagePixelsFromCells(rasterCells);
 
 		// --- Process all found segments ---
 

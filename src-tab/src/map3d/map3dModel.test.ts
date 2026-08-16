@@ -8,8 +8,10 @@ import { MM_PER_CELL, WALL_HEIGHT_CELLS, buildMap3DModel, cellOf, robotMmToCell 
  *
  * That this reads the **published** cell occupancy rather than re-deriving anything:
  * `_appanalysis/21-3d-kartenansicht.md` §8.3 concluded the adapter does not publish it and that a
- * new request would be needed. It does publish it, in `map.mapData` → `IMAGE.pixels.obstacle`, and
- * these tests are the standing proof of that shape.
+ * new request would be needed. It does publish it, in `map.mapData` → `IMAGE.raster`, and these
+ * tests are the standing proof of that shape - in both forms, because a `mapData` state written
+ * before the raster replaced the cell lists carries `IMAGE.pixels` instead and is read back
+ * unchanged.
  *
  * And the row order, which is the kind of mistake that looks fine until someone compares the 3D
  * view with the 2D one on an asymmetric flat.
@@ -65,6 +67,32 @@ describe("building the model", () => {
 		const model = buildMap3DModel(strange, IMAGE);
 		expect(model?.wallCellCount).toBe(2);
 		expect(model?.walls).toEqual([{ x0: 0, y0: 2, x1: 1, y1: 2 }]);
+	});
+
+	it("builds the same walls from the raster as from the cell lists it replaced", () => {
+		// Same 4 × 3 grid as WITH_WALL: top row wall (segment 1), row below it floor, rest empty.
+		// Cell types live in the low three bits, the segment id above them.
+		const wall = (1 << 3) | 1;
+		const floor = (1 << 3) | 7;
+		const raster = {
+			encoding: "rle" as const,
+			width: 4,
+			height: 3,
+			runs: [wall, 4, floor, 4, 0, 4]
+		};
+		const fromRaster = buildMap3DModel({ IMAGE: { ...MAP_DATA.IMAGE, pixels: undefined, raster } }, IMAGE);
+
+		expect(fromRaster?.walls).toEqual(buildMap3DModel(WITH_WALL, IMAGE)?.walls);
+		expect(fromRaster?.wallCellCount).toBe(4);
+	});
+
+	it("draws no walls at all when the block carries neither form", () => {
+		// A B01/Q10 map, or an image block that could not be parsed. The floor and the picture are
+		// still there, so the view stays usable rather than falling back to 2D.
+		const model = buildMap3DModel({ IMAGE: { ...MAP_DATA.IMAGE, pixels: undefined } }, IMAGE);
+		expect(model).not.toBeNull();
+		expect(model?.walls).toEqual([]);
+		expect(model?.wallCellCount).toBe(0);
 	});
 
 	it("puts the walls in the row order of the picture, not of the cell list", () => {

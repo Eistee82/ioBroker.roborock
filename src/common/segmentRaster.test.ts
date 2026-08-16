@@ -3,6 +3,8 @@ import type { SegmentRaster } from "./segmentRaster";
 import {
 	decodeRasterRuns,
 	encodeRasterRuns,
+	imagePixels,
+	imagePixelsFromCells,
 	rasterCellAt,
 	rasterCellType,
 	rasterSegmentId,
@@ -127,6 +129,104 @@ describe("decoding a raster that came out of a state", () => {
 		expect(decodeRasterRuns(coded([7, 8], width, height), 0)).toBeNull();
 		expect(decodeRasterRuns(coded([7, 8], width, height), -1)).toBeNull();
 		expect(decodeRasterRuns(coded([7, 8], width, height), 9_000_000)).toBeNull();
+	});
+});
+
+describe("deriving the cell lists an image block used to publish", () => {
+	const FLOOR = 7;
+
+	/** The lists as `MapParser` built them before the raster replaced them, straight from the grid. */
+	function asTheParserDid(cells: Uint8Array): { floor: number[]; obstacle: number[]; segments: number[] } {
+		const lists = { floor: [] as number[], obstacle: [] as number[], segments: [] as number[] };
+		for (let i = 0; i < cells.length; i++) {
+			const type = cells[i] & 0x07;
+			if (type === 1) lists.obstacle.push(i);
+			else if (type !== 0) {
+				lists.floor.push(i);
+				lists.segments.push(i | (((cells[i] & 248) >> 3) << 21));
+			}
+		}
+		return lists;
+	}
+
+	it("reproduces the old lists exactly, over the same sweep the coding is tested on", () => {
+		const shapes: Array<[number, number]> = [[1, 1], [7, 1], [3, 5], [16, 9], [64, 32]];
+		const patterns: Array<(x: number, y: number) => number> = [
+			() => 0,
+			() => (16 << 3) | FLOOR,
+			(x) => (x % 2 === 0 ? 0 : (17 << 3) | RASTER_TYPE_WALL),
+			(x, y) => ((((x * 7 + y * 13) % 32) << 3) | ((x + y) % 8)),
+			(x, y) => (x < 3 || y < 3 ? 0 : (18 << 3) | FLOOR),
+		];
+
+		for (const [width, height] of shapes) {
+			for (const pattern of patterns) {
+				const cells = raster(width, height, pattern);
+				const published = coded(encodeRasterRuns(cells), width, height);
+				expect(imagePixels({ raster: published }), `${width}x${height}`).toEqual(asTheParserDid(cells));
+				expect(imagePixelsFromCells(cells), `${width}x${height}`).toEqual(asTheParserDid(cells));
+			}
+		}
+	});
+
+	it("keeps floor and segments in step: the same cells, in the same order", () => {
+		// Two rooms and a wall between them. `segments` is `floor` with the id packed in, and every
+		// reader that draws one and labels the other depends on that.
+		const cells = new Uint8Array([(16 << 3) | FLOOR, (16 << 3) | RASTER_TYPE_WALL, (17 << 3) | FLOOR, 0]);
+		const lists = imagePixelsFromCells(cells);
+
+		expect(lists.floor).toEqual([0, 2]);
+		expect(lists.obstacle).toEqual([1]);
+		expect(lists.segments.map((px) => px & 0x1fffff)).toEqual(lists.floor);
+		expect(lists.segments.map((px) => px >>> 21)).toEqual([16, 17]);
+	});
+
+	it("prefers the published lists, because a stored map may predate the raster", () => {
+		// The trap this guards: `MapManager.repaintStoredMap` reads `mapData` back, and a state an
+		// older adapter version wrote has `pixels` and no `raster`. Deriving unconditionally would
+		// blank every stored map at the first repaint after an update.
+		const old = { pixels: { floor: [4, 5], obstacle: [6], segments: [4 | (16 << 21)] } };
+		expect(imagePixels(old)).toEqual(old.pixels);
+
+		// And when both are there, the published lists still win - they are what was drawn before.
+		const both = { pixels: { floor: [1], obstacle: [], segments: [] }, raster: coded([(16 << 3) | FLOOR, 4], 2, 2) };
+		expect(imagePixels(both).floor).toEqual([1]);
+	});
+
+	it("fills in the lists an old state happens to be missing", () => {
+		// A partial `pixels` object still counts as the old form; the fields it lacks come back empty
+		// rather than from the raster, so the two halves can never describe different grids.
+		expect(imagePixels({ pixels: { obstacle: [3] } })).toEqual({ floor: [], obstacle: [3], segments: [] });
+	});
+
+	it("draws nothing rather than throwing when the block carries neither form", () => {
+		// The three cases this covers: a B01/Q10 map, an image block that could not be parsed, and a
+		// raster dropped for exceeding MAX_RASTER_RUN_VALUES on a map whose lists were dropped too.
+		const empty = { floor: [], obstacle: [], segments: [] };
+		expect(imagePixels(undefined)).toEqual(empty);
+		expect(imagePixels(null)).toEqual(empty);
+		expect(imagePixels({})).toEqual(empty);
+		expect(imagePixels({ pixels: {} })).toEqual(empty);
+		expect(imagePixels({ pixels: null, raster: null })).toEqual(empty);
+		expect(imagePixels({ IMAGE: {} } as never)).toEqual(empty);
+	});
+
+	it("draws nothing rather than half a map when the raster does not decode", () => {
+		// Same rule as `decodeRasterRuns`: a raster that is silently half right is worse than none.
+		expect(imagePixels({ raster: coded([7, 3], 4, 2) })).toEqual({ floor: [], obstacle: [], segments: [] });
+		expect(imagePixels({ raster: coded([7, 8], 0, 0) })).toEqual({ floor: [], obstacle: [], segments: [] });
+		expect(imagePixels({ raster: { encoding: "gzip", width: 2, height: 2, runs: [7, 4] } as unknown as SegmentRaster })).toEqual({
+			floor: [],
+			obstacle: [],
+			segments: [],
+		});
+	});
+
+	it("hands back fresh arrays, so a reader cannot corrupt the next one", () => {
+		const source = { raster: coded([(16 << 3) | FLOOR, 4], 2, 2) };
+		const first = imagePixels(source);
+		first.floor.push(99);
+		expect(imagePixels(source).floor).toEqual([0, 1, 2, 3]);
 	});
 });
 

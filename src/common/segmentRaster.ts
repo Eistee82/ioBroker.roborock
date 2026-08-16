@@ -4,34 +4,32 @@
  *
  * ## Why this exists
  *
- * `MapParser` already publishes three derived views of the image block - `pixels.floor`,
- * `pixels.obstacle` and `pixels.segments`. None of them is enough to divide a room, because
- * `pixels.obstacle` drops the segment id: it stores a bare cell index, while the raster byte holds
- * the id in its upper five bits for wall cells too. On the reference device that is not a corner
- * case - of 3468 wall cells, 3467 belong to a segment (measured on
+ * The image block used to be published three times over, as `pixels.floor`, `pixels.obstacle` and
+ * `pixels.segments`. None of them is enough to divide a room, because `pixels.obstacle` drops the
+ * segment id: it stores a bare cell index, while the raster byte holds the id in its upper five
+ * bits for wall cells too. On the reference device that is not a corner case - of 3468 wall cells,
+ * 3467 belong to a segment (measured on
  * `_appanalysis/backups/backup-20260814-185206/karte-0-roh.bin`), and the app's dividing-line
  * search walks exactly those cells to find the room boundary
  * (`_appanalysis/28-raeume-teilen.md` §2.3).
  *
- * So the raster is published as it comes off the wire, and every reader derives what it needs.
+ * So the raster is published as it comes off the wire, and every reader derives what it needs
+ * through {@link imagePixels}.
  *
  * ## Why run-length and not gzip
  *
  * Measured on the map above (427 x 365 = 155 855 cells, 3851 runs):
  *
- * | representation                           | size     |
- * |------------------------------------------|----------|
- * | `pixels.*` as published today            | 472 KiB  |
- * | raster, run-length coded as below        |  23 KiB  |
- * | raster, gzip + base64                    |   4 KiB  |
+ * | representation                     | size     |
+ * |------------------------------------|----------|
+ * | `pixels.*` as published before     | 472 KiB  |
+ * | raster, run-length coded as below  |  23 KiB  |
+ * | raster, gzip + base64              |   4 KiB  |
  *
- * gzip is smaller, but it buys 19 KiB on a payload that is already 472 KiB - a 4 % cut of the
- * wrong number - and costs an asynchronous `DecompressionStream` in the browser or a new
- * dependency in the tab. Run-length coding is a dozen lines that run unchanged on both sides,
- * synchronously, and can be read by a human looking at the state. The cut worth taking is a
- * different one: publishing *only* the raster and deriving `pixels.*` from it in the four places
- * that read them would turn 472 KiB into about 5 KiB. That touches working drawing code and is
- * deliberately not done here.
+ * gzip is smaller, but it buys 19 KiB on top of a cut that is already 472 KiB, and costs an
+ * asynchronous `DecompressionStream` in the browser or a new dependency in the tab. Run-length
+ * coding is a dozen lines that run unchanged on both sides, synchronously, and can be read by a
+ * human looking at the state.
  */
 
 /**
@@ -71,8 +69,10 @@ const MAX_RASTER_CELLS = 8_000_000;
  * real map can reach it, low enough that a grid with no run structure at all - which would code to
  * two numbers per cell, megabytes of it - is dropped instead of written into an ioBroker state.
  *
- * Dropping costs the admin tab its dividing tool on that one map. Every other reader works off the
- * `pixels` lists and does not notice.
+ * Dropping it is not the same as dropping the map: `MapParser` then publishes the three `pixels`
+ * lists instead, at their full cost, and every reader goes through {@link imagePixels} and does not
+ * notice. Only the admin tab's dividing tool, which needs the segment id of a *wall* cell, is
+ * unavailable on such a map.
  */
 export const MAX_RASTER_RUN_VALUES = 32_768;
 
@@ -156,6 +156,108 @@ export function decodeRasterRuns(raster: SegmentRaster | undefined | null, expec
 	}
 
 	return written === expectedCells ? cells : null;
+}
+
+/**
+ * The three cell lists the drawing code works with, each holding raster cell indices.
+ *
+ * `floor` and `segments` describe the same cells in the same order; `segments` packs the segment id
+ * into the upper bits as `index | (segmentId << 21)`.
+ */
+export interface ImagePixelLists {
+	/** Cells whose type is neither {@link RASTER_TYPE_EMPTY} nor {@link RASTER_TYPE_WALL}. */
+	floor: number[];
+	/** Cells of type {@link RASTER_TYPE_WALL}. The segment id is *not* part of these values. */
+	obstacle: number[];
+	/** The floor cells again, each with its segment id in bits 21 and above. */
+	segments: number[];
+}
+
+/**
+ * The part of an image block this module reads.
+ *
+ * Both fields are optional and both may be absent at once - see {@link imagePixels}. Typed loosely
+ * because one caller is the admin tab, which gets this straight out of an ioBroker state and can
+ * therefore be handed anything at all.
+ */
+export interface PixelSourceImage {
+	/** The lists as an older adapter version published them, when the state still carries them. */
+	pixels?: { floor?: unknown; obstacle?: unknown; segments?: unknown } | null;
+	/** The raster as published today. */
+	raster?: SegmentRaster | null;
+}
+
+/** The value, if it is an array of numbers worth using; otherwise null. */
+function publishedList(value: unknown): number[] | null {
+	return Array.isArray(value) ? (value as number[]) : null;
+}
+
+/**
+ * The floor, obstacle and segment cells of an image block, from whichever form the map carries.
+ *
+ * ## Why this is not just a field read
+ *
+ * The three lists are derived views of one and the same grid, and publishing them alongside the
+ * raster cost 472 KiB of every map cycle for data the raster already holds
+ * (`_appanalysis/backups/backup-20260814-185206/karte-0-roh.bin`: 30 490 floor cells, 3468 wall
+ * cells, 472 KiB against the raster's 23 KiB). So they are derived here instead of sent.
+ *
+ * Two things stop that from being a straight swap, and both are the reason this function exists
+ * rather than an inline `decodeRasterRuns` at each call site:
+ *
+ *  1. **`mapData` outlives the adapter version that wrote it.** `MapManager.repaintStoredMap` reads
+ *     the state back - on a theme switch, on a room selection - and a state written before this
+ *     change carries `pixels` and no `raster`. Deriving unconditionally would blank every stored
+ *     map at the first repaint after an update, silently and for good. So a published list wins
+ *     whenever there is one.
+ *  2. **The raster is absent by design in three cases**: B01/Q10 maps have no such block at all, an
+ *     image block that could not be parsed has neither field, and a raster whose coding would
+ *     exceed {@link MAX_RASTER_RUN_VALUES} is dropped in favour of the `pixels` lists. "Neither
+ *     field" therefore has to mean "draw nothing", not "throw" - a map without a floor is still a
+ *     map with a path, a robot and a dock on it.
+ *
+ * @param image The `IMAGE` block of a parsed V1 map, or anything claiming to be one.
+ * @returns The three lists; empty ones when the block carries neither form.
+ */
+export function imagePixels(image: PixelSourceImage | null | undefined): ImagePixelLists {
+	const published = image?.pixels;
+	if (published) {
+		const floor = publishedList(published.floor);
+		const obstacle = publishedList(published.obstacle);
+		const segments = publishedList(published.segments);
+		// One usable list is enough to treat the block as an old-style one. An image block that has
+		// a `pixels` object but nothing in it is not one - that shape is what a fresh `{}` looks
+		// like, and falling through to the raster is right there.
+		if (floor || obstacle || segments) return { floor: floor ?? [], obstacle: obstacle ?? [], segments: segments ?? [] };
+	}
+
+	const raster = image?.raster;
+	const cells = raster ? decodeRasterRuns(raster, raster.width * raster.height) : null;
+	return cells ? imagePixelsFromCells(cells) : { floor: [], obstacle: [], segments: [] };
+}
+
+/**
+ * Splits a decoded raster into the three cell lists.
+ *
+ * Shared with `MapParser`, which needs exactly these lists for the one map in a thousand whose
+ * raster is too incompressible to publish. One implementation, so the two forms of a map can never
+ * describe different floors.
+ * @param cells One byte per grid cell, row-major.
+ * @returns The three lists, in ascending cell order.
+ */
+export function imagePixelsFromCells(cells: Uint8Array): ImagePixelLists {
+	const lists: ImagePixelLists = { floor: [], obstacle: [], segments: [] };
+	for (let i = 0; i < cells.length; i++) {
+		const type = cells[i] & RASTER_TYPE_MASK;
+		if (type === RASTER_TYPE_EMPTY) continue;
+		if (type === RASTER_TYPE_WALL) {
+			lists.obstacle.push(i);
+			continue;
+		}
+		lists.floor.push(i);
+		lists.segments.push(i | (rasterSegmentId(cells[i]) << 21));
+	}
+	return lists;
 }
 
 /**

@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { MapParser } from "../../src/lib/map/v1/MapParser";
-import { decodeRasterRuns, rasterCellType, rasterSegmentId } from "../../src/common/segmentRaster";
+import { decodeRasterRuns, imagePixels, rasterCellType, rasterSegmentId } from "../../src/common/segmentRaster";
 
 /**
  * What the image block publishes about each room, and the raster it publishes beside it.
@@ -210,8 +210,8 @@ describe("the raster published beside the derived pixel lists", () => {
 		const parsed: any = await parser.parsedata(map, null);
 		const image = parsed.IMAGE;
 
-		// What the old fields say: two obstacles, at cell 0 and cell 2, and nothing about whose.
-		expect(image.pixels.obstacle).toEqual([0, 2]);
+		// What the derived list says: two obstacles, at cell 0 and cell 2, and nothing about whose.
+		expect(imagePixels(image).obstacle).toEqual([0, 2]);
 
 		const cells = decodeRasterRuns(image.raster, image.dimensions.width * image.dimensions.height);
 		expect(cells).not.toBeNull();
@@ -260,8 +260,12 @@ describe("the raster published beside the derived pixel lists", () => {
 
 		const parsed: any = await parser.parsedata(map, null);
 		expect(parsed.IMAGE.raster).toBeUndefined();
-		// Everything else is unaffected - dropping the raster costs the dividing tool, nothing more.
-		expect(parsed.IMAGE.pixels.segments.length).toBeGreaterThan(0);
+
+		// The cell lists take its place, so the map still draws. Without this the size guard would
+		// not cost the dividing tool one map - it would cost the picture itself.
+		expect(parsed.IMAGE.pixels.floor.length).toBe(20_000);
+		expect(parsed.IMAGE.pixels.obstacle.length).toBe(20_000);
+		expect(imagePixels(parsed.IMAGE)).toEqual(parsed.IMAGE.pixels);
 		expect(parsed.IMAGE.segments.list.length).toBeGreaterThan(0);
 	});
 
@@ -291,5 +295,27 @@ describe("the raster published beside the derived pixel lists", () => {
 		const parsed: any = await parser.parsedata(buildMap({ top: 0, left: 0, width: 8, height: 8, cell: () => EMPTY }), null);
 		expect(parsed.IMAGE.raster.runs).toEqual([EMPTY, 64]);
 		expect(parsed.IMAGE.segments.list).toEqual([]);
+	});
+
+	it("replaces the three cell lists rather than joining them", async () => {
+		// The 472 KiB this saves on the reference device. `pixels` is the fallback for a map without
+		// a raster and must not be written beside one; a reader that saw both would still be reading
+		// the expensive half.
+		const map = buildMap({ top: 0, left: 0, width: 12, height: 8, cell: (x, y) => (y > 2 ? cell(16, FLOOR) : cell(16, WALL)) });
+
+		const parsed: any = await parser.parsedata(map, null);
+		expect(parsed.IMAGE.raster).toBeDefined();
+		expect(parsed.IMAGE.pixels).toBeUndefined();
+		expect(imagePixels(parsed.IMAGE).floor.length).toBe(60);
+		expect(imagePixels(parsed.IMAGE).obstacle.length).toBe(36);
+	});
+
+	it("leaves an unparsable image block with neither form, and nothing to draw", async () => {
+		// A zero-sized grid: no raster, no lists, and the readers have to cope. This is the shape
+		// `parseImageBlock` returns before it ever touches the data.
+		const parsed: any = await parser.parsedata(buildMap({ top: 0, left: 0, width: 0, height: 0, cell: () => EMPTY }), null);
+		expect(parsed.IMAGE.raster).toBeUndefined();
+		expect(parsed.IMAGE.pixels).toBeUndefined();
+		expect(imagePixels(parsed.IMAGE)).toEqual({ floor: [], obstacle: [], segments: [] });
 	});
 });
