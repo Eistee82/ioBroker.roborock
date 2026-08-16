@@ -409,7 +409,7 @@ All device objects live below `roborock.<instance>.Devices.<duid>`:
 | `cleaningInfo` | Lifetime totals (area, time, number of runs). |
 | `cleaningInfo.records.<index>` | The individual cleaning runs of the history, newest first, with the rendered map of each run below `map`. |
 | `floors` | One entry per stored map, including the button that loads it. |
-| `schedules` | The robot's timers. A timer the robot keeps itself has `cron` and a writable `enabled` switch. A robot that keeps its schedules on Roborock's server instead gets one entry per schedule with `source: "server"`, a **read-only** `enabled` and `raw`, the entry exactly as the robot reported it - see below. |
+| `schedules` | The robot's timers. A timer a **V1** robot keeps itself has `cron` and a writable `enabled` switch. A robot that keeps its schedules on Roborock's server instead gets one entry per schedule with `source: "server"`, a **read-only** `enabled` and `raw`, the entry exactly as the robot reported it - see below. On a **B01/Q10** robot the schedules are read over a Tuya data point and `enabled` is **read-only** as well: the write command for it is not established, and a switch wired to a command this device does not speak would look like it works. |
 | `programs` | The scenes saved in the Roborock app. |
 | `map` | The rendered map and the room names. `map.liveTrackLearnedPause` reports, read only, the pause the adapter worked out for this robot's live position - see **Live position: match the robot** in the settings. It stays empty until enough position changes have been seen, and while the option is switched off. |
 | `deviceInfo`, `networkInfo`, `connection` | Model and firmware information, network data and the state of the local/cloud channels. |
