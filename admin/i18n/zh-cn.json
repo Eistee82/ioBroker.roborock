@@ -410,5 +410,19 @@
   "ui_clean_order_needs_rooms": "在地图上按希望的清扫顺序依次选择房间。",
   "schedule_delete": "删除此定时任务",
   "schedule_delete_hint": "永久删除此定时任务。此处无法撤销——机器人不保留副本，适配器只能开关定时任务，无法重新写入。",
-  "schedule_delete_server_hint": "此定时任务保存在 Roborock 服务器上。适配器只删除机器人中的那一半；Roborock 账户中的副本仍然存在，因此手机 App 仍会列出此定时任务，并显示为已开启。"
+  "schedule_delete_server_hint": "此定时任务保存在 Roborock 服务器上。适配器只删除机器人中的那一半；Roborock 账户中的副本仍然存在，因此手机 App 仍会列出此定时任务，并显示为已开启。",
+  "ui_schedules": "定时任务",
+  "ui_schedules_enabled": "已启用",
+  "ui_schedules_on": "开",
+  "ui_schedules_off": "关",
+  "ui_schedules_source_device": "在机器人中",
+  "ui_schedules_source_server": "在服务器上",
+  "ui_schedules_every_day": "每天",
+  "ui_schedules_once": "仅一次：%s",
+  "ui_schedules_time_unreadable": "适配器无法解析此定时任务的时间，因此显示机器人给出的原文。",
+  "ui_schedules_delete_yes": "删除",
+  "ui_schedules_readonly_hint": "适配器没有记录这些定时任务存放在何处，因此只能显示它们。",
+  "ui_schedules_no_create_hint": "新的定时任务需在 Roborock App 中创建；这里只能开关和删除。",
+  "ui_schedules_timezone_hint": "时间以机器人自身的时区为准。",
+  "ui_schedules_content_in_cloud": "时间、房间和清扫模式保存在 Roborock 账户中，这里无法读取。"
 }

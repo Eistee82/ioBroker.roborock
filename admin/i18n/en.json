@@ -410,5 +410,19 @@
   "ui_clean_order_needs_rooms": "Pick the rooms on the map, in the order they should be cleaned.",
   "schedule_delete": "Delete this schedule",
   "schedule_delete_hint": "Removes this schedule for good. It cannot be undone from here - the robot keeps no copy, and the adapter can only set a schedule's switch, not write one back.",
-  "schedule_delete_server_hint": "This schedule lives on Roborock's server. The adapter deletes the robot's half of it; the copy in the Roborock account stays, so the phone app will keep listing this schedule and will show it as switched on."
+  "schedule_delete_server_hint": "This schedule lives on Roborock's server. The adapter deletes the robot's half of it; the copy in the Roborock account stays, so the phone app will keep listing this schedule and will show it as switched on.",
+  "ui_schedules": "Schedules",
+  "ui_schedules_enabled": "Switched on",
+  "ui_schedules_on": "On",
+  "ui_schedules_off": "Off",
+  "ui_schedules_source_device": "In the robot",
+  "ui_schedules_source_server": "On the server",
+  "ui_schedules_every_day": "Every day",
+  "ui_schedules_once": "Once on %s",
+  "ui_schedules_time_unreadable": "The adapter cannot read this schedule's time, so the robot's own text is shown.",
+  "ui_schedules_delete_yes": "Delete",
+  "ui_schedules_readonly_hint": "The adapter did not record where these schedules are kept, so it can only show them.",
+  "ui_schedules_no_create_hint": "New schedules are created in the Roborock app; here they can only be switched and deleted.",
+  "ui_schedules_timezone_hint": "The times are in the robot's own time zone.",
+  "ui_schedules_content_in_cloud": "Its time, rooms and modes are kept in the Roborock account and cannot be read here."
 }

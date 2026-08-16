@@ -313,6 +313,19 @@ schedule in two places - on the robot and in your Roborock account - and only th
 from here. The copy in the account stays, so the phone app will keep listing the schedule and will
 show it as switched on, even though the robot no longer knows it. The button says so as well.
 
+**All of this is in the tab as well.** A *Schedules* panel sits beside the settings, collapsed like
+its neighbours and absent on a robot that has none. Each row is headed by the start time, with the
+days it repeats on below it, a chip saying whether the schedule lives in the robot or on the server,
+and - where they can be offered - the switch and the delete. The warning above is shown in the panel
+**before** anything is deleted rather than afterwards. A schedule whose kind the adapter could not
+record gets a row that shows what it is doing and no control at all; that is the B01 and Q10 case,
+where the schedules are built from data points that neither delete command reaches. A schedule whose
+time this build cannot read keeps the robot's own text instead of an interpreted one, and a
+server-side schedule says why it shows no time at all. There is deliberately **no way to create a
+schedule** in the panel, for the reason above: the adapter cannot write one. And the times are the
+robot's own - it runs its schedules in its own time zone, which is what the app writes beside every
+schedule it saves.
+
 The dock is drawn with the Roborock app's own picture of it, turned the way the robot
 reports the dock to stand. Which picture depends on the reported dock type: a plain
 charging dock gets a different graphic from a station that empties, washes or dries. Those

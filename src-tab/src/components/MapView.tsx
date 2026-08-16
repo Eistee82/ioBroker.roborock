@@ -38,6 +38,9 @@ import type { CleaningHistoryModel, CleaningRunModel } from "../history/historyT
 import { SettingsPanel } from "./SettingsPanel";
 import { RobotSettingsSource } from "../settings/robotSettingsSource";
 import type { RobotSettingsModel, SettingWrite } from "../settings/robotSettings";
+import { SchedulesPanel } from "./SchedulesPanel";
+import { ScheduleSource } from "../schedules/scheduleSource";
+import type { SchedulesModel } from "../schedules/schedules";
 import { getMapOverlayColors } from "../engine/mapOverlayColors";
 import type { MapColorScheme } from "../engine/mapOverlayColors";
 import { CommandFeedbackSource } from "../feedback/commandFeedbackSource";
@@ -170,6 +173,8 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [mapColorScheme, setMapColorScheme] = useState<MapColorScheme>("light");
 
 	const [robotSettings, setRobotSettings] = useState<RobotSettingsModel | null>(null);
+	// The robot's schedules; null while none have been read, and an empty list keeps the panel away.
+	const [schedules, setSchedules] = useState<SchedulesModel | null>(null);
 	// Everything about driving the robot by hand; `supported: false` keeps the pad away entirely.
 	const [remote, setRemote] = useState<RemoteDriverModel>(EMPTY_REMOTE);
 	// Which floor the robot itself is on; null when it does not report one.
@@ -183,6 +188,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const connection = useMemo(() => createEngineConnection(socket), [socket]);
 	const historySourceRef = useRef<CleaningHistorySource | null>(null);
 	const settingsSourceRef = useRef<RobotSettingsSource | null>(null);
+	const scheduleSourceRef = useRef<ScheduleSource | null>(null);
 	const feedbackSourceRef = useRef<CommandFeedbackSource | null>(null);
 	const remoteDriverRef = useRef<RemoteDriver | null>(null);
 	const activeFloorRef = useRef<ActiveFloorSource | null>(null);
@@ -297,6 +303,28 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	useEffect(() => {
 		settingsSourceRef.current?.setDevice(instanceId, selectedRobot, language);
 	}, [connection, instanceId, selectedRobot, language]);
+
+	/*
+	 * The schedules. Same shape again, and deliberately not part of the settings: a setting is one
+	 * known state the adapter publishes for every robot that has it, while a schedule is an entry
+	 * whose identifier the robot chose and which can appear and disappear while the tab is open.
+	 */
+	useEffect(() => {
+		const source = new ScheduleSource(connection, {
+			onSchedules: setSchedules,
+			onError: showError
+		});
+		scheduleSourceRef.current = source;
+
+		return () => {
+			source.destroy();
+			scheduleSourceRef.current = null;
+		};
+	}, [connection, showError]);
+
+	useEffect(() => {
+		scheduleSourceRef.current?.setDevice(instanceId, selectedRobot);
+	}, [connection, instanceId, selectedRobot]);
 
 	/*
 	 * What became of the commands this page sends.
@@ -626,6 +654,12 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				<SettingsPanel
 					settings={robotSettings}
 					onWrite={writeSetting}
+				/>
+				<SchedulesPanel
+					schedules={schedules}
+					language={language}
+					onToggle={(timerId, enabled) => void scheduleSourceRef.current?.setEnabled(timerId, enabled)}
+					onDelete={timerId => void scheduleSourceRef.current?.remove(timerId)}
 				/>
 				<HistoryPanel
 					history={history}

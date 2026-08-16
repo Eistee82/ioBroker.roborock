@@ -35,12 +35,13 @@ function state(overrides: Partial<CommandStateLike> = {}): CommandStateLike {
 }
 
 describe("the watched patterns", () => {
-	it("name the four folders the tab writes commands to", () => {
+	it("name the five branches the tab writes commands to", () => {
 		expect(commandStatePatterns("roborock.0", "duid1")).toEqual([
 			"roborock.0.Devices.duid1.commands.*",
 			"roborock.0.Devices.duid1.settings.*",
 			"roborock.0.Devices.duid1.resetConsumables.*",
-			"roborock.0.Devices.duid1.floors.*.load"
+			"roborock.0.Devices.duid1.floors.*.load",
+			"roborock.0.Devices.duid1.schedules.*.delete"
 		]);
 	});
 
@@ -48,6 +49,13 @@ describe("the watched patterns", () => {
 		// `floors.*` would also match every room selection state, which is written on every click.
 		const patterns = commandStatePatterns("roborock.0", "duid1");
 		expect(patterns).not.toContain("roborock.0.Devices.duid1.floors.*");
+	});
+
+	it("narrow the schedules branch to the delete button", () => {
+		// `schedules.*` is the schedule panel's own subscription. Watching it here as well would
+		// announce every re-read of a timer as if it were the answer to a command.
+		const patterns = commandStatePatterns("roborock.0", "duid1");
+		expect(patterns).not.toContain("roborock.0.Devices.duid1.schedules.*");
 	});
 });
 

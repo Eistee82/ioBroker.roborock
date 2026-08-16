@@ -410,5 +410,19 @@
   "ui_clean_order_needs_rooms": "Seleziona le stanze sulla mappa nell'ordine in cui devono essere pulite.",
   "schedule_delete": "Elimina questa pianificazione",
   "schedule_delete_hint": "Rimuove definitivamente questa pianificazione. Da qui non è possibile annullare l'operazione: il robot non ne conserva una copia e l'adattatore sa solo attivare o disattivare una pianificazione, non riscriverla.",
-  "schedule_delete_server_hint": "Questa pianificazione risiede sul server Roborock. L'adattatore elimina la metà che sta nel robot; la copia nell'account Roborock rimane, perciò l'app sul telefono continuerà a mostrarla, e come attiva."
+  "schedule_delete_server_hint": "Questa pianificazione risiede sul server Roborock. L'adattatore elimina la metà che sta nel robot; la copia nell'account Roborock rimane, perciò l'app sul telefono continuerà a mostrarla, e come attiva.",
+  "ui_schedules": "Programmazioni",
+  "ui_schedules_enabled": "Attivata",
+  "ui_schedules_on": "Attiva",
+  "ui_schedules_off": "Disattiva",
+  "ui_schedules_source_device": "Nel robot",
+  "ui_schedules_source_server": "Sul server",
+  "ui_schedules_every_day": "Ogni giorno",
+  "ui_schedules_once": "Una volta il %s",
+  "ui_schedules_time_unreadable": "L'adattatore non riesce a leggere l'orario di questa programmazione, quindi viene mostrato il testo del robot.",
+  "ui_schedules_delete_yes": "Elimina",
+  "ui_schedules_readonly_hint": "L'adattatore non ha registrato dove sono conservate queste programmazioni, quindi può solo mostrarle.",
+  "ui_schedules_no_create_hint": "Le nuove programmazioni si creano nell'app Roborock; qui possono essere solo attivate o eliminate.",
+  "ui_schedules_timezone_hint": "Gli orari valgono nel fuso orario del robot.",
+  "ui_schedules_content_in_cloud": "L'orario, le stanze e le modalità sono conservati nell'account Roborock e qui non sono leggibili."
 }

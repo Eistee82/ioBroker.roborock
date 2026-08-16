@@ -336,6 +336,20 @@ Zeitplan an zwei Stellen — im Roboter und im Roborock-Konto —, und von hier 
 erreichbar. Die Kopie im Konto bleibt, deshalb führt die Handy-App den Zeitplan weiterhin auf und
 zeigt ihn als eingeschaltet, obwohl der Roboter ihn nicht mehr kennt. Der Knopf sagt das ebenfalls.
 
+**Das alles steht jetzt auch im Tab.** Neben den Einstellungen liegt eine Tafel *Zeitpläne*,
+eingeklappt wie ihre Nachbarn und bei einem Roboter ohne Zeitplan gar nicht vorhanden. Jede Zeile
+trägt oben die Startzeit, darunter die Wochentage, daneben eine Marke, ob der Zeitplan im Roboter
+oder auf dem Server liegt, und — sofern sie angeboten werden dürfen — den Schalter und das Löschen.
+Die Warnung von oben steht in der Tafel **vor** dem Löschen, nicht danach. Ein Zeitplan, dessen Art
+der Adapter nicht festhalten konnte, bekommt eine Zeile, die zeigt, was er tut, und gar keine
+Bedienelemente; das ist der Fall bei B01 und Q10, deren Zeitpläne aus Datenpunkten stammen, die
+keiner der beiden Löschbefehle erreicht. Einen Zeitplan, dessen Zeit dieser Stand nicht lesen kann,
+zeigt die Tafel mit dem Text des Roboters statt mit einer gedeuteten Zeit, und bei einem Zeitplan vom
+Server steht dabei, warum überhaupt keine Zeit erscheint. Einen Zeitplan **anlegen** kann man in der
+Tafel bewusst nicht — aus dem oben genannten Grund: Der Adapter kann keinen schreiben. Und die
+Zeiten sind die des Roboters; er führt seine Zeitpläne in seiner eigenen Zeitzone aus, genau die,
+die die App zu jedem gespeicherten Zeitplan mitschreibt.
+
 Die Ladestation zeichnet die Karte mit der Grafik, die auch die Roborock-App dafür
 verwendet, und dreht sie so, wie der Roboter die Ausrichtung der Station meldet. Welche
 Grafik es wird, hängt vom gemeldeten Stationstyp ab: eine einfache Ladeschale bekommt eine
