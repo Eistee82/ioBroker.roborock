@@ -64,9 +64,9 @@ type PersistedSceneQueue = {
 };
 
 type SceneExecutionMode = "local" | "cloud";
-type SceneSegmentWaitResult = "ready" | "not-started" | "finish-timeout" | "cancelled";
-type SceneSegmentStartResult = "started" | "not-started" | "cancelled";
-type SceneSegmentInactiveResult = "ready" | "timeout" | "cancelled";
+type SceneRunWaitResult = "ready" | "not-started" | "finish-timeout" | "cancelled";
+type SceneRunStartResult = "started" | "not-started" | "cancelled";
+type SceneRunInactiveResult = "ready" | "timeout" | "cancelled";
 
 /**
  * State patterns the adapter watches on top of the per device command folders
@@ -91,17 +91,41 @@ export const STATIC_SUBSCRIPTION_PATTERNS = [
 ] as const;
 
 const SCENE_QUEUE_VERSION = 1;
-const SCENE_SEGMENT_START_MAX_ATTEMPTS = 3;
-const SCENE_SEGMENT_START_TIMEOUT_MS = 2 * 60 * 1000;
-const SCENE_SEGMENT_FINISH_TIMEOUT_MS = 4 * 60 * 60 * 1000;
-const SCENE_SEGMENT_READY_STABLE_MS = 30 * 1000;
-const SCENE_SEGMENT_RETRY_DELAY_MS = 30 * 1000;
-const SCENE_SEGMENT_DOCK_CANCEL_STABLE_MS = 2 * 60 * 1000;
-const SCENE_SEGMENT_POLL_INTERVAL_MS = 10 * 1000;
-const SCENE_SEGMENT_STARTED_STATES = new Set([
-	18, // Room Clean
+const SCENE_RUN_START_MAX_ATTEMPTS = 3;
+const SCENE_RUN_START_TIMEOUT_MS = 2 * 60 * 1000;
+const SCENE_RUN_FINISH_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+const SCENE_RUN_READY_STABLE_MS = 30 * 1000;
+const SCENE_RUN_RETRY_DELAY_MS = 30 * 1000;
+const SCENE_RUN_DOCK_CANCEL_STABLE_MS = 2 * 60 * 1000;
+const SCENE_RUN_POLL_INTERVAL_MS = 10 * 1000;
+/**
+ * The scene step methods that start a cleaning run on the robot, and the `deviceStatus.state`
+ * (V1) / `deviceStatus.status` (B01) value that proves the run is really under way.
+ *
+ * **The list of three is complete, not a selection.** A full-text search over the decompiled app
+ * (`jadx_apkmirror/sources/`) finds the Roborock vacuum RPC names in exactly one place,
+ * `com/badlogic/gdx/utils/OooO.java:1082-1088`, a classifier for the smart scene display:
+ * `do_scenes_app_start` -> `app_start`, `do_scenes_segments` -> `app_segment_clean`,
+ * `do_scenes_zones` -> `app_zoned_clean`. There is no fourth `do_scenes_*` method
+ * (`_appanalysis/05-api-katalog.md:158-163`, `_appanalysis/13-steuerungs-plugin.md:680-692`).
+ *
+ * The state values come from `RobotStateCodeMap` in the app's own, unminified
+ * `Src/Common/RobotStatusManager.js`, carried in the plugin source map
+ * (`lib/protocols/roborock_vacuum_enums.json` -> `robotStateCodeMap`, confidence "proven"):
+ * 5 = `CLEAN`, 17 = `ZONED_CLEAN`, 18 = `SEGMENT_CLEAN`. The same file's
+ * `CleanResumeFlagCodeMap` splits a running task the same three ways over `in_cleaning`
+ * (1 = Global, 2 = Zone, 3 = Segment), which is why a whole-home run is state 5 and not 18.
+ *
+ * Why an exact state and not merely "the robot is busy": upstream issue #1318 showed the robot
+ * answering `ok` to the next task while it stayed in state 8 and only passed through the dock
+ * states 22 and 33 - the task never started. `ok` is not the invariant, the run state is.
+ */
+const SCENE_RUN_STARTED_STATES: ReadonlyMap<string, ReadonlySet<number>> = new Map([
+	["do_scenes_segments", new Set([18])], // Room Clean
+	["do_scenes_zones", new Set([17])],    // Zone Clean
+	["do_scenes_app_start", new Set([5])], // Cleaning (whole home)
 ]);
-const SCENE_SEGMENT_ACTIVE_STATES = new Set([
+const SCENE_RUN_ACTIVE_STATES = new Set([
 	5,  // Cleaning
 	6,  // Returning Dock
 	7,  // Manual Mode
@@ -123,11 +147,11 @@ const SCENE_SEGMENT_ACTIVE_STATES = new Set([
 	41, // Arm resetting
 	42, // Program mode
 ]);
-const SCENE_SEGMENT_RETURN_TO_DOCK_STATES = new Set([
+const SCENE_RUN_RETURN_TO_DOCK_STATES = new Set([
 	6,  // Returning Dock
 	15, // Docking
 ]);
-const SCENE_SEGMENT_DOCK_SERVICE_STATES = new Set([
+const SCENE_RUN_DOCK_SERVICE_STATES = new Set([
 	22, // Emptying dust container
 	23, // Washing the mop
 	25, // Washing duster
@@ -621,8 +645,12 @@ export class Roborock extends utils.Adapter {
 				return;
 			}
 
+			// Marks the steps that have another one behind them, for the persisted queue and the
+			// log. Every cleaning run is waited out, the last one included - that is decided in
+			// `processSceneQueue`, because the final run has to be seen through to its end before
+			// the queue may report the scene as done.
 			for (let index = 0; index < commands.length; index++) {
-				commands[index].waitForCompletionAfter = commands[index].method === "do_scenes_segments" && index < commands.length - 1;
+				commands[index].waitForCompletionAfter = this.isSceneRunMethod(commands[index].method) && index < commands.length - 1;
 			}
 
 			const now = Date.now();
@@ -713,6 +741,10 @@ export class Roborock extends utils.Adapter {
 
 		try {
 			while (true) {
+				// The queue is persisted; an unloading adapter leaves it alone and `resumeSceneQueues`
+				// takes it up again after the restart.
+				if (this.shuttingDown) return;
+
 				const queue = await this.loadSceneQueue(duid);
 				if (!queue) return;
 
@@ -721,16 +753,18 @@ export class Roborock extends utils.Adapter {
 					const previousCommand = queue.commands[Math.max(0, queue.nextIndex - 1)];
 					const nextCommand = queue.commands[queue.nextIndex];
 					const waitDuid = previousCommand?.duid ?? nextCommand?.duid ?? duid;
+					const waitMethod = previousCommand?.method ?? "";
 					this.rLog(
 						"Requests",
 						waitDuid,
 						"Info",
 						undefined,
 						undefined,
-						`[Scene] Waiting for segment completion before continuing scene ${queue.sceneId} (${queue.nextIndex}/${queue.commands.length})`,
+						`[Scene] Waiting for ${waitMethod} to complete before continuing scene ${queue.sceneId} (${queue.nextIndex}/${queue.commands.length})`,
 						"info"
 					);
-					const waitResult = await this.waitForSceneSegmentReadyForNext(waitDuid);
+					const waitResult = await this.waitForSceneRunReadyForNext(waitDuid, waitMethod);
+					if (this.shuttingDown) return;
 
 					const latestQueue = await this.loadSceneQueue(duid);
 					if (!latestQueue) return;
@@ -750,15 +784,18 @@ export class Roborock extends utils.Adapter {
 						return;
 					}
 
-					if (waitResult === "not-started" && previousCommand?.method === "do_scenes_segments") {
+					// "not-started" is only reported after an uninterrupted idle stretch - as long as
+					// the robot is doing anything at all the start deadline keeps moving. Re-sending
+					// the run is therefore safe: nothing is running that it could cut short.
+					if (waitResult === "not-started" && previousCommand && this.isSceneRunMethod(previousCommand.method)) {
 						const retryCommand = latestQueue.commands[previousIndex];
-						if (retryCommand && (retryCommand.attempts ?? 0) < SCENE_SEGMENT_START_MAX_ATTEMPTS) {
+						if (retryCommand && (retryCommand.attempts ?? 0) < SCENE_RUN_START_MAX_ATTEMPTS) {
 							latestQueue.nextIndex = previousIndex;
 							latestQueue.waitingForCompletion = false;
 							latestQueue.updatedAt = Date.now();
 							await this.saveSceneQueue(duid, latestQueue);
 							await this.setSceneQueueStatus(duid, "retrying");
-							await this.delay(SCENE_SEGMENT_RETRY_DELAY_MS);
+							await this.delay(SCENE_RUN_RETRY_DELAY_MS);
 							continue;
 						}
 
@@ -768,7 +805,7 @@ export class Roborock extends utils.Adapter {
 							"Error",
 							undefined,
 							undefined,
-							`[Scene] Segment task in ${latestQueue.sceneId} did not start after ${SCENE_SEGMENT_START_MAX_ATTEMPTS} attempt(s); continuing`,
+							`[Scene] ${previousCommand.method} task in ${latestQueue.sceneId} did not start after ${SCENE_RUN_START_MAX_ATTEMPTS} attempt(s); continuing`,
 							"error"
 						);
 					}
@@ -819,7 +856,7 @@ export class Roborock extends utils.Adapter {
 				if (latestQueue.id !== queue.id) continue;
 
 				latestQueue.nextIndex = queue.nextIndex + 1;
-				latestQueue.waitingForCompletion = commandSucceeded && command.method === "do_scenes_segments";
+				latestQueue.waitingForCompletion = commandSucceeded && this.isSceneRunMethod(command.method);
 				latestQueue.updatedAt = Date.now();
 
 				if (latestQueue.nextIndex >= latestQueue.commands.length && !latestQueue.waitingForCompletion) {
@@ -840,7 +877,7 @@ export class Roborock extends utils.Adapter {
 	}
 
 	private logSceneQueueCommandError(queue: PersistedSceneQueue, command: SceneQueueCommand, error: unknown): void {
-		const level = command.method === "do_scenes_segments" || command.method === "app_start_program" ? "Error" : "Warn";
+		const level = this.isSceneRunMethod(command.method) || command.method === "app_start_program" ? "Error" : "Warn";
 		this.rLog(
 			"Requests",
 			command.duid,
@@ -1039,8 +1076,8 @@ export class Roborock extends utils.Adapter {
 			const queue = await this.loadSceneQueue(duid);
 			if (!queue) continue;
 
-			const status = await this.refreshSceneSegmentStatus(duid);
-			if (!this.isSceneSegmentActiveStatus(status)) {
+			const status = await this.refreshSceneRunStatus(duid);
+			if (!this.isSceneRunActiveStatus(status)) {
 				await this.clearSceneQueue(duid, "cancelled");
 				this.rLog(
 					"Requests",
@@ -1088,8 +1125,19 @@ export class Roborock extends utils.Adapter {
 		}));
 	}
 
-	private async waitForSceneSegmentReadyForNext(duid: string): Promise<SceneSegmentWaitResult> {
-		const startResult = await this.waitForSceneSegmentStarted(duid, SCENE_SEGMENT_START_TIMEOUT_MS);
+	/**
+	 * Waits out one cleaning run of a scene: first until the robot really entered the run state
+	 * belonging to `method`, then until it and its dock are stably idle again.
+	 *
+	 * Both halves are bounded, so a run that never reaches its state - or never leaves it - ends
+	 * the wait instead of stalling the queue: `SCENE_RUN_START_TIMEOUT_MS` of uninterrupted idle
+	 * gives "not-started", `SCENE_RUN_FINISH_TIMEOUT_MS` gives "finish-timeout", and the caller
+	 * carries on either way.
+	 * @param duid Device the run was sent to.
+	 * @param method RPC method of the step that was sent.
+	 */
+	private async waitForSceneRunReadyForNext(duid: string, method: string): Promise<SceneRunWaitResult> {
+		const startResult = await this.waitForSceneRunStarted(duid, method, SCENE_RUN_START_TIMEOUT_MS);
 		if (startResult === "cancelled") {
 			this.rLog(
 				"Requests",
@@ -1097,7 +1145,7 @@ export class Roborock extends utils.Adapter {
 				"Info",
 				undefined,
 				undefined,
-				"[Scene] Segment task was cancelled by return to dock",
+				`[Scene] ${method} task was cancelled by return to dock`,
 				"info"
 			);
 			return "cancelled";
@@ -1109,13 +1157,13 @@ export class Roborock extends utils.Adapter {
 				"Warn",
 				undefined,
 				undefined,
-				"[Scene] Segment task did not report a room-cleaning start before timeout",
+				`[Scene] ${method} task did not report a cleaning start before timeout`,
 				"warn"
 			);
 			return "not-started";
 		}
 
-		const finishResult = await this.waitForSceneSegmentInactiveStable(duid, SCENE_SEGMENT_FINISH_TIMEOUT_MS, SCENE_SEGMENT_READY_STABLE_MS);
+		const finishResult = await this.waitForSceneRunInactiveStable(duid, SCENE_RUN_FINISH_TIMEOUT_MS, SCENE_RUN_READY_STABLE_MS);
 		if (finishResult === "cancelled") {
 			this.rLog(
 				"Requests",
@@ -1123,7 +1171,7 @@ export class Roborock extends utils.Adapter {
 				"Info",
 				undefined,
 				undefined,
-				"[Scene] Segment task was cancelled by return to dock",
+				`[Scene] ${method} task was cancelled by return to dock`,
 				"info"
 			);
 			return "cancelled";
@@ -1135,7 +1183,7 @@ export class Roborock extends utils.Adapter {
 				"Warn",
 				undefined,
 				undefined,
-				"[Scene] Segment task did not reach stable idle before timeout; continuing with next scene task",
+				`[Scene] ${method} task did not reach stable idle before timeout; continuing with next scene task`,
 				"warn"
 			);
 			return "finish-timeout";
@@ -1143,38 +1191,38 @@ export class Roborock extends utils.Adapter {
 
 		return "ready";
 	}
-	private async waitForSceneSegmentStarted(duid: string, timeoutMs: number): Promise<SceneSegmentStartResult> {
+	private async waitForSceneRunStarted(duid: string, method: string, timeoutMs: number): Promise<SceneRunStartResult> {
 		let deadline = Date.now() + timeoutMs;
-		const hardDeadline = Date.now() + SCENE_SEGMENT_FINISH_TIMEOUT_MS;
+		const hardDeadline = Date.now() + SCENE_RUN_FINISH_TIMEOUT_MS;
 		let idleSince: number | null = null;
 		let sawPaused = false;
 		let sawReturnToDock = false;
 		let sawDockServiceAfterReturn = false;
 
 		do {
-			const status = await this.refreshSceneSegmentStatus(duid);
-			if (this.isSceneSegmentStartedStatus(status)) {
+			const status = await this.refreshSceneRunStatus(duid);
+			if (this.isSceneRunStartedStatus(status, method)) {
 				return "started";
 			}
 
 			const now = Date.now();
-			if (this.isSceneSegmentPausedStatus(status)) {
+			if (this.isSceneRunPausedStatus(status)) {
 				sawPaused = true;
 			}
-			if (this.isSceneSegmentReturnToDockStatus(status)) {
+			if (this.isSceneRunReturnToDockStatus(status)) {
 				sawReturnToDock = true;
 			}
-			if (sawReturnToDock && this.isSceneSegmentDockServiceStatus(status)) {
+			if (sawReturnToDock && this.isSceneRunDockServiceStatus(status)) {
 				sawDockServiceAfterReturn = true;
 			}
 
-			if (this.isSceneSegmentActiveStatus(status)) {
+			if (this.isSceneRunActiveStatus(status)) {
 				deadline = now + timeoutMs;
 				idleSince = null;
 			} else {
 				idleSince ??= now;
 				if (sawReturnToDock && (sawPaused || !sawDockServiceAfterReturn)) {
-					if (now - idleSince >= SCENE_SEGMENT_DOCK_CANCEL_STABLE_MS) {
+					if (now - idleSince >= SCENE_RUN_DOCK_CANCEL_STABLE_MS) {
 						return "cancelled";
 					}
 				} else if (now >= deadline) {
@@ -1182,11 +1230,14 @@ export class Roborock extends utils.Adapter {
 				}
 			}
 
-			await this.delay(SCENE_SEGMENT_POLL_INTERVAL_MS);
+			await this.delay(SCENE_RUN_POLL_INTERVAL_MS);
+			// An unloading adapter must not keep polling. The queue is persisted, so the wait is
+			// picked up again by `resumeSceneQueues` after the restart.
+			if (this.shuttingDown) return "not-started";
 		} while (Date.now() < hardDeadline);
 		return "not-started";
 	}
-	private async waitForSceneSegmentInactiveStable(duid: string, timeoutMs: number, stableMs: number): Promise<SceneSegmentInactiveResult> {
+	private async waitForSceneRunInactiveStable(duid: string, timeoutMs: number, stableMs: number): Promise<SceneRunInactiveResult> {
 		const deadline = Date.now() + timeoutMs;
 		let idleSince: number | null = null;
 		let sawPaused = false;
@@ -1194,23 +1245,23 @@ export class Roborock extends utils.Adapter {
 		let sawDockServiceAfterReturn = false;
 
 		do {
-			const status = await this.refreshSceneSegmentStatus(duid);
+			const status = await this.refreshSceneRunStatus(duid);
 			const now = Date.now();
-			if (this.isSceneSegmentPausedStatus(status)) {
+			if (this.isSceneRunPausedStatus(status)) {
 				sawPaused = true;
 			}
-			if (this.isSceneSegmentReturnToDockStatus(status)) {
+			if (this.isSceneRunReturnToDockStatus(status)) {
 				sawReturnToDock = true;
 			}
-			if (sawReturnToDock && this.isSceneSegmentDockServiceStatus(status)) {
+			if (sawReturnToDock && this.isSceneRunDockServiceStatus(status)) {
 				sawDockServiceAfterReturn = true;
 			}
 
-			if (!this.isSceneSegmentActiveStatus(status)) {
+			if (!this.isSceneRunActiveStatus(status)) {
 				idleSince ??= now;
 				const idleFor = now - idleSince;
 				if (sawReturnToDock && (sawPaused || !sawDockServiceAfterReturn)) {
-					if (idleFor >= SCENE_SEGMENT_DOCK_CANCEL_STABLE_MS) {
+					if (idleFor >= SCENE_RUN_DOCK_CANCEL_STABLE_MS) {
 						return "cancelled";
 					}
 				} else if (idleFor >= stableMs) {
@@ -1219,11 +1270,13 @@ export class Roborock extends utils.Adapter {
 			} else {
 				idleSince = null;
 			}
-			await this.delay(SCENE_SEGMENT_POLL_INTERVAL_MS);
+			await this.delay(SCENE_RUN_POLL_INTERVAL_MS);
+			// See `waitForSceneRunStarted`: stop polling once the adapter is on its way out.
+			if (this.shuttingDown) return "timeout";
 		} while (Date.now() < deadline);
 		return "timeout";
 	}
-	private async refreshSceneSegmentStatus(duid: string): Promise<Record<string, unknown>> {
+	private async refreshSceneRunStatus(duid: string): Promise<Record<string, unknown>> {
 		const handler = this.deviceFeatureHandlers.get(duid);
 		if (handler) {
 			try {
@@ -1282,21 +1335,21 @@ export class Roborock extends utils.Adapter {
 		return status;
 	}
 
-	private isSceneSegmentPausedStatus(status: Record<string, unknown>): boolean {
+	private isSceneRunPausedStatus(status: Record<string, unknown>): boolean {
 		const state = this.numberFromStateValue(status.state ?? status.status);
 		return state === 10;
 	}
-	private isSceneSegmentReturnToDockStatus(status: Record<string, unknown>): boolean {
+	private isSceneRunReturnToDockStatus(status: Record<string, unknown>): boolean {
 		const inReturning = this.numberFromStateValue(status.in_returning);
 		if (inReturning !== null && inReturning > 0) {
 			return true;
 		}
 
 		const state = this.numberFromStateValue(status.state ?? status.status);
-		return state !== null && SCENE_SEGMENT_RETURN_TO_DOCK_STATES.has(state);
+		return state !== null && SCENE_RUN_RETURN_TO_DOCK_STATES.has(state);
 	}
 
-	private isSceneSegmentDockServiceStatus(status: Record<string, unknown>): boolean {
+	private isSceneRunDockServiceStatus(status: Record<string, unknown>): boolean {
 		if (this.booleanFromStateValue(status.isWashing) || this.booleanFromStateValue(status.dockCanStopWash)) {
 			return true;
 		}
@@ -1327,9 +1380,9 @@ export class Roborock extends utils.Adapter {
 		}
 
 		const state = this.numberFromStateValue(status.state ?? status.status);
-		return state !== null && SCENE_SEGMENT_DOCK_SERVICE_STATES.has(state);
+		return state !== null && SCENE_RUN_DOCK_SERVICE_STATES.has(state);
 	}
-	private isSceneSegmentActiveStatus(status: Record<string, unknown>): boolean {
+	private isSceneRunActiveStatus(status: Record<string, unknown>): boolean {
 		const inCleaning = this.numberFromStateValue(status.in_cleaning);
 		const inReturning = this.numberFromStateValue(status.in_returning);
 		if ((inCleaning !== null && inCleaning > 0) || (inReturning !== null && inReturning > 0)) {
@@ -1365,15 +1418,33 @@ export class Roborock extends utils.Adapter {
 		}
 
 		const state = this.numberFromStateValue(status.state ?? status.status);
-		return state !== null && SCENE_SEGMENT_ACTIVE_STATES.has(state);
+		return state !== null && SCENE_RUN_ACTIVE_STATES.has(state);
 	}
 
-	private isSceneSegmentStartedStatus(status: Record<string, unknown>): boolean {
+	/**
+	 * Does a queued scene command start a cleaning run that the next step has to wait for?
+	 *
+	 * Anything else a scene may carry - a setter, `app_charge`, a dock action - finishes with its
+	 * answer and needs no sequencing.
+	 * @param method RPC method of the queued command.
+	 */
+	private isSceneRunMethod(method: string): boolean {
+		return SCENE_RUN_STARTED_STATES.has(method);
+	}
+
+	/**
+	 * Is the run started by `method` really under way?
+	 * @param status Status snapshot from {@link refreshSceneRunStatus}.
+	 * @param method RPC method that was sent for this step.
+	 */
+	private isSceneRunStartedStatus(status: Record<string, unknown>, method: string): boolean {
+		const startedStates = SCENE_RUN_STARTED_STATES.get(method);
 		const state = this.numberFromStateValue(status.state ?? status.status);
-		if (state !== null) {
-			return SCENE_SEGMENT_STARTED_STATES.has(state);
+		if (state !== null && startedStates) {
+			return startedStates.has(state);
 		}
 
+		// Protocols that publish no state code at all still mark a running task on `in_cleaning`.
 		const inCleaning = this.numberFromStateValue(status.in_cleaning);
 		return inCleaning !== null && inCleaning > 0;
 	}

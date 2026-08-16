@@ -510,7 +510,7 @@ them appears as `programs.<sceneId>`, and the whole list additionally as one JSO
 | `programs.<id>.mode` | `string` | no | `vacuum`, `mop` or `vacmop`, worked out from suction and water level. |
 | `programs.<id>.valid` | `boolean` | no | **Only present when the robot answered.** False means the robot no longer knows this program's target - it was probably removed with the map, and starting the program would do nothing. |
 
-Two properties are worth knowing:
+Three properties are worth knowing:
 
 - **The single-value states are written only when all steps agree.** A program that vacuums the flat
   and then mops it has two different suction levels, and `fanPower` is left empty rather than picking
@@ -518,6 +518,13 @@ Two properties are worth knowing:
 - **Names and settings come from the cloud.** The robot itself knows only an internal identifier and
   a geometry, so in cloud-free operation this folder does not exist at all. That is a property of
   Roborock's design, not a limitation of this adapter.
+- **A multi-step program takes as long as its runs take.** In the local mode the adapter sends one
+  step, waits until the robot has really entered that kind of cleaning run and until it and its dock
+  are stably idle again, and only then sends the next one - sending them back to back makes the
+  robot drop all but one of them. `programs.sceneQueueLength` and `programs.sceneQueueStatus`
+  therefore stay occupied for the whole program, and the queue survives an adapter restart. If a
+  step never starts it is retried up to three times and the program then carries on with a message
+  in the log, so a program cannot hang on a step the robot ignored.
 
 #### What became of a command
 

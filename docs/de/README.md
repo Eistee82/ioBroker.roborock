@@ -542,7 +542,7 @@ Jede davon erscheint als `programs.<sceneId>`, und die ganze Liste zusätzlich a
 | `programs.<id>.mode` | `string` | nein | `vacuum`, `mop` oder `vacmop`, aus Saug- und Wasserstufe abgeleitet. |
 | `programs.<id>.valid` | `boolean` | nein | **Nur vorhanden, wenn der Roboter geantwortet hat.** `false` heißt: der Roboter kennt das Ziel dieses Programms nicht mehr — vermutlich wurde die Karte neu aufgebaut, und ein Start bewirkt nichts. |
 
-Zwei Eigenschaften sind wissenswert:
+Drei Eigenschaften sind wissenswert:
 
 - **Die Einzelwerte werden nur geschrieben, wenn alle Schritte übereinstimmen.** Ein Programm, das
   die Wohnung erst saugt und dann wischt, hat zwei verschiedene Saugstufen; `fanPower` bleibt dann
@@ -550,6 +550,14 @@ Zwei Eigenschaften sind wissenswert:
 - **Namen und Einstellungen kommen aus der Cloud.** Der Roboter selbst kennt nur eine interne
   Kennung und eine Geometrie. Im cloudfreien Betrieb existiert dieser Ordner deshalb gar nicht — das
   liegt an Roborocks Aufbau, nicht am Adapter.
+- **Ein mehrstufiges Programm dauert so lange, wie seine Läufe dauern.** Im lokalen Modus schickt
+  der Adapter einen Schritt, wartet, bis der Roboter wirklich in diese Art Reinigungslauf gegangen
+  ist und bis er samt Station wieder stabil im Ruhezustand ist, und schickt erst dann den nächsten.
+  Direkt hintereinander gesendet verwirft der Roboter alle bis auf einen. `programs.sceneQueueLength`
+  und `programs.sceneQueueStatus` bleiben deshalb über das ganze Programm belegt, und die
+  Warteschlange übersteht einen Adapter-Neustart. Startet ein Schritt nicht, wird er bis zu dreimal
+  wiederholt; danach läuft das Programm mit einer Meldung im Log weiter — an einem vom Roboter
+  ignorierten Schritt kann es also nicht hängen bleiben.
 
 #### Was aus einem Befehl geworden ist
 
