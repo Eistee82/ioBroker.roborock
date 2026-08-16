@@ -79,6 +79,24 @@ import { DeviceStateWriter } from "../deviceStateWriter";
  * | `recover_multi_map` | `{map_flag: <flag of the **live** map>}` | wrapper A65:229563-229574, caller A65:691527-691529 passes `RSM.currentMapId` | Overwrites the current map. Roborock's own warning `recover_map_hint` says the schedules and commands attached to it stop working. |
  * | `recover_map` | `[id]` | A65:229545-229562, caller A65:461298 | Same, and its `id` comes from the `get_recover_maps` list this robot does not answer. |
  * | `del_map` | `[id]` | A65:228119-228136 | Deletes a map irreversibly. |
+ * | `manual_bak_map` | `{map_flag: <flag of the **live** map>}` | wrapper A65:229411-229421, caller A65:691399 passes `RSM.currentMapId` | Replaces the one backup the robot keeps. See below - this one only *looks* harmless. |
+ *
+ * **Taking a backup is the entry on that list that reads as safe, and is not.** The robot states its
+ * own ceiling in the very answer this file parses: `max_bak_map` is **1**, and each map arrives with
+ * exactly one entry in `bak_maps`. There is no room for a second, so a new backup can only overwrite
+ * the existing one.
+ *
+ * What that costs is visible in the same measurement. On the test device the ground floor's backup
+ * is dated **2025-11-18** while the map itself is from 2026-08-14: pressing "back up" trades a
+ * nine-month-old state for the current one, irreversibly, and this adapter cannot restore either of
+ * them (see {@link MapInventoryStates.restoreSupported}). **The function would fail precisely when
+ * it is wanted** - one backs up before doing something risky, which is exactly when the older state
+ * is the valuable one.
+ *
+ * Roborock does **not** warn here: the string table has only button captions for `backup_map`, in 22
+ * languages, and no hint text - while restoring gets an explicit one (`recover_map_hint`). That is an
+ * *indication* that the vendor considers it harmless, not evidence, and the two cannot be told apart
+ * without trying it on a device.
  *
  * **The two restore calls do not take the same number**, and that is the trap: `recover_multi_map`
  * is handed the flag of the map that is loaded, not the flag inside `bak_maps`. On the test device

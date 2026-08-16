@@ -306,8 +306,12 @@
 			"appFunction": "manualBackupMap",
 			"module": 523,
 			"lines": "229411-229422",
-			"params": { "map_flag": "<Karten-ID>" },
-			"confidence": "belegt"
+			"params": { "map_flag": "<Karten-ID der GELADENEN Karte>" },
+			"paramsNote": "Der Wrapper baut {map_flag} selbst. Der einzige Aufrufer (Zeile 691399) übergibt RSM.currentMapId, also immer die geladene Karte - eine andere lässt sich nicht sichern.",
+			"replacesEntireSet": true,
+			"replacesNote": "Ersetzt die eine Sicherung, die der Roboter hält. Beleg aus der echten Antwort von get_multi_maps_list: max_bak_map = 1, und je Karte genau ein Eintrag in bak_maps. Für eine zweite ist kein Platz.",
+			"confidence": "belegt",
+			"adapterEntscheidung": "Nicht gebaut, obwohl die Nutzlast vollständig belegt ist. Am Testgerät ist die Sicherung des Erdgeschosses vom 18.11.2025, die Karte vom 14.08.2026 - ein Fehlgriff tauscht neun Monate alten Stand gegen den aktuellen, unwiederbringlich, und zurückspielen kann der Adapter nach mapInventory.restoreSupported ohnehin nicht. Die Funktion versagt genau dann, wenn man sie braucht: gesichert wird vor etwas Riskantem, und dann ist der ältere Stand der wertvolle. Roborock warnt beim Sichern nicht (nur Knopfbeschriftungen zu backup_map in 22 Sprachen, kein Hinweistext), beim Wiederherstellen dagegen ausdrücklich (recover_map_hint) - ein Indiz für Harmlosigkeit, kein Beleg, und nur am Gerät unterscheidbar."
 		},
 		"app_set_low_space_zones": {
 			"appFunction": "saveLowSpaceZones",
