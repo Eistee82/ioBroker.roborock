@@ -260,13 +260,17 @@ Drei Dinge sind erwähnenswert:
 - **Der Schalter erscheint nur, wenn er funktionieren kann.** Ein Browser ohne WebGL — verbreitet in
   Kiosk-Aufbauten und in Containern ohne GPU-Zugriff — bekommt keinen Schalter statt einer schwarzen
   Fläche. Scheitert die Ansicht trotzdem beim Start, kehrt der Tab zu 2D zurück und sagt warum.
-- **Rechtecke werden in 2D aufgezogen, egal aus welcher Ansicht heraus.** Sowohl die auf der Karte
-  gespeicherten Zonen als auch das Rechteck für eine einzelne Zonenreinigung werden flach auf der
-  2D-Karte gezogen. Ein Druck auf eines der **+** kehrt deshalb zuerst nach 2D zurück, wo die Griffe
-  sind. Aus demselben Grund wird der Wechsel nach 3D verweigert, solange ein solches Rechteck offen
-  ist, und sagt das, statt es zu verstecken: Eine gespeicherte Zone wartet auf „Speichern" im
-  Bedienfeld, ein Reinigungsrechteck auf „Start" — ein Rechteck, das man nicht mehr sieht, ist eines,
-  in das der Roboter blind geschickt würde. Der Weg **zurück** nach 2D wird nie verweigert.
+- **Was auf der Karte platziert wird, wird in 2D platziert, egal aus welcher Ansicht heraus.** Die
+  auf der Karte gespeicherten Zonen, das Rechteck für eine einzelne Zonenreinigung, der Punkt, zu dem
+  der Roboter fahren soll, und die Linie, die einen Raum teilt: alle vier werden flach auf der
+  2D-Karte gesetzt. Ein Druck auf einen dieser Knöpfe kehrt deshalb zuerst nach 2D zurück, wo man
+  sieht und nachjustiert. Aus demselben Grund wird der Wechsel nach 3D verweigert, solange eines
+  davon offen ist, und sagt das, statt es zu verstecken: Eine gespeicherte Zone wartet auf
+  „Speichern" im Bedienfeld, ein Reinigungsrechteck auf „Start" — ein Rechteck, das man nicht mehr
+  sieht, ist eines, in das der Roboter blind geschickt würde, und eine Trennlinie, die man nicht mehr
+  sieht, ist ein Schnitt durch einen Raum ohne Hinsehen. Der Weg **zurück** nach 2D wird nie
+  verweigert. Die Ansichtsrückstellung in der Statusleiste gehört allein zur 2D-Karte und fehlt in
+  3D deshalb; die 3D-Ansicht richtet man mit dem Drehen selbst wieder aus.
 
 Bei einem Roboter mit mehreren Karten **markiert die Etagenauswahl jetzt die Etage, auf der der
 Roboter tatsächlich steht**. Beides fällt auseinander, sobald man den Keller ansieht, während der

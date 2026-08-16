@@ -43,6 +43,21 @@ describe("StatusStrip", () => {
 		expect(onResetZoom).toHaveBeenCalledTimes(1);
 	});
 
+	it("takes the reset away when there is no 2D map to reset", () => {
+		// Null is what the shell passes while the 3D view is showing. The button resets the **2D**
+		// map's zoom, so leaving it there meant pressing "reset the view" and watching the view one is
+		// actually looking at not move - the same silent no-op the go-to button had. See
+		// `map3d/zoneEditingView.ts` for the rule that hides this one instead of redirecting it.
+		render(
+			<StatusStrip
+				status={STATUS}
+				onResetZoom={null}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: I18n.t("ui_reset_view") })).toBeNull();
+	});
+
 	it("keeps the reset reachable while the device publishes no transport channel", () => {
 		// The connection reading is conditional; the button next to it must not be.
 		renderStrip({ connectionChannel: "" });

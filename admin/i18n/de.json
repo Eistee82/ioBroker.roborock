@@ -401,6 +401,8 @@
   "ui_map3d_failed": "Die 3D-Ansicht konnte nicht starten; es wird die 2D-Karte gezeigt.",
   "ui_map3d_finish_zone": "Die Zone, die gerade platziert wird, zuerst speichern oder verwerfen, dann auf 3D wechseln.",
   "ui_map3d_finish_cleaning_zone": "Die gezeichnete Reinigungszone erst starten oder entfernen, dann auf 3D wechseln.",
+  "ui_map3d_finish_split": "Das Teilen des Raums erst abschließen oder abbrechen, dann auf 3D wechseln.",
+  "ui_map3d_finish_goto": "Den Roboter erst zum Ziel schicken oder das Anfahren abbrechen, dann auf 3D wechseln.",
   "ui_segment_edit_intro": "Die Raumnummern ändern sich, betroffen sind daher:",
   "ui_segment_edit_loses_modes": "Raumbezogene Saug- und Wassereinstellungen auf dem Roboter. Der Adapter hat sie nicht und kann sie nicht wiederherstellen.",
   "ui_segment_edit_loses_sequence": "Die Reinigungsreihenfolge. Der Adapter leert sie danach, weil eine Reihenfolge aus alten Raumnummern gültig aussieht und die falschen Räume putzt.",

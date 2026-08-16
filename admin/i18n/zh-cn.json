@@ -401,6 +401,8 @@
   "ui_map3d_failed": "三维视图无法启动，显示二维地图。",
   "ui_map3d_finish_zone": "请先保存或放弃正在放置的区域，然后再切换到 3D 视图。",
   "ui_map3d_finish_cleaning_zone": "请先开始或删除已绘制的清扫区域，然后再切换到 3D 视图。",
+  "ui_map3d_finish_split": "请先完成或取消房间拆分，然后再切换到 3D 视图。",
+  "ui_map3d_finish_goto": "请先让机器人前往指定点或取消该操作，然后再切换到 3D 视图。",
   "ui_segment_edit_intro": "房间编号会改变，因此会影响：",
   "ui_segment_edit_loses_modes": "扫地机中按房间设置的吸力和水量。适配器没有这些设置，也无法恢复。",
   "ui_segment_edit_loses_sequence": "清扫顺序。适配器随后会清空它，因为使用旧房间编号的顺序看似有效，却会清扫错误的房间。",

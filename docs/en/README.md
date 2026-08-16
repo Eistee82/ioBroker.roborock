@@ -244,13 +244,16 @@ Three things are worth knowing:
 - **The button only appears when it can work.** A browser without WebGL — common in kiosk setups
   and in containers without GPU access — gets no button rather than a black rectangle. If the view
   fails while starting anyway, the tab returns to 2D and says why.
-- **Rectangles are drawn in 2D, whichever view you start from.** Both the zones stored on the map
-  and the rectangle for a single zone-cleaning run are dragged flat on the 2D map, so pressing
-  either **+** while 3D is up returns to 2D first, where the handles are. For the same reason the
-  switch to 3D is refused while such a rectangle is unfinished, and says so instead of hiding it:
-  a saved zone is waiting for the panel's Save, and a cleaning rectangle is waiting for Start — one
-  you can no longer see is one the robot would be sent into blind. Coming **back** to 2D is never
-  refused.
+- **Whatever you place on the map is placed in 2D, whichever view you start from.** The zones stored
+  on the map, the rectangle for a single zone-cleaning run, the point you send the robot to and the
+  line that divides a room are all placed flat on the 2D map, so pressing any of those buttons while
+  3D is up returns to 2D first, where you can see and adjust what you placed. For the same reason the
+  switch to 3D is refused while one of them is unfinished, and says so instead of hiding it: a saved
+  zone is waiting for the panel's Save, a cleaning rectangle is waiting for Start — one you can no
+  longer see is one the robot would be sent into blind — and a dividing line you can no longer see is
+  a cut through a room made sight unseen. Coming **back** to 2D is never refused. The view reset in
+  the status strip belongs to the 2D map alone and is therefore absent in 3D; the 3D view is put
+  straight again by orbiting it.
 
 On a robot with more than one map, **the floor selector now marks the floor the robot is actually
 on**. Those two things come apart the moment you look at the cellar while the robot cleans the

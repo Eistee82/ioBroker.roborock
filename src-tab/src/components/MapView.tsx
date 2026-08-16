@@ -232,6 +232,49 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 		setError(message);
 	}, []);
 
+	/**
+	 * Runs something that only the 2D map can carry, in the view that can carry it.
+	 *
+	 * Every placing, drawing and arming gesture goes through here - not because each of them needs a
+	 * helper, but because the *call site* is where this fault keeps coming back. Three times now a
+	 * control has been wired straight to the engine and gone on working an invisible map: the map
+	 * zone, then the cleaning zone the first fix left behind, then the dock's go-to and the panel's
+	 * divide button. Nothing in the type system objects to a call that simply does not ask which view
+	 * can serve it, so the ask is made structural instead: `map3d/zoneEditingView.ts` lists which
+	 * calls belong in here, and the guard test beside it fails on any call to one of them made
+	 * without it - including one added tomorrow under a name nobody has thought of yet.
+	 *
+	 * @param run What to do with the engine once the right view is on its way in.
+	 */
+	const inMapEditingView = useCallback((run: (engine: MapEngine) => void) => {
+		setShow3D(ZONE_EDITING_VIEW === "3d");
+		const engine = engineRef.current;
+		if (engine) run(engine);
+	}, []);
+
+	/**
+	 * A handler for a control that has no meaning outside the 2D map, or null while 3D is showing.
+	 *
+	 * The other half of the same rule, for the controls that must not simply drag the user back: a
+	 * view reset is not a gesture somebody starts, it is something they expect to apply to what they
+	 * are looking at. In 3D that is the orbit camera, which the 2D map's zoom does not touch - so the
+	 * button is taken away rather than redirected, the same way every other control on this page
+	 * stays absent when it would promise something it cannot do.
+	 *
+	 * @param run What to do with the engine when 2D is showing.
+	 * @returns The handler, or null - which is what makes the control disappear.
+	 */
+	const whenMapEditable = useCallback(
+		(run: (engine: MapEngine) => void): (() => void) | null =>
+			show3D
+				? null
+				: () => {
+						const engine = engineRef.current;
+						if (engine) run(engine);
+					},
+		[show3D]
+	);
+
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) {
@@ -566,10 +609,10 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	 * map, and the corner the user grabs in 3D is a corner of a ten-cell-tall box seen in
 	 * perspective - the very thing that makes a mis-drawn no-go zone easy to produce.
 	 */
-	const startMapZone = useCallback((kind: "no_go" | "no_mop" | "wall") => {
-		setShow3D(ZONE_EDITING_VIEW === "3d");
-		engineRef.current?.startMapZone(kind);
-	}, []);
+	const startMapZone = useCallback(
+		(kind: "no_go" | "no_mop" | "wall") => inMapEditingView(engine => engine.startMapZone(kind)),
+		[inMapEditingView]
+	);
 
 	/**
 	 * Drops a **cleaning** rectangle onto the map, in the view that can actually place one.
@@ -581,13 +624,45 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	 * hidden map: the rectangle existed, the run button renamed itself to "Start zone cleaning", and
 	 * the user saw neither.
 	 *
-	 * It goes through `ZONE_EDITING_VIEW` rather than repeating `setShow3D(false)` so the two
+	 * It goes through {@link inMapEditingView} rather than repeating `setShow3D(false)` so the two
 	 * placements cannot drift apart again - which is exactly what happened the first time.
 	 */
-	const startCleaningZone = useCallback(() => {
-		setShow3D(ZONE_EDITING_VIEW === "3d");
-		engineRef.current?.addZone();
-	}, []);
+	const startCleaningZone = useCallback(() => inMapEditingView(engine => engine.addZone()), [inMapEditingView]);
+
+	/**
+	 * Arms the go-to gesture, in the view whose map can receive the click.
+	 *
+	 * The third case of the same fault and the one that was still open: `toggleGoTo` hangs
+	 * `click.gototarget` on the **2D** SVG (`MapEngine.ts:4700`) and parks a pin in `pinGroup`. In 3D
+	 * the dock's button therefore lit up, the pin was placed on a hidden map, and the click that was
+	 * being waited for could never arrive - `visibility: hidden` takes the map out of hit testing and
+	 * the 3D canvas covers it besides.
+	 *
+	 * Disarming goes through the same path on purpose rather than branching on `goToActive`. It can
+	 * only ever be armed in 2D now - {@link switchMapView} refuses the way into 3D while it is - so
+	 * the view change is already a no-op there, and a branch would be a second rule saying the same
+	 * thing in a place that could fall out of step with the first.
+	 */
+	const toggleGoTo = useCallback(() => inMapEditingView(engine => engine.toggleGoTo()), [inMapEditingView]);
+
+	/**
+	 * Starts dividing a room, in the view that can show the line being placed.
+	 *
+	 * The fourth case, found by looking for the class instead of the name: `beginSplit` lays a line
+	 * into the 2D map's `splitGroup` (`MapEngine.ts:3125`) which is then adjusted by dragging its
+	 * grips (`MapEngine.ts:3338`). None of that is in `map.mapData`, so 3D shows none of it.
+	 *
+	 * This one had more at stake than the two zones. `RoomsPanel` enables its divide button as soon
+	 * as the line snaps, and it is `set_state`/`map_edit_split` on the robot's stored map - so in 3D
+	 * a room could be divided along a line the user never got to see, let alone place.
+	 */
+	const startSplit = useCallback(
+		(segmentId: number) => {
+			inMapEditingView(engine => engine.beginSplit(segmentId));
+			setSplit(engineRef.current?.getSplitState() ?? null);
+		},
+		[inMapEditingView]
+	);
 
 	const writeSetting = useCallback((write: SettingWrite) => {
 		void settingsSourceRef.current?.apply(write);
@@ -732,15 +807,19 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 							value={show3D ? "3d" : "2d"}
 							onChange={(_event, next) => {
 								if (next !== "2d" && next !== "3d") return;
-								// The other half of the placing fix, and the rule lives in one place for all of
-								// it: a rectangle - a map zone being saved *or* a cleaning zone waiting to be
-								// started - exists only in the 2D map's SVG layer, so leaving for 3D would hide
-								// the very thing that was drawn. For the cleaning zone that is the worse of the
-								// two: no confirmation follows, so Start would send the robot into a rectangle
-								// the user can no longer see.
+								// The other half of the whole class, and the rule lives in one place for all of
+								// it: everything a gesture leaves on the map - a map zone being saved, a
+								// cleaning zone waiting to be started, a dividing line, an armed go-to - exists
+								// only in the 2D map's SVG layer, so leaving for 3D would hide the very thing
+								// that was placed. Two of the four are worse than merely hidden, because the
+								// control that *sends* stays enabled: Start would drive the robot into a
+								// rectangle nobody can see any more, and the divide button would cut a room
+								// along a line nobody can see any more.
 								const decided = switchMapView(next, {
 									mapZone: mapZones.drafting,
-									cleaningZone: zones.count > 0
+									cleaningZone: zones.count > 0,
+									roomSplit: split?.active === true,
+									goTo: goToActive
 								});
 								if (decided.refusedBecause) showError(I18n.t(decided.refusedBecause));
 								setShow3D(decided.show === "3d");
@@ -764,7 +843,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				<FloatingSurface sx={map3d && isWebGLAvailable() ? undefined : { ml: "auto" }}>
 					<StatusStrip
 						status={status}
-						onResetZoom={() => engineRef.current?.resetZoom()}
+						onResetZoom={whenMapEditable(engine => engine.resetZoom())}
 					/>
 				</FloatingSurface>
 			</Stack>
@@ -800,8 +879,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 					splitRefusal={splitSelectedRoomId === null ? null : (engineRef.current?.splitRefusalFor(splitSelectedRoomId) ?? null)}
 					onSplitStart={() => {
 						if (splitSelectedRoomId === null) return;
-						engineRef.current?.beginSplit(splitSelectedRoomId);
-						setSplit(engineRef.current?.getSplitState() ?? null);
+						startSplit(splitSelectedRoomId);
 					}}
 					split={split?.active ? split : null}
 					onSplitRequest={() => setSegmentEdit("split")}
@@ -927,7 +1005,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 						onPause={() => engineRef.current?.pause()}
 						onStop={() => engineRef.current?.stop()}
 						onDock={() => engineRef.current?.dock()}
-						onToggleGoTo={() => engineRef.current?.toggleGoTo()}
+						onToggleGoTo={toggleGoTo}
 						onAddZone={startCleaningZone}
 						onCleanRooms={() => engineRef.current?.cleanSelectedRooms()}
 						onClearRooms={() => engineRef.current?.clearRooms()}

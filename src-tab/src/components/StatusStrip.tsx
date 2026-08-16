@@ -11,8 +11,17 @@ import type { StatusModel } from "../engine/types";
 
 interface StatusStripProps {
 	status: StatusModel;
-	/** Returns the map to the fit that was computed for it. */
-	onResetZoom: () => void;
+	/**
+	 * Returns the map to the fit that was computed for it, or null when there is no such map.
+	 *
+	 * Null while the 3D view is showing, and then the button stays away entirely. It resets the **2D**
+	 * map's own zoom (`MapEngine.resetZoom`), which in 3D moves a viewport nobody is looking at - the
+	 * user pressed "reset the view" and the view they were looking at did not move. The 3D view brings
+	 * its own orbit control for that job, so nothing is missing while this is absent; see
+	 * `map3d/zoneEditingView.ts` for the rule that decides which controls are hidden and which follow
+	 * the user into 2D instead.
+	 */
+	onResetZoom: (() => void) | null;
 }
 
 /**
@@ -87,15 +96,17 @@ export function StatusStrip({ status, onResetZoom }: StatusStripProps): React.JS
 				/>
 			) : null}
 
-			<Tooltip title={I18n.t("ui_reset_view")}>
-				<IconButton
-					size="small"
-					aria-label={I18n.t("ui_reset_view")}
-					onClick={onResetZoom}
-				>
-					<CenterFocusStrongIcon fontSize="small" />
-				</IconButton>
-			</Tooltip>
+			{onResetZoom ? (
+				<Tooltip title={I18n.t("ui_reset_view")}>
+					<IconButton
+						size="small"
+						aria-label={I18n.t("ui_reset_view")}
+						onClick={onResetZoom}
+					>
+						<CenterFocusStrongIcon fontSize="small" />
+					</IconButton>
+				</Tooltip>
+			) : null}
 
 			{status.errorText ? (
 				<Chip
