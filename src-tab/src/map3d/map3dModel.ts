@@ -3,9 +3,10 @@
  *
  * ## No new road to the adapter
  *
- * Both inputs are the states `MapEngine` subscribes to anyway: `map.mapBase64Clean`, the finished
- * PNG, and `map.mapData`, the parse result. Nothing is requested for the 3D view, and switching to
- * it costs the robot nothing at all.
+ * Nothing is requested for the 3D view, and switching to it costs the robot nothing at all. The
+ * grid comes from `map.mapData`, which `MapEngine` subscribes to anyway; the picture comes from
+ * `map.mapBase64Surface` where the adapter publishes one and from `map.mapBase64Clean` otherwise.
+ * Which of the two, and why there are two, is decided in `map3dSource.ts`.
  *
  * ## A correction to `_appanalysis/21-3d-kartenansicht.md` §8.3
  *
@@ -169,7 +170,8 @@ function readPlaced(block: { position?: unknown; angle?: unknown } | undefined, 
  * anything solid in it is a legitimate, if unlikely, picture, and the floor alone is still the map.
  *
  * @param rawMapData Value of `map.mapData`, string or already parsed.
- * @param imageSrc Value of `map.mapBase64Clean`; a complete data URI, as the 2D view uses it.
+ * @param imageSrc The map picture as a complete data URI - `map.mapBase64Surface`, or
+ * `map.mapBase64Clean` where there is none. Picked by `Map3DSource.textureSource`.
  * @returns The model, or null when the two states do not carry a drawable map.
  */
 export function buildMap3DModel(rawMapData: unknown, imageSrc: unknown): Map3DModel | null {

@@ -59,7 +59,7 @@ export class V1MapService {
 		}
 	}
 
-	private async processMapResults(mapResult: { mapBase64: string, mapBase64Clean?: string, mapData?: any } | null): Promise<void> {
+	private async processMapResults(mapResult: { mapBase64: string, mapBase64Clean?: string, mapBase64Surface?: string, mapData?: any } | null): Promise<void> {
 		if (!mapResult) return;
 
 		await this.mapManager.saveGeneratedMap(this.duid, mapResult);

@@ -1,9 +1,23 @@
 /**
- * Keeps the 3D model in step with the two map states.
+ * Keeps the 3D model in step with the map states.
  *
- * The same two the 2D view subscribes to - `map.mapBase64Clean` and `map.mapData`
- * (`engine/MapEngine.ts:1267-1268`). Reading them a second time costs nothing: ioBroker delivers a
- * state change to every subscriber, and no request reaches the robot either way.
+ * Three of them, and none of them fetched for this view: `map.mapBase64Surface`,
+ * `map.mapBase64Clean` and `map.mapData`, the latter two being what the 2D view subscribes to
+ * anyway (`engine/MapEngine.ts:1267-1268`). Reading them a second time costs nothing: ioBroker
+ * delivers a state change to every subscriber, and no request reaches the robot either way.
+ *
+ * ## Why two pictures rather than one
+ *
+ * The floor is textured with a map picture while the robot, the dock, the zones and the walls are
+ * bodies standing on it. `mapBase64Clean` is the bare room colour - it has no path, no mopped band,
+ * no room names and no detected objects, which is the whole of issue #78. `mapBase64` has all of
+ * that but carries a flat painted copy of every body as well, which would sit under the body
+ * itself. `mapBase64Surface` is the adapter's answer: everything that lies **on** the floor,
+ * nothing that stands **in** the room (`src/lib/map/v1/CanvasMapRenderer.ts`).
+ *
+ * It is preferred where it exists and simply absent otherwise - on a B01/Q10 robot, which has no V1
+ * drawing pipeline, and on an adapter older than the state. The clean picture is then used exactly
+ * as before, so the view loses the markings again but never breaks.
  *
  * Its own source rather than a branch inside the engine, for the same reason the active-floor
  * marker got one: the engine owns what is drawn in 2D, and this owns a second picture of the same
@@ -30,13 +44,25 @@ interface Map3DSourceHost {
 }
 
 export class Map3DSource {
-	private ids: string[] = [];
+	private subscriptions: Array<{ id: string; handler: (id: string, state: { val?: unknown } | null) => void }> = [];
 	private destroyed = false;
 	private rawMapData: unknown = null;
-	private imageSrc: unknown = null;
+	/** `map.mapBase64Surface`, the picture this view wants, or null where the adapter has none. */
+	private surfaceSrc: unknown = null;
+	/** `map.mapBase64Clean`, the fallback. */
+	private cleanSrc: unknown = null;
 	private liveRaw: unknown = null;
 	/** Last published model, kept only for the grid the live position has to be converted against. */
 	private model: Map3DModel | null = null;
+	/**
+	 * What the last published model was built from.
+	 *
+	 * Three states can trigger a rebuild and two of them carry a picture, so a single map cycle would
+	 * otherwise rebuild the whole scene three times - every wall run, every piece of furniture - for
+	 * two identical results. Only the picture actually used counts here: while a surface picture is
+	 * being published, a new clean one changes nothing this view draws.
+	 */
+	private published: { texture: unknown; data: unknown } | null = null;
 
 	public constructor(
 		private readonly connection: EngineConnection,
@@ -54,22 +80,26 @@ export class Map3DSource {
 
 		this.unsubscribe();
 		this.rawMapData = null;
-		this.imageSrc = null;
+		this.surfaceSrc = null;
+		this.cleanSrc = null;
 		this.liveRaw = null;
 		this.model = null;
+		this.published = null;
 		this.host.onModel(null);
 		this.host.onLiveRobot(null);
 		if (!duid) return;
 
 		const deviceRoot = `${instanceId}.Devices.${duid}`;
 		const root = `${deviceRoot}.map`;
-		const imageId = `${root}.mapBase64Clean`;
+		const surfaceId = `${root}.mapBase64Surface`;
+		const cleanId = `${root}.mapBase64Clean`;
 		const dataId = `${root}.mapData`;
 		const liveId = `${deviceRoot}.${LIVE_TRACK_STATE}`;
 
 		try {
-			const states = await this.connection.getStates([imageId, dataId, liveId]);
-			this.imageSrc = states?.[imageId]?.val ?? null;
+			const states = await this.connection.getStates([surfaceId, cleanId, dataId, liveId]);
+			this.surfaceSrc = states?.[surfaceId]?.val ?? null;
+			this.cleanSrc = states?.[cleanId]?.val ?? null;
 			this.rawMapData = states?.[dataId]?.val ?? null;
 			this.liveRaw = states?.[liveId]?.val ?? null;
 			this.publish();
@@ -81,13 +111,20 @@ export class Map3DSource {
 
 		if (this.destroyed) return;
 
+		const wanted: Array<{ id: string; handler: (id: string, state: { val?: unknown } | null) => void }> = [
+			{ id: surfaceId, handler: this.onSurface },
+			{ id: cleanId, handler: this.onClean },
+			{ id: dataId, handler: this.onData },
+			{ id: liveId, handler: this.onLive }
+		];
 		try {
-			await this.connection.subscribeState(imageId, this.onImage);
-			await this.connection.subscribeState(dataId, this.onData);
-			await this.connection.subscribeState(liveId, this.onLive);
-			this.ids = [imageId, dataId, liveId];
+			for (const entry of wanted) {
+				await this.connection.subscribeState(entry.id, entry.handler);
+				this.subscriptions.push(entry);
+			}
 		} catch {
-			// Without the subscriptions the view simply does not follow later map updates.
+			// Without the subscriptions the view simply does not follow later map updates. Whatever
+			// was subscribed before the failure is remembered, so it is still unsubscribed later.
 		}
 	}
 
@@ -97,9 +134,15 @@ export class Map3DSource {
 		this.unsubscribe();
 	}
 
-	private readonly onImage = (_id: string, state: { val?: unknown } | null): void => {
+	private readonly onSurface = (_id: string, state: { val?: unknown } | null): void => {
 		if (this.destroyed) return;
-		this.imageSrc = state?.val ?? null;
+		this.surfaceSrc = state?.val ?? null;
+		this.publish();
+	};
+
+	private readonly onClean = (_id: string, state: { val?: unknown } | null): void => {
+		if (this.destroyed) return;
+		this.cleanSrc = state?.val ?? null;
 		this.publish();
 	};
 
@@ -139,14 +182,28 @@ export class Map3DSource {
 	}
 
 	/**
+	 * The picture to texture the floor with: the surface where the adapter publishes one, the clean
+	 * map otherwise.
+	 *
+	 * A non-string or an empty value counts as absent, so a state that exists but has never been
+	 * written does not push the fallback out of the way.
+	 */
+	private textureSource(): unknown {
+		return typeof this.surfaceSrc === "string" && this.surfaceSrc ? this.surfaceSrc : this.cleanSrc;
+	}
+
+	/**
 	 * Rebuilds the model from whatever is currently held.
 	 *
-	 * Both states arrive separately and in no fixed order, so this runs on each of them and
-	 * `buildMap3DModel` returns null until both are there. A view built from one of the two would
-	 * be a floor without a picture or a picture without a grid.
+	 * The states arrive separately and in no fixed order, so this runs on each of them and
+	 * `buildMap3DModel` returns null until a picture and a grid are both there. A view built from one
+	 * of the two would be a floor without a picture or a picture without a grid.
 	 */
 	private publish(): void {
-		this.model = buildMap3DModel(this.rawMapData, this.imageSrc);
+		const texture = this.textureSource();
+		if (this.published && this.published.texture === texture && this.published.data === this.rawMapData) return;
+		this.published = { texture, data: this.rawMapData };
+		this.model = buildMap3DModel(this.rawMapData, texture);
 		this.host.onModel(this.model);
 		// A new map moves the grid under the live position; re-reporting keeps the body where the
 		// robot actually is instead of where the previous grid put it.
@@ -154,15 +211,14 @@ export class Map3DSource {
 	}
 
 	private unsubscribe(): void {
-		const ids = this.ids;
-		this.ids = [];
-		if (!ids.length) return;
-		try {
-			this.connection.unsubscribeState(ids[0], this.onImage);
-			this.connection.unsubscribeState(ids[1], this.onData);
-			this.connection.unsubscribeState(ids[2], this.onLive);
-		} catch {
-			// Unsubscribing from a state that is already gone is not a failure worth reporting.
+		const subscriptions = this.subscriptions;
+		this.subscriptions = [];
+		for (const entry of subscriptions) {
+			try {
+				this.connection.unsubscribeState(entry.id, entry.handler);
+			} catch {
+				// Unsubscribing from a state that is already gone is not a failure worth reporting.
+			}
 		}
 	}
 }

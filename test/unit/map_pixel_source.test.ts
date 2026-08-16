@@ -105,8 +105,8 @@ function adapterStub(): Record<string, unknown> {
 	};
 }
 
-/** The three images `canvasMap` returns: clean, full, cropped. */
-async function render(image: Record<string, unknown>): Promise<[string, string, string]> {
+/** What `canvasMap` returns: clean, full, cropped - and the surface picture, unasked for here. */
+async function render(image: Record<string, unknown>): Promise<[string, string, string, string | null]> {
 	const builder = new MapBuilder(adapterStub() as never);
 	return builder.canvasMap(mapDataAround(image), { duid: "duid1" });
 }
@@ -146,7 +146,7 @@ describe("the picture a map draws does not depend on which form it carries", () 
 		for (const image of [clean, full, cropped]) expect(image.startsWith("data:image/png;base64,")).toBe(true);
 
 		// And the same is true for the shapes an ioBroker state can degrade to.
-		await expect(render({ pixels: {} })).resolves.toHaveLength(3);
-		await expect(render({ raster: { encoding: "rle", width: GRID, height: GRID, runs: [FLOOR, 5] } })).resolves.toHaveLength(3);
+		await expect(render({ pixels: {} })).resolves.toHaveLength(4);
+		await expect(render({ raster: { encoding: "rle", width: GRID, height: GRID, runs: [FLOOR, 5] } })).resolves.toHaveLength(4);
 	});
 });

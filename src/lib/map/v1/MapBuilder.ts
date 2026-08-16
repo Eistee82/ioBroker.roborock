@@ -31,6 +31,13 @@ interface CanvasMapOptions {
 	mappedRooms?: any;
 	model?: string;
 	duid?: string;
+	/**
+	 * Also produce the surface picture - the fourth entry of the returned tuple.
+	 *
+	 * Off by default, because it is a second PNG encode of the whole canvas. Only the callers that
+	 * publish it as a state ask for it; the history maps and the tests do not.
+	 */
+	surface?: boolean;
 	options?: {
 		FLOORCOLOR?: string;
 		WALLCOLOR?: string;
@@ -176,13 +183,20 @@ export class MapBuilder {
 	// Main Map Generation (single source: drawMapV1 + CanvasMapRenderer)
 	// --------------------
 
-	public async canvasMap(mapdata: any, params: CanvasMapOptions = {}): Promise<[string, string, string]> {
+	/**
+	 * Draws one V1 map and hands back the pictures the map states are built from.
+	 * @param mapdata Parsed V1 map.
+	 * @param params Rooms, model, device - and whether the surface picture is wanted.
+	 * @returns `[clean, full, cropped, surface]`. `surface` is null unless `params.surface` was set;
+	 * `CanvasMapRenderer.getSurfaceSnapshot` says what separates it from the other two.
+	 */
+	public async canvasMap(mapdata: any, params: CanvasMapOptions = {}): Promise<[string, string, string, string | null]> {
 		const { mappedRooms = null, options = {} } = params;
 
 		if (!mapdata || !mapdata.IMAGE || !mapdata.IMAGE.dimensions) {
 			this.adapter.rLog("MapManager", params.model || null, "Warn", undefined, undefined, "Received invalid or empty map data, cannot generate map.", "warn");
 			const errorCanvas = createCanvas(1, 1).toDataURL();
-			return [errorCanvas, errorCanvas, errorCanvas];
+			return [errorCanvas, errorCanvas, errorCanvas, null];
 		}
 
 		this.applyOptions(options);
@@ -220,6 +234,7 @@ export class MapBuilder {
 			loadObstacleImage: (suffix, model) => this.loadObstacleImageForRenderer(suffix, model),
 			model: params.model,
 			logWarn: (msg) => this.adapter.rLog("MapManager", params.model || null, "Warn", undefined, undefined, msg, "debug"),
+			captureSurface: params.surface === true,
 		});
 
 		const t0 = Date.now();
@@ -238,6 +253,9 @@ export class MapBuilder {
 
 		const cleanMapUncroppedBase64 = renderer.getCleanSnapshot() ?? canvas.toDataURL();
 		const fullMapUncroppedBase64 = canvas.toDataURL();
+		// Null whenever it was not asked for, and also when a map without an image block never got
+		// as far as the clean cut. A caller that publishes it has to survive both.
+		const surfaceMapUncroppedBase64 = renderer.getSurfaceSnapshot();
 
 		const bounds = result.bounds
 			? { minleft: result.bounds.minX, mintop: result.bounds.minY, maxleft: result.bounds.maxX, maxtop: result.bounds.maxY }
@@ -248,7 +266,7 @@ export class MapBuilder {
 			this.adapter.rLog("MapManager", params.model || null, "Warn", "MapProfiler", undefined, `[Slow Map] drawMapV1: ${t1 - t0}ms`, "debug");
 		}
 
-		return [cleanMapUncroppedBase64, fullMapUncroppedBase64, croppedMapBase64];
+		return [cleanMapUncroppedBase64, fullMapUncroppedBase64, croppedMapBase64, surfaceMapUncroppedBase64];
 	}
 
 	/**

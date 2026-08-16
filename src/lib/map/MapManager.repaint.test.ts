@@ -89,4 +89,44 @@ describe("MapManager.repaintStoredMaps", () => {
 		const written = adapter.setStateChangedAsync.mock.calls.map((c) => c[0]);
 		expect(written).toContain("Devices.duid2.map.mapBase64");
 	});
+
+	/**
+	 * The third picture, and the reason it exists: the 3D view textures its floor with a map while
+	 * the robot, the dock, the zones and the walls stand on it as bodies. Neither of the other two
+	 * fits - `mapBase64Clean` has no path and no room names, `mapBase64` carries a flat copy of
+	 * every body. See `src/lib/map/v1/CanvasMapRenderer.ts`.
+	 */
+	it("asks for the surface picture and publishes it as its own state", async () => {
+		const adapter = createAdapter({
+			"roborock.0.Devices.duid1.map.mapData": { val: V1_MAP }
+		});
+		const manager = new MapManager(adapter as any);
+		const canvasMap = vi.fn().mockResolvedValue(["clean", "full", "cropped", "surface"]);
+		manager.mapCreator.canvasMap = canvasMap;
+
+		await manager.repaintStoredMaps();
+
+		expect(canvasMap.mock.calls[0][1]).toMatchObject({ surface: true });
+		const surface = adapter.setStateChangedAsync.mock.calls.find(
+			(c) => c[0] === "Devices.duid1.map.mapBase64Surface"
+		);
+		expect(surface?.[1]).toMatchObject({ val: "surface", ack: true });
+	});
+
+	it("writes no surface state when the render produced none", async () => {
+		// A pipeline without one - B01, Q10, or a map that never reached the clean cut - must leave
+		// the state alone. Writing an empty value would replace a good picture with a blank floor,
+		// where an absent state lets the view fall back to the clean map.
+		const adapter = createAdapter({
+			"roborock.0.Devices.duid1.map.mapData": { val: V1_MAP }
+		});
+		const manager = new MapManager(adapter as any);
+		manager.mapCreator.canvasMap = vi.fn().mockResolvedValue(["clean", "full", "cropped", null]);
+
+		await manager.repaintStoredMaps();
+
+		const written = adapter.setStateChangedAsync.mock.calls.map((c) => c[0]);
+		expect(written).toContain("Devices.duid1.map.mapBase64Clean");
+		expect(written).not.toContain("Devices.duid1.map.mapBase64Surface");
+	});
 });

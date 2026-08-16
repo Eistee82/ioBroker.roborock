@@ -104,7 +104,7 @@ export class MapManager {
      * @param mappedRooms Optional room mapping for V1.
      * @param currentMapIndex Optional floor index for V1; when set and mappedRooms empty, segment names are enriched from room states.
      */
-	public async processMap(rawData: Buffer, version: string, model: string, serial: string, mappedRooms: any[] | null, duid?: string, connectionType: string = "Unknown", deviceStatus?: B01DeviceStatus, currentMapIndex?: number): Promise<{ mapBase64: string, mapBase64Clean?: string, mapData?: any } | null> {
+	public async processMap(rawData: Buffer, version: string, model: string, serial: string, mappedRooms: any[] | null, duid?: string, connectionType: string = "Unknown", deviceStatus?: B01DeviceStatus, currentMapIndex?: number): Promise<{ mapBase64: string, mapBase64Clean?: string, mapBase64Surface?: string, mapData?: any } | null> {
 		try {
 			if (version === "B01" || version === "Q10") {
 				const resolved = this.pipelineB01.resolve(rawData, version, model, serial, duid || "", connectionType);
@@ -202,10 +202,11 @@ export class MapManager {
 				if (mapData && Object.keys(mapData).length > 0) {
 					// Legacy MapCreator returns [clean, full]
 					// We cast builderV1 to any to avoid type issues if CanvasMap isn't explicitly typed in class definition yet
-					const [mapBase64Clean, mapBase64] = await this.mapCreator.canvasMap(mapData, { mappedRooms, model, duid: duid ?? undefined });
+					const [mapBase64Clean, mapBase64, , mapBase64Surface] = await this.mapCreator.canvasMap(mapData, { mappedRooms, model, duid: duid ?? undefined, surface: true });
 					return {
 						mapBase64: mapBase64,
 						mapBase64Clean: mapBase64Clean,
+						mapBase64Surface: mapBase64Surface ?? undefined,
 						mapData: mapData
 					};
 				}
@@ -601,8 +602,8 @@ export class MapManager {
 
 		try {
 			const model = this.adapter.http_api?.getRobotModel(duid) || "";
-			const [mapBase64Clean, mapBase64] = await this.mapCreator.canvasMap(mapData, { model, duid });
-			await this.saveGeneratedMap(duid, { mapBase64, mapBase64Clean });
+			const [mapBase64Clean, mapBase64, , mapBase64Surface] = await this.mapCreator.canvasMap(mapData, { model, duid, surface: true });
+			await this.saveGeneratedMap(duid, { mapBase64, mapBase64Clean, mapBase64Surface: mapBase64Surface ?? undefined });
 		} catch (e: unknown) {
 			this.adapter.rLog("MapManager", duid, "Warn", "Map", undefined, `Repaint of the stored map failed: ${this.adapter.errorMessage(e)}`, "warn");
 		}
@@ -613,7 +614,7 @@ export class MapManager {
 	 * @param duid Device Unique ID
 	 * @param res The processed map result object
 	 */
-	public async saveGeneratedMap(duid: string, res: { mapBase64: string, mapBase64Clean?: string, mapData?: any }): Promise<void> {
+	public async saveGeneratedMap(duid: string, res: { mapBase64: string, mapBase64Clean?: string, mapBase64Surface?: string, mapData?: any }): Promise<void> {
 		if (!res) return;
 
 		try {
@@ -630,6 +631,16 @@ export class MapManager {
 				tasks.push(
 					this.adapter.ensureState(`Devices.${duid}.map.mapBase64Clean`, { name: "Map Image (Clean)", type: "string", role: "text.png" })
 						.then(() => this.adapter.setStateChangedAsync(`Devices.${duid}.map.mapBase64Clean`, { val: res.mapBase64Clean, ack: true }))
+				);
+			}
+			// Third picture, and the reason there is one: the 3D view textures its floor with a map
+			// and stands the robot, the dock, the zones and the walls on it as bodies. `mapBase64Clean`
+			// is bare room colour, `mapBase64` carries a flat copy of every one of those bodies. Only
+			// V1 maps produce it; B01 and Q10 leave it out, and the view falls back to the clean one.
+			if (res.mapBase64Surface) {
+				tasks.push(
+					this.adapter.ensureState(`Devices.${duid}.map.mapBase64Surface`, { name: "Map Image (Surface)", type: "string", role: "text.png" })
+						.then(() => this.adapter.setStateChangedAsync(`Devices.${duid}.map.mapBase64Surface`, { val: res.mapBase64Surface, ack: true }))
 				);
 			}
 			if (res.mapData) {

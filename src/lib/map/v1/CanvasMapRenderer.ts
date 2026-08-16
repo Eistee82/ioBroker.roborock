@@ -59,6 +59,13 @@ export interface CanvasMapRendererOptions {
 	model?: string;
 	/** Log warnings (e.g. missing obstacle image). */
 	logWarn?(msg: string): void;
+	/**
+	 * Also record the map's **surface** on a canvas of its own.
+	 *
+	 * Off by default because it costs a second PNG encode of the full canvas. See
+	 * {@link CanvasMapRenderer.getSurfaceSnapshot} for what lands on it.
+	 */
+	captureSurface?: boolean;
 }
 
 export class CanvasMapRenderer implements IMapRenderer {
@@ -71,6 +78,11 @@ export class CanvasMapRenderer implements IMapRenderer {
 	private logWarn?: (msg: string) => void;
 	private cleanSnapshotBase64: string | null = null;
 	private carpetSprite: Canvas | null = null;
+	private captureSurface: boolean;
+	/** The second picture, created at the clean cut and painted alongside the first from there on. */
+	private surfaceCanvas: Canvas | null = null;
+	private surfaceCtx: NodeCanvasContext2D | null = null;
+	private surfaceSnapshotBase64: string | null = null;
 
 	constructor(options: CanvasMapRendererOptions) {
 		this.ctx = options.ctx;
@@ -80,13 +92,64 @@ export class CanvasMapRenderer implements IMapRenderer {
 		this.loadObstacleImage = options.loadObstacleImage;
 		this.model = options.model;
 		this.logWarn = options.logWarn;
+		this.captureSurface = options.captureSurface === true;
 	}
 
 	getCleanSnapshot(): string | null {
 		if (this.cleanSnapshotBase64 === null) {
-			this.cleanSnapshotBase64 = (this.ctx.canvas as Canvas).toDataURL();
+			const canvas = this.ctx.canvas;
+			this.cleanSnapshotBase64 = canvas.toDataURL();
+			// `drawMapV1` takes the clean cut right after the segments and before anything is laid on
+			// top, which is exactly where the surface picture has to start from. Copying the finished
+			// bitmap costs one blit; re-rasterising floor, walls and segments a second time would cost
+			// the most expensive part of the whole render.
+			if (this.captureSurface) this.startSurfaceCapture(canvas);
 		}
 		return this.cleanSnapshotBase64;
+	}
+
+	/**
+	 * The map with everything that **lies on** the floor, and nothing that **stands in** the room.
+	 *
+	 * On it: carpet, the driven path, the mopped band, the detected objects and the room labels.
+	 * Off it: no-go and no-mop zones, virtual walls, the active cleaning zone, the predicted route,
+	 * the robot, the dock and the go-to pin.
+	 *
+	 * That split exists for the 3D view, whose floor is textured with a map picture while the robot,
+	 * the dock, the zones and the walls are bodies standing on it. `mapBase64Clean` leaves it with
+	 * bare room colours - no path, no names, no objects - and `mapBase64` would lay a flat copy of
+	 * every body underneath the body itself.
+	 *
+	 * **One snapshot cannot produce this picture**, which is why the drawing is mirrored instead:
+	 * `drawMapV1` draws the zones before the room labels (`src/common/mapDrawing/drawMapV1.ts:256`
+	 * and `:387`), so no single cut through that sequence has the labels without the zones.
+	 * @returns Base64 PNG data URI, or null when nothing was captured - the option was off, or
+	 * `drawMapV1` never reached its clean cut.
+	 */
+	getSurfaceSnapshot(): string | null {
+		if (!this.surfaceCanvas) return null;
+		if (this.surfaceSnapshotBase64 === null) {
+			this.surfaceSnapshotBase64 = this.surfaceCanvas.toDataURL();
+		}
+		return this.surfaceSnapshotBase64;
+	}
+
+	private startSurfaceCapture(source: Canvas): void {
+		const canvas = createCanvas(source.width, source.height);
+		const ctx = canvas.getContext("2d") as unknown as NodeCanvasContext2D;
+		ctx.imageSmoothingEnabled = false;
+		if ("antialias" in ctx) ctx.antialias = "none";
+		ctx.drawImage(source, 0, 0);
+		this.surfaceCanvas = canvas;
+		this.surfaceCtx = ctx;
+	}
+
+	/**
+	 * The canvases a layer of the surface has to reach: the map itself, and the surface copy when one
+	 * is being recorded.
+	 */
+	private surfaceTargets(): NodeCanvasContext2D[] {
+		return this.surfaceCtx ? [this.ctx, this.surfaceCtx] : [this.ctx];
 	}
 
 	private createCarpetSprite(): Canvas {
@@ -129,10 +192,12 @@ export class CanvasMapRenderer implements IMapRenderer {
 			}
 		}
 		tempCtx.stroke();
-		this.ctx.save();
-		this.ctx.globalAlpha = opacity;
-		this.ctx.drawImage(tempCanvas as unknown as Canvas, 0, 0);
-		this.ctx.restore();
+		for (const ctx of this.surfaceTargets()) {
+			ctx.save();
+			ctx.globalAlpha = opacity;
+			ctx.drawImage(tempCanvas as unknown as Canvas, 0, 0);
+			ctx.restore();
+		}
 	}
 
 	drawFloor(rects: DrawRect[]): void {
@@ -185,11 +250,13 @@ export class CanvasMapRenderer implements IMapRenderer {
 
 	drawCarpet(input: DrawCarpetInput): void {
 		if (!input.positions.length) return;
-		this.ctx.imageSmoothingEnabled = false;
-		if ("antialias" in this.ctx) this.ctx.antialias = "none";
 		const sprite = this.createCarpetSprite();
-		for (const pos of input.positions) {
-			this.ctx.drawImage(sprite, pos.x, pos.y);
+		for (const ctx of this.surfaceTargets()) {
+			ctx.imageSmoothingEnabled = false;
+			if ("antialias" in ctx) ctx.antialias = "none";
+			for (const pos of input.positions) {
+				ctx.drawImage(sprite, pos.x, pos.y);
+			}
 		}
 	}
 
@@ -256,42 +323,50 @@ export class CanvasMapRenderer implements IMapRenderer {
 		};
 		const radius = VISUAL_BLOCK_SIZE * 3.5;
 		const size = VISUAL_BLOCK_SIZE * 5;
+		const targets = this.surfaceTargets();
 		for (const ob of items) {
 			const suffix = typeof ob.typeOrSuffix === "number" ? (suffixMap[ob.typeOrSuffix] ?? "18") : ob.typeOrSuffix;
-			this.ctx.beginPath();
-			this.ctx.arc(ob.x, ob.y, radius, 0, 2 * Math.PI);
-			this.ctx.fillStyle = "rgba(100, 100, 100, 0.2)";
-			this.ctx.fill();
-			this.ctx.lineWidth = 0.5;
-			this.ctx.strokeStyle = "white";
-			this.ctx.stroke();
+			// Resolved once and painted onto every target: the artwork comes out of the adapter's file
+			// store, and reading it a second time per obstacle would be file I/O for a picture that is
+			// already in hand.
+			let image: Canvas | Image | null = null;
 			if (ob.imageHref) {
 				// Pre-loaded image passed (e.g. data URL or buffer loaded by caller)
 				try {
-					const img = await loadImageFromData(ob.imageHref);
-					if (img) this.ctx.drawImage(img, ob.x - size / 2, ob.y - size / 2, size, size);
+					image = await loadImageFromData(ob.imageHref);
 				} catch {
 					// ignore
 				}
 			} else if (this.loadObstacleImage) {
-				const img = await this.loadObstacleImage(suffix, this.model);
-				if (img) this.ctx.drawImage(img, ob.x - size / 2, ob.y - size / 2, size, size);
-				else if (this.logWarn) this.logWarn(`Could not find obstacle image for suffix ${suffix}`);
+				image = await this.loadObstacleImage(suffix, this.model);
+				if (!image && this.logWarn) this.logWarn(`Could not find obstacle image for suffix ${suffix}`);
+			}
+			for (const ctx of targets) {
+				ctx.beginPath();
+				ctx.arc(ob.x, ob.y, radius, 0, 2 * Math.PI);
+				ctx.fillStyle = "rgba(100, 100, 100, 0.2)";
+				ctx.fill();
+				ctx.lineWidth = 0.5;
+				ctx.strokeStyle = "white";
+				ctx.stroke();
+				if (image) ctx.drawImage(image, ob.x - size / 2, ob.y - size / 2, size, size);
 			}
 		}
 	}
 
 	drawRoomLabels(labels: DrawRoomLabelInput[]): void {
 		if (!labels.length) return;
-		this.ctx.font = `bold ${VISUAL_BLOCK_SIZE * 6}px Arial`;
-		this.ctx.textAlign = "center";
-		this.ctx.textBaseline = "middle";
-		this.ctx.lineWidth = 1;
-		this.ctx.strokeStyle = "white";
-		this.ctx.fillStyle = "black";
-		for (const l of labels) {
-			this.ctx.strokeText(l.text, l.x, l.y);
-			this.ctx.fillText(l.text, l.x, l.y);
+		for (const ctx of this.surfaceTargets()) {
+			ctx.font = `bold ${VISUAL_BLOCK_SIZE * 6}px Arial`;
+			ctx.textAlign = "center";
+			ctx.textBaseline = "middle";
+			ctx.lineWidth = 1;
+			ctx.strokeStyle = "white";
+			ctx.fillStyle = "black";
+			for (const l of labels) {
+				ctx.strokeText(l.text, l.x, l.y);
+				ctx.fillText(l.text, l.x, l.y);
+			}
 		}
 	}
 
