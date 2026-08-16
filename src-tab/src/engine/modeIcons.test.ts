@@ -4,6 +4,8 @@ import {
 	MODE_ICONS,
 	modeIconFileName,
 	modeIconUrl,
+	sceneModeIcon,
+	sceneModeIconUrl,
 	usesShakeMopIcons,
 	type ModeIconRef,
 } from "./modeIcons";
@@ -226,5 +228,74 @@ describe("modeIconUrl", () => {
 			}
 			expect(modeIconUrl(base, command, "999999", "light")).toBeNull();
 		}
+	});
+});
+
+/**
+ * The three pictograms beside a saved program.
+ *
+ * The names are checked against the unpacked control plugin `roborock.vacuum.a65_control_v5208`,
+ * where all six - three modes, two themes - exist in `drawable-mdpi/` at 4.0 to 8.7 KiB each. A
+ * seventh spelling would render as nothing at all, which on this page looks exactly like a device
+ * whose artwork was never downloaded.
+ *
+ * What the assignment mode-to-file rests on, and what it does not, is written out in
+ * `sceneModeIcon`. In short: the file names, the pictures themselves and the three predicates all
+ * agree, and no code in the control plugin binds them - that binding lives in the app's main bundle
+ * and was not read.
+ */
+describe("scene mode icons", () => {
+	const base = `../../files/roborock/assets/${PLAIN_MOP_MODEL}`;
+
+	it("builds the names the plugin actually ships", () => {
+		expect(sceneModeIconUrl(base, "vacuum", "light"))
+			.toBe(`${base}/${ASSET_DENSITY_FOLDER}/projects_comroborocktanos_theme_light_resources_icon_sc_clean.png`);
+		expect(sceneModeIconUrl(base, "mop", "light"))
+			.toBe(`${base}/${ASSET_DENSITY_FOLDER}/projects_comroborocktanos_theme_light_resources_icon_sc_mop.png`);
+		expect(sceneModeIconUrl(base, "vacmop", "light"))
+			.toBe(`${base}/${ASSET_DENSITY_FOLDER}/projects_comroborocktanos_theme_light_resources_icon_sc_clean_and_mop.png`);
+	});
+
+	it("has a dark counterpart for each of them", () => {
+		for (const mode of ["vacuum", "mop", "vacmop"] as const) {
+			expect(sceneModeIconUrl(base, mode, "dark")).toContain("theme_dark_resources_icon_sc_");
+		}
+	});
+
+	it("carries neither a state nor a theme suffix", () => {
+		// This family alone ships one image per theme - no `normal` / `selected` pair, because a
+		// program tile is not an option in a picker. Appending either suffix would 404.
+		for (const mode of ["vacuum", "mop", "vacmop"] as const) {
+			const url = sceneModeIconUrl(base, mode, "light");
+			expect(url).not.toContain("_normal");
+			expect(url).not.toContain("_selected");
+			expect(url?.endsWith("_light.png")).toBe(false);
+		}
+	});
+
+	it("gives the three modes three different pictures", () => {
+		// The combined icon is the other two composed, but it is its own file - reusing one of them
+		// would put the same picture on two different modes.
+		const urls = (["vacuum", "mop", "vacmop"] as const).map(mode => sceneModeIconUrl(base, mode, "light"));
+		expect(new Set(urls).size).toBe(3);
+	});
+
+	it("maps the three modes to the three names and to nothing else", () => {
+		expect(sceneModeIcon("vacuum")).toEqual({ family: "sceneMode", name: "clean" });
+		expect(sceneModeIcon("mop")).toEqual({ family: "sceneMode", name: "mop" });
+		expect(sceneModeIcon("vacmop")).toEqual({ family: "sceneMode", name: "clean_and_mop" });
+	});
+
+	it("is unaffected by the vibrating-mop artwork switch", () => {
+		// That table decides the *water level* icons. This family has one variant only, and letting
+		// the model reach it would ask for a file that does not exist.
+		const shakeBase = `../../files/roborock/assets/${SHAKE_MOP_MODEL}`;
+		expect(sceneModeIconUrl(shakeBase, "mop", "light")).toBe(
+			sceneModeIconUrl(base, "mop", "light")?.replace(PLAIN_MOP_MODEL, SHAKE_MOP_MODEL),
+		);
+	});
+
+	it("returns no image while the model is still unknown", () => {
+		expect(sceneModeIconUrl(null, "vacuum", "light")).toBeNull();
 	});
 });

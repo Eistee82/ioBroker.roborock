@@ -448,5 +448,15 @@
   "ui_map_name_bytes": "%s van %s bytes",
   "ui_map_name_too_long": "Te lang. Een kaartnaam moet onder %s bytes blijven zoals de app ze telt: een gewone letter telt één, een letter met trema twee, de meeste andere tekens drie.",
   "ui_map_name_duplicate": "Een andere kaart heet al zo.",
-  "ui_map_name_unchanged": "Zo heet deze kaart al."
+  "ui_map_name_unchanged": "Zo heet deze kaart al.",
+  "ui_presets": "Opgeslagen programma's",
+  "ui_presets_hint": "De in de Roborock-app opgeslagen programma's. Ze kunnen hier worden gestart; aanmaken, hernoemen en bewerken worden bewust niet aangeboden.",
+  "ui_presets_cloud_required": "Naam en instellingen van een programma staan in het Roborock-account. Deze instantie draait zonder cloud, dus ze zijn niet leesbaar.",
+  "ui_preset_unnamed": "Programma %s",
+  "ui_preset_start": "Programma starten",
+  "ui_preset_stale_hint": "De robot kent het doel van dit programma niet meer, waarschijnlijk omdat de kaart opnieuw is opgebouwd. Starten zou niets doen.",
+  "ui_preset_disabled": "Uitgeschakeld in de app",
+  "ui_preset_target_all": "Hele woning",
+  "ui_preset_target_segment": "Kamer %s",
+  "ui_preset_target_zone": "Zone %s"
 }

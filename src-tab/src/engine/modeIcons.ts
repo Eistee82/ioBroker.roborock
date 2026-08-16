@@ -53,7 +53,18 @@ export type ModeIconRef =
 	/** `custom_water_mode`, the user-defined water amount. */
 	| { family: "waterCustom" }
 	/** `clean_route_<name>`, the mop routes the app calls Standard / Deep / Deep+ / Fast. */
-	| { family: "cleanRoute"; name: "daily" | "subtly" | "deep_slow" | "fast" };
+	| { family: "cleanRoute"; name: "daily" | "subtly" | "deep_slow" | "fast" }
+	/**
+	 * `icon_sc_<name>`, the three pictograms beside a saved program.
+	 *
+	 * `sc` is *scene*, and the whole family in the plugin is named that way - `icon_sc_deep_clean`,
+	 * `icon_sc_pet_area_clean`, `icon_sc_timer` and a dozen more. These three are the ones the app
+	 * puts on a preset tile.
+	 *
+	 * Unlike every family above, they come as **one** image per theme: no `normal` / `selected` pair,
+	 * because a program tile is not an option in a picker.
+	 */
+	| { family: "sceneMode"; name: "clean" | "mop" | "clean_and_mop" };
 
 /** Every asset of the control plugin starts with the project the app builds it from. */
 const ASSET_PREFIX = "projects_comroborocktanos";
@@ -139,7 +150,67 @@ export function modeIconFileName(
 		case "cleanRoute":
 			// This family alone repeats the theme only in the folder segment, not as a suffix.
 			return `${themed}_clean_route_${ref.name}_${state}.png`;
+		case "sceneMode":
+			// No state and no theme suffix: the plugin ships exactly one file per theme here. Checked
+			// against the unpacked `roborock.vacuum.a65_control_v5208` - all six exist in
+			// `drawable-mdpi/`, 4.0 to 8.7 KiB each.
+			return `${themed}_icon_sc_${ref.name}.png`;
 	}
+}
+
+/**
+ * The scene pictogram for one cleaning mode.
+ *
+ * ## How far this is proven, said plainly
+ *
+ * **Proven:** the six files exist under the names below, and their content matches those names. The
+ * light versions were looked at: `icon_sc_clean` is the app's four-lobed suction swirl,
+ * `icon_sc_mop` is two water drops, and `icon_sc_clean_and_mop` is the swirl marked **1** beside the
+ * drop marked **2** - literally the other two, composed in that order.
+ *
+ * **Proven:** the three predicates that turn `fan_power` and `water_box_mode` into one of the three
+ * modes. They are quoted in `sceneCleaningMode` (`src/common/scenePresets.ts`), with their addresses
+ * in the control plugin.
+ *
+ * **Not proven, and named as such:** that the app binds *this* mode to *that* file. No module in the
+ * control plugin pulls one of the three - their only consumer is module 741, the catch-all loader
+ * that registers all 381 assets (`_appanalysis/32-presets.md` §4.3). The preset tiles belong to the
+ * app's home screen, which is not in this plugin; the binding would have to be read out of the main
+ * APK bundle, and that was not done.
+ *
+ * So the assignment rests on the file names, the pictures, and the three predicates agreeing - which
+ * is stronger than a guess and weaker than the rest of this file. It is recorded here rather than
+ * left implicit because this file's own rule is that every assignment says what backs it.
+ *
+ * @param mode The mode as `src/common/scenePresets.ts` derives it.
+ * @returns The icon reference.
+ */
+export function sceneModeIcon(mode: "vacuum" | "mop" | "vacmop"): ModeIconRef {
+	if (mode === "vacuum") return { family: "sceneMode", name: "clean" };
+	if (mode === "mop") return { family: "sceneMode", name: "mop" };
+	return { family: "sceneMode", name: "clean_and_mop" };
+}
+
+/**
+ * Resolves the URL of a scene pictogram.
+ *
+ * Its own entry point rather than a value in {@link MODE_ICONS}, because that table is keyed by the
+ * adapter command a selector writes to and a saved program is not written through a command.
+ *
+ * @param assetBaseUrl Model asset folder published by the engine, or null while unknown.
+ * @param mode The cleaning mode of the program, or one of its steps.
+ * @param themeType Light or dark.
+ * @returns A URL, or null when no asset folder is known yet.
+ */
+export function sceneModeIconUrl(
+	assetBaseUrl: string | null,
+	mode: "vacuum" | "mop" | "vacmop",
+	themeType: IconThemeType
+): string | null {
+	if (!assetBaseUrl) {
+		return null;
+	}
+	return `${assetBaseUrl}/${ASSET_DENSITY_FOLDER}/${modeIconFileName(sceneModeIcon(mode), themeType, "normal")}`;
 }
 
 /**

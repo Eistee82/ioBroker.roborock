@@ -448,5 +448,15 @@
   "ui_map_name_bytes": "%s z %s bajtów",
   "ui_map_name_too_long": "Za długa. Nazwa mapy musi być krótsza niż %s bajtów w liczeniu aplikacji: zwykła litera to jeden, litera z ogonkiem dwa, większość pozostałych znaków trzy.",
   "ui_map_name_duplicate": "Inna mapa już tak się nazywa.",
-  "ui_map_name_unchanged": "Ta mapa już tak się nazywa."
+  "ui_map_name_unchanged": "Ta mapa już tak się nazywa.",
+  "ui_presets": "Zapisane programy",
+  "ui_presets_hint": "Programy zapisane w aplikacji Roborock. Można je tu uruchomić; tworzenie, zmiana nazwy i edycja celowo nie są oferowane.",
+  "ui_presets_cloud_required": "Nazwa i ustawienia programu są w koncie Roborock. Ta instancja działa bez chmury, więc nie da się ich odczytać.",
+  "ui_preset_unnamed": "Program %s",
+  "ui_preset_start": "Uruchom program",
+  "ui_preset_stale_hint": "Robot nie zna już celu tego programu, prawdopodobnie mapa została zbudowana od nowa. Uruchomienie nic by nie dało.",
+  "ui_preset_disabled": "Wyłączony w aplikacji",
+  "ui_preset_target_all": "Całe mieszkanie",
+  "ui_preset_target_segment": "Pokój %s",
+  "ui_preset_target_zone": "Strefa %s"
 }

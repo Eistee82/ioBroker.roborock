@@ -392,6 +392,79 @@ describe("socketHandler", () => {
 		});
 	});
 
+	describe("start_program", () => {
+		/** The button `processScenes` publishes beside a saved program. */
+		const startButton = { type: "state", common: { name: "Start saved program", type: "boolean", role: "button", write: true } };
+
+		function createProgramAdapter(objects: Record<string, unknown>) {
+			return createAdapter({ getObjectAsync: vi.fn(async (id: string) => objects[id] ?? null) });
+		}
+
+		it("presses the button the adapter published, unacknowledged", async () => {
+			// Written rather than `executeSceneProgram` being called directly, so a start from the tab
+			// takes the exact path a start from the object view takes.
+			const programAdapter = createProgramAdapter({ "Devices.duid1.programs.7085747.start": startButton });
+
+			const result = await send(programAdapter, "start_program", { duid: "duid1", sceneId: "7085747" });
+
+			expect(result).toEqual({ result: "accepted" });
+			expect(programAdapter.setState).toHaveBeenCalledWith("Devices.duid1.programs.7085747.start", { val: true, ack: false });
+		});
+
+		it("takes a numeric scene id, which is what the cloud sends", async () => {
+			const programAdapter = createProgramAdapter({ "Devices.duid1.programs.7085747.start": startButton });
+
+			await send(programAdapter, "start_program", { duid: "duid1", sceneId: 7085747 });
+
+			expect(programAdapter.setState).toHaveBeenCalledWith("Devices.duid1.programs.7085747.start", { val: true, ack: false });
+		});
+
+		it("refuses a program this adapter never published", async () => {
+			const programAdapter = createProgramAdapter({});
+
+			const result = await send(programAdapter, "start_program", { duid: "duid1", sceneId: "999" });
+
+			expect(result.error).toMatch(/is not a saved program of DUID duid1/);
+			expect(programAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("refuses a state in the folder that is not the start button", async () => {
+			// `programs.<id>.enabled` sits right beside it and is read-only. Pressing that would write
+			// a value the adapter publishes as a fact about the account.
+			const programAdapter = createProgramAdapter({
+				"Devices.duid1.programs.7085747.start": { type: "state", common: { type: "boolean", role: "indicator", write: false } }
+			});
+
+			const result = await send(programAdapter, "start_program", { duid: "duid1", sceneId: "7085747" });
+
+			expect(result.error).toMatch(/is not a saved program of DUID duid1/);
+			expect(programAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("refuses path traversal out of the programs folder", async () => {
+			const programAdapter = createProgramAdapter({ "Devices.duid1.programs.1.start": startButton });
+
+			const result = await send(programAdapter, "start_program", { duid: "duid1", sceneId: "../../commands/app_start" });
+
+			expect(result.error).toMatch(/illegal characters/);
+			expect(programAdapter.setState).not.toHaveBeenCalled();
+		});
+
+		it("requires duid and sceneId", async () => {
+			expect((await send(adapter, "start_program", { duid: "duid1" })).error).toMatch(/requires 'duid' and 'sceneId'/);
+			expect((await send(adapter, "start_program", { sceneId: "1" })).error).toMatch(/requires 'duid' and 'sceneId'/);
+		});
+
+		it("rejects unknown devices", async () => {
+			const programAdapter = createProgramAdapter({ "Devices.nope.programs.1.start": startButton });
+
+			const result = await send(programAdapter, "start_program", { duid: "nope", sceneId: "1" });
+
+			expect(result.error).toMatch(/No handler for DUID/);
+			expect(programAdapter.setState).not.toHaveBeenCalled();
+		});
+	});
+
 	describe("get_translations", () => {
 		it("returns the adapter language and its loaded translations", async () => {
 			const result = await send(adapter, "get_translations", {});

@@ -513,10 +513,43 @@ Alle Geräteobjekte liegen unter `roborock.<instanz>.Devices.<duid>`:
 | `cleaningInfo.records.<index>` | Die einzelnen Reinigungsläufe der Historie, neueste zuerst; die gerenderte Karte je Lauf liegt unter `map`. |
 | `floors` | Ein Eintrag je gespeicherter Karte, inklusive Knopf zum Laden. |
 | `schedules` | Die Zeitpläne des Roboters, in drei Ausprägungen. Ein Zeitplan, den ein **V1**-Roboter selbst führt, hat `cron`, einen schreibbaren Schalter `enabled`, `source: "device"` und einen Knopf `delete`. Ein Roboter, der seine Zeitpläne stattdessen auf dem **Roborock-Server** führt, bekommt je Zeitplan einen Eintrag mit `source: "server"`, einem **nur lesbaren** `enabled`, einem Knopf `delete` und `raw` — dem Eintrag genau so, wie der Roboter ihn gemeldet hat. Siehe unten. Bei einem **B01/Q10**-Roboter kommen die Zeitpläne über einen Tuya-Datenpunkt: `enabled` ist dort **ebenfalls nur lesbar**, und es gibt weder `source` noch `delete` — der Schreibbefehl dafür ist nicht belegt, und ein Schalter an einem Befehl, den dieses Gerät nicht spricht, sähe aus, als arbeite er. |
-| `programs` | Die in der Roborock-App gespeicherten Szenen. |
+| `programs` | Die in der Roborock-App gespeicherten Szenen — siehe unten. |
 | `map` | Die gerenderte Karte und die Raumnamen. `map.liveTrackLearnedPause` meldet nur lesbar die Pause, die der Adapter für die Live-Position dieses Roboters ermittelt hat — siehe **Live-Position: am Roboter ausrichten** in den Einstellungen. Der State bleibt leer, solange noch nicht genug Positionswechsel gesehen wurden und solange die Option ausgeschaltet ist. |
 | `deviceInfo`, `networkInfo`, `connection` | Modell- und Firmware-Informationen, Netzwerkdaten und der Zustand der lokalen bzw. Cloud-Kanäle. |
 | `dockingStationStatus` | Stationszustände, nur bei Modellen mit einer Station, die sie meldet. |
+
+#### Gespeicherte Programme
+
+Die Kacheln, die die Roborock-App über ihrer Karte zeigt, sind **Szenen** aus dem Roborock-Konto.
+Jede davon erscheint als `programs.<sceneId>`, und die ganze Liste zusätzlich als ein JSON-Wert in
+`programs.list` — den liest der Admin-Tab.
+
+| State | Typ | Schreibbar | Beschreibung |
+| --- | --- | --- | --- |
+| `programs.list` | `string` (JSON) | nein | Alle Programme dieses Roboters auf einmal: `id`, `name`, `enabled`, `valid` und `steps`. |
+| `programs.startProgram` | `string` | ja | Auswahl aller Programme; das Schreiben einer ID startet dieses eine. |
+| `programs.<id>.name` | `string` | nein | Der in der App vergebene Name. |
+| `programs.<id>.enabled` | `boolean` | nein | Ob das Programm in der App eingeschaltet ist. Starten lässt es sich hier so oder so. |
+| `programs.<id>.start` | `boolean` | ja | Knopf. Führt dieses Programm aus. |
+| `programs.<id>.steps` | `string` (JSON) | nein | Die Befehle, die das Programm sendet, mit Ziel und Reinigungswerten. Bei mehrstufigen Programmen die vollständige Auskunft. |
+| `programs.<id>.target` | `string` | nein | `segment`, `zone` oder `all`. Leer, wenn die Schritte sich unterscheiden. |
+| `programs.<id>.targetIds` | `string` (JSON) | nein | Die Segment- oder Zonen-IDs, z. B. `[18]`. |
+| `programs.<id>.mapFlag` | `number` | nein | Zu welcher gespeicherten Karte das Programm gehört. |
+| `programs.<id>.fanPower` | `number` | nein | Saugstufe. Leer, wenn die Schritte sich unterscheiden. |
+| `programs.<id>.waterBoxMode` | `number` | nein | Wasserstufe. Leer, wenn die Schritte sich unterscheiden. |
+| `programs.<id>.mopMode` | `number` | nein | Wischroute. Leer, wenn die Schritte sich unterscheiden. |
+| `programs.<id>.repeat` | `number` | nein | Anzahl der Durchgänge. |
+| `programs.<id>.mode` | `string` | nein | `vacuum`, `mop` oder `vacmop`, aus Saug- und Wasserstufe abgeleitet. |
+| `programs.<id>.valid` | `boolean` | nein | **Nur vorhanden, wenn der Roboter geantwortet hat.** `false` heißt: der Roboter kennt das Ziel dieses Programms nicht mehr — vermutlich wurde die Karte neu aufgebaut, und ein Start bewirkt nichts. |
+
+Zwei Eigenschaften sind wissenswert:
+
+- **Die Einzelwerte werden nur geschrieben, wenn alle Schritte übereinstimmen.** Ein Programm, das
+  die Wohnung erst saugt und dann wischt, hat zwei verschiedene Saugstufen; `fanPower` bleibt dann
+  leer, statt eine davon auszuwählen. In `steps` stehen immer beide.
+- **Namen und Einstellungen kommen aus der Cloud.** Der Roboter selbst kennt nur eine interne
+  Kennung und eine Geometrie. Im cloudfreien Betrieb existiert dieser Ordner deshalb gar nicht — das
+  liegt an Roborocks Aufbau, nicht am Adapter.
 
 #### Was aus einem Befehl geworden ist
 

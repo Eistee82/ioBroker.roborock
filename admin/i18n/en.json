@@ -448,5 +448,15 @@
   "ui_map_name_bytes": "%s of %s bytes",
   "ui_map_name_too_long": "Too long. A map name has to stay below %s bytes as the app counts them: a plain letter counts one, an umlaut two, most other characters three.",
   "ui_map_name_duplicate": "Another map is already called that.",
-  "ui_map_name_unchanged": "That is already this map's name."
+  "ui_map_name_unchanged": "That is already this map's name.",
+  "ui_presets": "Saved programs",
+  "ui_presets_hint": "The programs saved in the Roborock app. They can be started here; creating, renaming and editing one is deliberately not offered.",
+  "ui_presets_cloud_required": "A program's name and settings are kept in the Roborock account. This instance runs without the cloud, so none can be read.",
+  "ui_preset_unnamed": "Program %s",
+  "ui_preset_start": "Start program",
+  "ui_preset_stale_hint": "The robot no longer knows this program's target, probably because the map was rebuilt. Starting it would do nothing.",
+  "ui_preset_disabled": "Switched off in the app",
+  "ui_preset_target_all": "Whole home",
+  "ui_preset_target_segment": "Room %s",
+  "ui_preset_target_zone": "Zone %s"
 }
