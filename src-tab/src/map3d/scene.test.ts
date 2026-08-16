@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildScene } from "./scene";
 import type { ScenePalette, ThreeLike } from "./scene";
 import { WALL_HEIGHT_CELLS } from "./map3dModel";
+import { ZONE_FLOOR_HEIGHT } from "./zones3d";
 import type { Map3DModel } from "./map3dModel";
 import { shapeFor } from "./furnitureShapes";
 
@@ -498,6 +499,36 @@ describe("zones and virtual walls", () => {
 
 		expect(log.boxes).toContainEqual([9, WALL_HEIGHT_CELLS, 1]);
 		expect(log.materials.some((m) => m.color === PALETTE.virtualWall)).toBe(true);
+	});
+
+	it("keeps a zone's floor patch clear of the map floor", () => {
+		// The patch is placed by its underside. Centring a box of height `ZONE_FLOOR_HEIGHT` on the
+		// app's 0.1 clearance spanned 0 to 0.2 and laid its bottom face **exactly** on the map floor,
+		// which is opaque - so the whole underside of every zone z-fought with the map picture, which
+		// is the one thing that clearance exists to prevent.
+		const { three, log } = stubThree();
+		buildScene(three, model({ zones: [ZONE], robot: null, charger: null }), {}, PALETTE);
+
+		// With no robot and no dock, the only bodies are the map floor at y = 0, the patch, and the
+		// four sides at half the wall height.
+		const patches = log.meshes.filter((m) => m.position.y > 0 && m.position.y < WALL_HEIGHT_CELLS / 2);
+		expect(patches).toHaveLength(1);
+		expect(patches[0].position.y - ZONE_FLOOR_HEIGHT / 2).toBeGreaterThan(0);
+	});
+
+	it("draws neither zones nor virtual walls into the depth buffer", () => {
+		// The other half of the fix that gave the walls `depthWrite: false` (`71e33442`). Both are
+		// see-through and ten cells tall, and the transparent pass sorts **per object** - so a zone on
+		// the far half of the map is drawn before the single `InstancedMesh` that carries all 299 wall
+		// runs, and its depth write then blanks every wall standing behind it in one go.
+		const { three, log } = stubThree();
+		buildScene(three, model({ zones: [ZONE, { ...ZONE, kind: "noMop" }], virtualWalls: [WALL] }), {}, PALETTE);
+
+		const seeThrough = log.materials.filter(
+			(m) => m.color === PALETTE.forbiddenZone || m.color === PALETTE.noMopZone || m.color === PALETTE.virtualWall
+		);
+		expect(seeThrough).toHaveLength(3);
+		for (const material of seeThrough) expect(material.depthWrite).toBe(false);
 	});
 
 	it("draws nothing when the map carries neither", () => {

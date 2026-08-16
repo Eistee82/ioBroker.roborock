@@ -150,6 +150,14 @@ const WALL_CAP_THICKNESS = 0.3;
 const ZONE_OPACITY = 0x66 / 255;
 
 /**
+ * How far a zone's floor patch is lifted clear of the map floor.
+ *
+ * The app's own `0.1` (`C4192OooO0oo.java:141`), and it is a **clearance**, not a centre height -
+ * see where it is applied.
+ */
+const ZONE_FLOOR_CLEARANCE = 0.1;
+
+/**
  * The light rig, taken from the app rather than invented.
  *
  * `_appanalysis/21-3d-kartenansicht.md` §3.5 read the values out of the native renderer: ambient
@@ -395,7 +403,20 @@ export function buildScene(
 			metalness: 0,
 			transparent: true,
 			opacity: ZONE_OPACITY,
-			side: three.DoubleSide
+			side: three.DoubleSide,
+			// The same reason the walls carry it, and the half of that fix that was missed: a zone is
+			// ten cells tall and see-through, and with depth writing on it claims that whole silhouette
+			// in the depth buffer for everything drawn after it.
+			//
+			// Which things those are is decided by the transparent pass's back-to-front sort, and that
+			// sort is **per object**. The 299 wall runs are one `InstancedMesh`, so they sort as a
+			// single object at the centre of the map. A zone nearer the camera than that centre is
+			// drawn after the walls and all is well - which is what the test device's own map happens
+			// to look like. A zone on the **far** half sorts first, writes depth, and then the one draw
+			// call carrying every wall in the flat is depth-tested against it: a single zone punches a
+			// ten-cell-tall hole through the walls behind it. The virtual walls and the wall caps lose
+			// the same way.
+			depthWrite: false
 		});
 		disposables.push(material);
 
@@ -405,9 +426,15 @@ export function buildScene(
 
 		// The floor patch, at the app's own 0.1 above the ground so it does not fight the map texture
 		// for the same depth value.
+		//
+		// **Placed by its underside, not by its centre.** A box is centred on its origin, so putting a
+		// patch of height `ZONE_FLOOR_HEIGHT` at y = 0.1 spanned 0 to 0.2 and laid its bottom face
+		// exactly on the map floor - the very co-planarity the 0.1 exists to avoid, and z-fighting
+		// with an opaque surface across the whole underside of every zone. Half the height on top of
+		// the clearance puts the whole patch above the floor, which is what the app's value means.
 		const floorGeometry = new three.BoxGeometry(zone.width, ZONE_FLOOR_HEIGHT, zone.depth);
 		const floorMesh = new three.Mesh(floorGeometry, material);
-		floorMesh.position.set(0, 0.1, 0);
+		floorMesh.position.set(0, ZONE_FLOOR_CLEARANCE + ZONE_FLOOR_HEIGHT / 2, 0);
 		group.add(floorMesh);
 		disposables.push(floorGeometry);
 
@@ -436,7 +463,10 @@ export function buildScene(
 			roughness: 0.9,
 			metalness: 0,
 			transparent: true,
-			opacity: ZONE_OPACITY
+			opacity: ZONE_OPACITY,
+			// As above, and it bites harder here: a virtual wall is the longest thin body in the scene
+			// - 52 cells on the test device's map - so the strip of wall it would blank out is long.
+			depthWrite: false
 		});
 		const mesh = new three.Mesh(geometry, material);
 		mesh.position.set(wall.x, ZONE_HEIGHT / 2, wall.z);
