@@ -187,9 +187,21 @@ export interface PixelSourceImage {
 	raster?: SegmentRaster | null;
 }
 
-/** The value, if it is an array of numbers worth using; otherwise null. */
+/**
+ * The value, if it is a **non-empty** array; otherwise null.
+ *
+ * Emptiness is the whole point of the check, not a detail of it. An empty array is truthy, so a
+ * plain `Array.isArray` would let `pixels: { floor: [] }` beat a raster that holds a full floor
+ * plan, and the map would come out blank with nothing anywhere to say why. That state does not
+ * arise from the adapter - the parser never writes both forms at once, and a map whose lists were
+ * empty really was empty - but `mapData` is an ioBroker state, and a state can be edited by hand.
+ *
+ * Contents are not checked beyond that: a stray non-number stays in the list on purpose, because
+ * the readers drop individual unusable indices themselves (`map3dModel.cellIndices`), and throwing
+ * the whole list away over one bad entry would lose the rest of a drawable map.
+ */
 function publishedList(value: unknown): number[] | null {
-	return Array.isArray(value) ? (value as number[]) : null;
+	return Array.isArray(value) && value.length > 0 ? (value as number[]) : null;
 }
 
 /**
@@ -225,9 +237,10 @@ export function imagePixels(image: PixelSourceImage | null | undefined): ImagePi
 		const floor = publishedList(published.floor);
 		const obstacle = publishedList(published.obstacle);
 		const segments = publishedList(published.segments);
-		// One usable list is enough to treat the block as an old-style one. An image block that has
-		// a `pixels` object but nothing in it is not one - that shape is what a fresh `{}` looks
-		// like, and falling through to the raster is right there.
+		// One list **with something in it** is enough to treat the block as an old-style one. Empty
+		// ones do not count, and that is deliberate rather than tidy: see `publishedList`, where the
+		// reason is written down. A `pixels` object holding only empty arrays is what a hand-edited
+		// state looks like, and letting it win would blank a map that has a perfectly good raster.
 		if (floor || obstacle || segments) return { floor: floor ?? [], obstacle: obstacle ?? [], segments: segments ?? [] };
 	}
 

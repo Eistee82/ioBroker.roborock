@@ -193,6 +193,27 @@ describe("deriving the cell lists an image block used to publish", () => {
 		expect(imagePixels(both).floor).toEqual([1]);
 	});
 
+	it("does not let empty lists beat a raster that has a floor plan in it", () => {
+		// An empty array is truthy, so a plain Array.isArray check would hand back nothing here and
+		// the map would draw blank with nothing to say why. The adapter never writes this shape -
+		// the parser publishes one form or the other - but `mapData` is an ioBroker state and can be
+		// edited by hand.
+		const raster = coded([(16 << 3) | FLOOR, 4], 2, 2);
+		expect(imagePixels({ pixels: { floor: [], obstacle: [], segments: [] }, raster }).floor).toEqual([0, 1, 2, 3]);
+
+		// One non-empty list is still enough to treat the block as an old-style one, and then the
+		// empty ones beside it are taken at face value.
+		const partly = imagePixels({ pixels: { floor: [], obstacle: [9], segments: [] }, raster });
+		expect(partly).toEqual({ floor: [], obstacle: [9], segments: [] });
+	});
+
+	it("keeps a stray entry instead of dropping the list it sits in", () => {
+		// The tab drops single unusable indices itself (map3dModel.cellIndices) and draws the rest.
+		// Rejecting the whole list over one bad entry would throw away a map that is still drawable.
+		const lists = imagePixels({ pixels: { floor: [0, 1, "x" as unknown as number, 3] } });
+		expect(lists.floor).toEqual([0, 1, "x", 3]);
+	});
+
 	it("fills in the lists an old state happens to be missing", () => {
 		// A partial `pixels` object still counts as the old form; the fields it lacks come back empty
 		// rather than from the raster, so the two halves can never describe different grids.
