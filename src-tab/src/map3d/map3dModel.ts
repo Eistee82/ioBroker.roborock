@@ -87,6 +87,20 @@ export interface Map3DModel {
 	imageSrc: string;
 	robot: Placed | null;
 	charger: Placed | null;
+	/**
+	 * Which of the robot's stored maps this is, or null where the adapter cannot say.
+	 *
+	 * `MapManager` writes it into the published `mapData` as `mapFlag` (`src/lib/map/MapManager.ts`,
+	 * "Expose the map flag so consumers … can key rooms correctly"), but only for V1 maps and only
+	 * once the active slot is known. B01 and Q10 maps carry none.
+	 *
+	 * The view uses it for one decision and nothing else: whether an incoming map is a **different**
+	 * map, in which case starting the camera over is right, or the same one seen again, in which case
+	 * the user's viewing angle has to survive. Null on either side means "not provably different",
+	 * and the camera is kept - a camera left where the user put it is a small mistake, throwing it
+	 * away is the one that was reported.
+	 */
+	mapFlag: number | null;
 }
 
 /** The slice of `mapData` this module reads. */
@@ -107,6 +121,8 @@ interface RawMapData {
 	FURNITURES?: unknown;
 	OBSTACLES?: unknown;
 	OBSTACLES2?: unknown;
+	/** Which stored map this is; written by `MapManager` for V1 maps, absent otherwise. */
+	mapFlag?: unknown;
 }
 
 /** Reads a positive integer, or null. */
@@ -223,8 +239,65 @@ export function buildMap3DModel(rawMapData: unknown, imageSrc: unknown): Map3DMo
 		virtualWalls: zones.virtualWalls,
 		imageSrc,
 		robot: readPlaced(parsed.ROBOT_POSITION, left, top, height),
-		charger: readPlaced(parsed.CHARGER_LOCATION, left, top, height)
+		charger: readPlaced(parsed.CHARGER_LOCATION, left, top, height),
+		mapFlag: Number.isInteger(Number(parsed.mapFlag)) ? Number(parsed.mapFlag) : null
 	};
+}
+
+/**
+ * A key for everything the scene's **bodies** are built from, and nothing else.
+ *
+ * ## Why this exists
+ *
+ * `Map3DSource` hands down a new `Map3DModel` object on every map cycle, and `io-package.json`
+ * ships `liveMapInterval: 3` - so while the robot works, that is every three seconds. The view used
+ * to list the model itself among the dependencies of its start-up effect, which meant a full
+ * teardown and rebuild at that rate: floor, walls, furniture, zones, a new `PerspectiveCamera` and
+ * new `OrbitControls`. Measured in `Map3DView.test.tsx`: six renders, six builds, four separate
+ * cameras. The user's rotation lived in a camera that was thrown away a moment later, which is the
+ * "3D view keeps resetting" report.
+ *
+ * Most of those cycles change nothing this key covers. What they do change is the **picture** - the
+ * path and the mopped band are painted into `map.mapBase64Surface` - and the robot's place. Both are
+ * applied to the standing scene instead, so the geometry is only rebuilt when the geometry actually
+ * differs.
+ *
+ * ## What is deliberately not in it
+ *
+ * `imageSrc` (swapped as a texture), `robot` and `charger` (moved), and `mapFlag` (a different map
+ * with identical bodies still needs no rebuild - it is only allowed to reset the camera).
+ *
+ * @param model The model to describe.
+ * @returns A string that differs whenever a rebuild is needed.
+ */
+export function sceneGeometryKey(model: Map3DModel): string {
+	const parts: Array<string | number> = [model.width, model.height, model.left, model.top, model.wallCellCount];
+	// The runs are compared in full rather than by count: a wall that moved without the count
+	// changing would otherwise leave the old geometry standing, and nothing would ever correct it.
+	for (const wall of model.walls) parts.push(wall.x0, wall.y0, wall.x1, wall.y1);
+	parts.push("|");
+	for (const piece of model.furniture) {
+		parts.push(piece.x, piece.z, piece.width, piece.depth, piece.height, piece.angle, piece.type, piece.subType, piece.model ?? "");
+	}
+	parts.push("|");
+	for (const zone of model.zones) parts.push(zone.kind, zone.x, zone.z, zone.width, zone.depth, zone.angle);
+	parts.push("|");
+	for (const wall of model.virtualWalls) parts.push(wall.x, wall.z, wall.length, wall.angle);
+	return parts.join(",");
+}
+
+/**
+ * Whether two map flags prove that the map itself changed - another floor, another stored map.
+ *
+ * Only a pair of known and unequal flags counts. An absent flag is not evidence of a change, and
+ * treating it as one is what would reset the camera on every cycle of a robot that publishes none.
+ *
+ * @param before Map flag the scene was built for.
+ * @param after Map flag of the map now being built.
+ * @returns True only when both are known and differ.
+ */
+export function provablyDifferentMap(before: number | null, after: number | null): boolean {
+	return typeof before === "number" && typeof after === "number" && before !== after;
 }
 
 /**

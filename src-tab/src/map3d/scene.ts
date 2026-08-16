@@ -92,12 +92,23 @@ export interface BuiltScene {
 	/**
 	 * The robot body, or null when the map does not place one.
 	 *
-	 * Handed back so the live channel can move it without rebuilding the scene. The map tick is
-	 * minutes apart, the live tick is seconds; rebuilding 299 wall boxes, the floor texture and every
-	 * piece of furniture at the live rate would be visible as a stutter and would throw away the
-	 * user's camera position on top.
+	 * Handed back so the live channel can move it without rebuilding the scene. The live tick is
+	 * seconds apart and the map tick, at the shipped `liveMapInterval: 3`, is barely slower;
+	 * rebuilding 299 wall boxes, the floor texture and every piece of furniture at either rate is
+	 * visible as a stutter and throws away the user's camera position on top.
 	 */
 	robot: any | null;
+	/** The dock body, or null when the map does not place one. Moved rather than rebuilt, as above. */
+	charger: any | null;
+	/**
+	 * Puts a new map picture on the floor.
+	 *
+	 * The picture changes on every map cycle even when nothing about the geometry does - the cleaned
+	 * path and the mopped band are painted into it - so this is the whole of what such a cycle costs.
+	 * The old texture is **not** disposed here: whoever created it owns it, and the view disposes it
+	 * once the swap has happened.
+	 */
+	setFloorTexture: (texture: any) => void;
 }
 
 /**
@@ -450,12 +461,13 @@ export function buildScene(
 		disposables.push(geometry, material);
 	}
 
+	let charger: any = null;
 	if (model.charger) {
 		const geometry = new three.BoxGeometry(5, 2, 4);
 		const material = new three.MeshStandardMaterial({ color: palette.charger, roughness: 0.7, metalness: 0 });
-		const mesh = new three.Mesh(geometry, material);
-		mesh.position.set(model.charger.x, 1, model.charger.y);
-		scene.add(mesh);
+		charger = new three.Mesh(geometry, material);
+		charger.position.set(model.charger.x, 1, model.charger.y);
+		scene.add(charger);
 		disposables.push(geometry, material);
 	}
 
@@ -479,5 +491,19 @@ export function buildScene(
 	camera.position.set(centre.x, span * 0.9, centre.z + span * 0.8);
 	camera.lookAt(centre.x, 0, centre.z);
 
-	return { scene, camera, disposables, centre, wallCount: model.walls.length, robot };
+	return {
+		scene,
+		camera,
+		disposables,
+		centre,
+		wallCount: model.walls.length,
+		robot,
+		charger,
+		setFloorTexture: (next: any): void => {
+			floorMaterial.map = next;
+			// The material's shader program depends on whether it has a map at all, so three.js has
+			// to be told; without this the floor keeps drawing the picture it started with.
+			floorMaterial.needsUpdate = true;
+		}
+	};
 }

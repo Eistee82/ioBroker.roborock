@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MM_PER_CELL, WALL_HEIGHT_CELLS, buildMap3DModel, cellOf, robotMmToCell } from "./map3dModel";
+import { MM_PER_CELL, WALL_HEIGHT_CELLS, buildMap3DModel, cellOf, provablyDifferentMap, robotMmToCell, sceneGeometryKey } from "./map3dModel";
+import type { Map3DModel } from "./map3dModel";
 
 /**
  * What the 3D view is built from.
@@ -224,5 +225,119 @@ describe("the two constants the geometry rests on", () => {
 		// here silently rescales every wall in the view.
 		expect(WALL_HEIGHT_CELLS).toBe(10);
 		expect(MM_PER_CELL).toBe(50);
+	});
+});
+
+describe("which map this is", () => {
+	it("reads the map flag the adapter publishes", () => {
+		// `MapManager` writes it beside the blocks: "Expose the map flag so consumers … can key
+		// rooms correctly". The 3D view uses it to tell a new floor from the same one seen again.
+		expect(buildMap3DModel({ ...WITH_WALL, mapFlag: 2 }, IMAGE)?.mapFlag).toBe(2);
+	});
+
+	it("reports no flag where the map carries none", () => {
+		// B01 and Q10 maps, and any V1 map read before the active slot is known.
+		expect(buildMap3DModel(WITH_WALL, IMAGE)?.mapFlag).toBeNull();
+	});
+
+	it("calls a map change only what two known flags prove", () => {
+		expect(provablyDifferentMap(0, 1)).toBe(true);
+		expect(provablyDifferentMap(1, 1)).toBe(false);
+		// An unknown flag is not evidence. Treating it as one would reset the camera on every
+		// cycle of a robot that publishes none, which is the bug this whole distinction exists for.
+		expect(provablyDifferentMap(null, 1)).toBe(false);
+		expect(provablyDifferentMap(0, null)).toBe(false);
+		expect(provablyDifferentMap(null, null)).toBe(false);
+	});
+});
+
+describe("the key that decides whether the scene is rebuilt", () => {
+	function model(over: Partial<Map3DModel> = {}): Map3DModel {
+		return {
+			width: 4,
+			height: 3,
+			left: 10,
+			top: 20,
+			walls: [{ x0: 0, y0: 0, x1: 3, y1: 0 }],
+			wallCellCount: 4,
+			furniture: [],
+			zones: [],
+			virtualWalls: [],
+			imageSrc: "data:image/png;base64,AAAA",
+			robot: { x: 2.5, y: 0.5, angle: 90 },
+			charger: { x: 1.5, y: 1.5, angle: 0 },
+			mapFlag: 0,
+			...over
+		};
+	}
+
+	/*
+	 * The three fields a map cycle changes while the flat stays the flat it was. Each of them used
+	 * to cost a full rebuild - new floor, new walls, new furniture, new camera - three seconds
+	 * after the last one, which is what threw the user's viewing angle away.
+	 */
+	it("ignores the map picture, the robot and the dock", () => {
+		const base = sceneGeometryKey(model());
+		expect(sceneGeometryKey(model({ imageSrc: "data:image/png;base64,WITHPATH" }))).toBe(base);
+		expect(sceneGeometryKey(model({ robot: { x: 99, y: 99, angle: 12 } }))).toBe(base);
+		expect(sceneGeometryKey(model({ charger: { x: 88, y: 88, angle: 0 } }))).toBe(base);
+		expect(sceneGeometryKey(model({ robot: null, charger: null }))).toBe(base);
+	});
+
+	it("ignores the map flag, which decides the camera and not the bodies", () => {
+		expect(sceneGeometryKey(model({ mapFlag: 7 }))).toBe(sceneGeometryKey(model()));
+	});
+
+	it("changes for every part the scene is actually built from", () => {
+		const base = sceneGeometryKey(model());
+		expect(sceneGeometryKey(model({ width: 5 }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ height: 4 }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ left: 11 }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ top: 21 }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ wallCellCount: 5 }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ walls: [] }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ zones: [{ kind: "forbidden", x: 1, z: 1, width: 2, depth: 2, angle: 0 }] }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ virtualWalls: [{ x: 1, z: 1, length: 3, angle: 0 }] }))).not.toBe(base);
+	});
+
+	/**
+	 * A wall that moved without the count changing. Comparing counts alone would leave the old
+	 * geometry standing for good, because no later cycle would ever notice the difference either.
+	 */
+	it("notices a wall that moved while the count stayed the same", () => {
+		const moved = model({ walls: [{ x0: 1, y0: 0, x1: 3, y1: 0 }] });
+		expect(sceneGeometryKey(moved)).not.toBe(sceneGeometryKey(model()));
+	});
+
+	it("notices furniture that was moved, turned or swapped for another model", () => {
+		const piece = {
+			x: 5,
+			z: 6,
+			width: 2,
+			depth: 3,
+			height: 400,
+			angle: 0,
+			type: 1,
+			subType: 0,
+			known: true,
+			parts: null,
+			model: "sofa"
+		};
+		const base = sceneGeometryKey(model({ furniture: [piece] }));
+		expect(sceneGeometryKey(model({ furniture: [{ ...piece, x: 6 }] }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ furniture: [{ ...piece, angle: 90 }] }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ furniture: [{ ...piece, model: "bed" }] }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ furniture: [{ ...piece, model: null }] }))).not.toBe(base);
+		expect(sceneGeometryKey(model({ furniture: [] }))).not.toBe(base);
+	});
+
+	/**
+	 * The lists are separated in the key, so moving an entry from one of them to another cannot
+	 * produce the same string by accident.
+	 */
+	it("keeps the lists apart", () => {
+		const asZone = model({ zones: [{ kind: "noMop", x: 1, z: 2, width: 3, depth: 4, angle: 0 }] });
+		const asWall = model({ virtualWalls: [{ x: 1, z: 2, length: 3, angle: 4 }] });
+		expect(sceneGeometryKey(asZone)).not.toBe(sceneGeometryKey(asWall));
 	});
 });

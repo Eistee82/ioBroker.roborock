@@ -35,10 +35,14 @@ interface Map3DSourceHost {
 	/**
 	 * Where the robot is right now, in the model's own cell coordinates, or null.
 	 *
-	 * Separate from the model on purpose. The map arrives minutes apart, the live position every
-	 * second or two; folding it into the model would rebuild the whole scene at the live rate -
-	 * every wall box, the floor texture, all the furniture - and throw the user's camera away with
-	 * each update. The view moves the existing body instead.
+	 * Separate from the model on purpose: the view moves the existing body instead of taking a new
+	 * model for it.
+	 *
+	 * The two cadences are closer together than this comment used to claim. `io-package.json` ships
+	 * `liveMapInterval: 3` and `liveTrackInterval: 1500`, so while the robot works a map arrives
+	 * every three seconds and a position every one and a half. Separating them is therefore not
+	 * enough on its own - the view has to decide what a **new map** is worth rebuilding for too, and
+	 * it does; see `sceneGeometryKey` in `map3dModel.ts`.
 	 */
 	onLiveRobot: (position: CellPoint | null) => void;
 }

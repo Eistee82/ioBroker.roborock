@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { buildScene } from "./scene";
 import type { BuiltScene, ScenePalette } from "./scene";
 import { loadRoborockModels } from "./roborockModels";
+import { provablyDifferentMap, sceneGeometryKey } from "./map3dModel";
 import type { CellPoint, Map3DModel } from "./map3dModel";
 
 /**
@@ -17,6 +18,24 @@ import type { CellPoint, Map3DModel } from "./map3dModel";
  *
  * `OrbitControls` is loaded the same way and is worth its weight: it brings pinch, two-finger pan
  * and inertia, which is what makes the view usable on the tablet the admin is often opened from.
+ *
+ * ## The scene is built rarely and updated often
+ *
+ * A map cycle hands down a new `Map3DModel` object every `liveMapInterval` seconds - three, as
+ * shipped - and the live channel a new position roughly as often again. Rebuilding for either was
+ * the reported "the 3D view keeps resetting": `buildScene` mints a new `PerspectiveCamera` at a
+ * fixed place, so the angle the user had just dragged to was discarded a second or two later.
+ *
+ * So there are four effects, in the order they must run:
+ *
+ * | Effect | Runs when | Costs |
+ * | --- | --- | --- |
+ * | start-up | {@link sceneGeometryKey} or the palette changes | the whole scene |
+ * | floor texture | the map picture changes | one texture |
+ * | map bodies | the map moves the robot or the dock | two assignments |
+ * | live position | the live channel reports | two assignments |
+ *
+ * The camera survives a rebuild unless the map itself changed; see {@link provablyDifferentMap}.
  *
  * ## Three ways this can fail, and all three end in the 2D view
  *
@@ -33,18 +52,72 @@ interface Map3DViewProps {
 	/**
 	 * Where the robot is right now, in cell coordinates, or null while the live channel is quiet.
 	 *
-	 * Deliberately not part of the model: it arrives every second or two, and the model rebuilds the
-	 * whole scene. See {@link BuiltScene.robot}.
+	 * Deliberately not part of the model: it arrives every second or two, and it moves an existing
+	 * body rather than producing a new scene. See {@link BuiltScene.robot}.
 	 */
 	livePosition: CellPoint | null;
 	/** Called when the view cannot run after all; the shell then returns to 2D. */
 	onUnavailable: (reason: string) => void;
 }
 
+/** Where the user had put the camera, and which map that was. */
+interface CameraMemory {
+	mapFlag: number | null;
+	position: { x: number; y: number; z: number };
+	target: { x: number; y: number; z: number };
+}
+
+/**
+ * Decodes a map picture into something three.js can put on the floor.
+ *
+ * Decoded before it is handed over, because a texture built from an image that has not loaded yet
+ * paints the floor black for the first frames.
+ *
+ * @param three The loaded three.js namespace.
+ * @param imageSrc The picture as a data URI.
+ * @returns The texture, ready to use.
+ */
+async function makeTexture(three: any, imageSrc: string): Promise<any> {
+	const image = new Image();
+	image.src = imageSrc;
+	await image.decode().catch(() => undefined);
+	const texture = new three.Texture(image);
+	texture.colorSpace = three.SRGBColorSpace;
+	texture.needsUpdate = true;
+	return texture;
+}
+
 export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3DViewProps): React.JSX.Element {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const builtRef = useRef<BuiltScene | null>(null);
+	/** The loaded three.js namespace, so the light effects can make a texture without importing. */
+	const threeRef = useRef<any>(null);
+	/** The texture currently on the floor. Whoever replaces it disposes the one it replaced. */
+	const textureRef = useRef<any>(null);
+	/** The newest model, read by the start-up effect at the moment it runs. */
+	const modelRef = useRef<Map3DModel>(model);
+	const cameraMemoryRef = useRef<CameraMemory | null>(null);
 	const [loading, setLoading] = useState(true);
+	/**
+	 * Bumped whenever a scene has finished starting.
+	 *
+	 * The three light effects below cannot do anything before there is a scene, and the start-up is
+	 * asynchronous, so they would silently skip the first update after every build. Depending on this
+	 * makes them run once more the moment the scene is live.
+	 */
+	const [sceneEpoch, setSceneEpoch] = useState(0);
+
+	/**
+	 * What a rebuild is actually needed for. Everything else about the model is applied to the
+	 * standing scene by the effects further down.
+	 */
+	const geometryKey = useMemo(() => sceneGeometryKey(model), [model]);
+
+	// Declared before the start-up effect so that effect reads the model of the render it belongs
+	// to. React runs a component's effects in declaration order within one commit.
+	useEffect(() => {
+		modelRef.current = model;
+	});
 
 	useEffect(() => {
 		const host = hostRef.current;
@@ -56,9 +129,11 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 		let renderer: any = null;
 		let controls: any = null;
 		let built: BuiltScene | null = null;
-		let texture: any = null;
 		let frame = 0;
 		let observer: ResizeObserver | null = null;
+		// The map this build belongs to, remembered for the teardown: by then the props may already
+		// describe the next one, and the camera has to be filed under the map it was aimed at.
+		let builtMapFlag: number | null = null;
 
 		const start = async (): Promise<void> => {
 			let three: any;
@@ -75,16 +150,16 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 			if (cancelled) return;
 
 			try {
-				// The map picture, decoded before the scene is built: a texture from an image that has
-				// not loaded yet paints the floor black on the first frames.
-				const image = new Image();
-				image.src = model.imageSrc;
-				await image.decode().catch(() => undefined);
-				if (cancelled) return;
+				// The newest model, not the one of the render that scheduled this effect: a build that
+				// starts late should draw what is current.
+				const current = modelRef.current;
+				builtMapFlag = current.mapFlag;
 
-				texture = new three.Texture(image);
-				texture.colorSpace = three.SRGBColorSpace;
-				texture.needsUpdate = true;
+				const texture = await makeTexture(three, current.imageSrc);
+				if (cancelled) {
+					texture.dispose?.();
+					return;
+				}
 
 				// Roborock's own furniture models, in a chunk of their own. Awaited rather than
 				// applied later so the first frame already shows the furniture the way every later
@@ -92,10 +167,15 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 				// opens looks like a fault. A failed load returns null and the view draws its own
 				// shapes, which is what it did before the models existed.
 				const furnitureModels = await loadRoborockModels();
-				if (cancelled) return;
+				if (cancelled) {
+					texture.dispose?.();
+					return;
+				}
 
-				built = buildScene(three, model, texture, palette, furnitureModels);
+				built = buildScene(three, current, texture, palette, furnitureModels);
 				builtRef.current = built;
+				threeRef.current = three;
+				textureRef.current = texture;
 
 				// Transparent rather than filled: the canvas sits on the panel the tab already
 				// painted, so letting that show through is right in either theme and stays right
@@ -117,6 +197,16 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 				// Never below the floor: from underneath the map is an unlit back face and the view
 				// looks broken rather than rotated.
 				controls.maxPolarAngle = Math.PI / 2 - 0.05;
+
+				// Back to where the user had turned it, unless this is a different map - a stored
+				// map of another floor has nothing in common with the angle chosen for the last one.
+				const memory = cameraMemoryRef.current;
+				if (memory && !provablyDifferentMap(memory.mapFlag, builtMapFlag)) {
+					built.camera.position.set(memory.position.x, memory.position.y, memory.position.z);
+					controls.target.set(memory.target.x, memory.target.y, memory.target.z);
+				} else {
+					cameraMemoryRef.current = null;
+				}
 				controls.update();
 
 				const resize = (): void => {
@@ -138,7 +228,10 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 				};
 				tick();
 
-				if (!cancelled) setLoading(false);
+				if (!cancelled) {
+					setLoading(false);
+					setSceneEpoch(epoch => epoch + 1);
+				}
 			} catch (error: unknown) {
 				if (!cancelled) onUnavailable(error instanceof Error ? error.message : String(error));
 			}
@@ -148,18 +241,84 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 
 		return () => {
 			cancelled = true;
+			// Where the user was looking, so the next build can put them back. Read before anything
+			// is disposed; a scene that never got that far simply leaves the previous memory alone.
+			if (built && controls) {
+				cameraMemoryRef.current = {
+					mapFlag: builtMapFlag,
+					position: { x: built.camera.position.x, y: built.camera.position.y, z: built.camera.position.z },
+					target: { x: controls.target.x, y: controls.target.y, z: controls.target.z }
+				};
+			}
 			builtRef.current = null;
+			threeRef.current = null;
 			if (frame) cancelAnimationFrame(frame);
 			observer?.disconnect();
 			controls?.dispose?.();
 			// Geometries, materials and textures hold GPU memory that garbage collection does not
 			// reach. Switching between 2D and 3D a few dozen times would otherwise grow without end.
 			for (const item of built?.disposables ?? []) item.dispose?.();
-			texture?.dispose?.();
+			textureRef.current?.dispose?.();
+			textureRef.current = null;
 			renderer?.dispose?.();
 			if (renderer?.domElement?.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
 		};
-	}, [model, palette, onUnavailable]);
+	}, [geometryKey, palette, onUnavailable]);
+
+	/**
+	 * Puts the new map picture on the floor.
+	 *
+	 * This is what a map cycle usually amounts to: the geometry is the same flat it was three
+	 * seconds ago, but the path and the mopped band have grown. One texture instead of a whole
+	 * scene, and the camera is not touched at all.
+	 *
+	 * Nothing happens while the scene is still starting - that build reads the newest picture
+	 * itself, and `sceneEpoch` brings this effect back the moment it is live.
+	 */
+	useEffect(() => {
+		const three = threeRef.current;
+		const built = builtRef.current;
+		if (!three || !built) return;
+		if (textureRef.current?.image?.src === model.imageSrc) return;
+
+		let cancelled = false;
+		void (async () => {
+			const texture = await makeTexture(three, model.imageSrc);
+			// A rebuild that started meanwhile owns the floor now; this texture belongs to a scene
+			// that no longer exists and would otherwise leak.
+			if (cancelled || builtRef.current !== built) {
+				texture.dispose?.();
+				return;
+			}
+			const previous = textureRef.current;
+			textureRef.current = texture;
+			built.setFloorTexture(texture);
+			previous?.dispose?.();
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [model.imageSrc, sceneEpoch]);
+
+	/**
+	 * Moves the bodies the map places: the robot where the live channel is quiet, and the dock.
+	 *
+	 * The live channel wins for the robot, and by a lot - the map's idea of where the robot is can be
+	 * seconds old, so applying it over a live position would drag the body backwards once per cycle.
+	 */
+	useEffect(() => {
+		const built = builtRef.current;
+		if (!built) return;
+		if (built.robot && !livePosition && model.robot) {
+			built.robot.position.x = model.robot.x;
+			built.robot.position.z = model.robot.y;
+		}
+		if (built.charger && model.charger) {
+			built.charger.position.x = model.charger.x;
+			built.charger.position.z = model.charger.y;
+		}
+	}, [model.robot, model.charger, livePosition, sceneEpoch]);
 
 	/**
 	 * Moves the robot body when the live channel reports a new position.
@@ -176,7 +335,7 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 		if (!robot || !livePosition) return;
 		robot.position.x = livePosition.x;
 		robot.position.z = livePosition.y;
-	}, [livePosition, model]);
+	}, [livePosition, sceneEpoch]);
 
 	return (
 		<Box sx={{ position: "absolute", inset: 0, overflow: "hidden" }}>

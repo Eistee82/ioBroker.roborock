@@ -215,6 +215,7 @@ function model(over: Partial<Map3DModel> = {}): Map3DModel {
 		imageSrc: "data:image/png;base64,AAAA",
 		robot: { x: 2.5, y: 0.5, angle: 90 },
 		charger: { x: 1.5, y: 1.5, angle: 0 },
+		mapFlag: 0,
 		...over
 	};
 }
