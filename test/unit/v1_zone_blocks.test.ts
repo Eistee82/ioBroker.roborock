@@ -181,6 +181,14 @@ describe("the zone editor is not locked out by an empty overlay block", () => {
 	it("edits the zones of a map whose CL_FORBIDDEN_ZONES block is present but empty", async () => {
 		// The whole point of the fix. Before it, this map refused every zone edit, naming an overlay
 		// it does not carry.
+		//
+		// **This is a possible case, not an observed one, and the distinction matters to whoever
+		// reads it next.** No map recorded from the reference device carries a `CL_FORBIDDEN_ZONES`
+		// block at all, so nobody has seen the editor lock up. What *was* observed is the same
+		// mechanism through a different block: `SMART_DS` arrives present-and-empty on every single
+		// map and produced a phantom record every time - harmless there only because `SMART_DS` is
+		// not in `UNREPRODUCIBLE_BLOCKS`. Of the two blocks that are, one was always read correctly
+		// and the other never turns up here. That is the whole reason this stayed hidden.
 		const map = buildMap([
 			imageBlock(),
 			buildBlock({ type: TYPE.CL_FORBIDDEN_ZONES, hlength: 12, records: [] }),

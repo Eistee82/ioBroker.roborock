@@ -324,6 +324,19 @@ export class MapParser {
 						case TYPES.FORBIDDEN_ZONES:
 						case TYPES.NO_MOP_ZONE:
 						case TYPES.CARPET_FORBIDDEN_ZONE:
+						// `DS_FORBIDDEN_ZONES` looks like it should not be here, and it is: its payload
+						// divides by its record count to a clean 244 bytes, not 16, on both stored maps
+						// (`count=5, length=1220` and `count=3, length=732`). That is not a record size.
+						// Measured on the bytes: the zones sit **contiguously at the front**, `count`
+						// times 16 bytes, and the remainder is padding with a handful of fields at
+						// offsets that stay put as the count changes - `count` again at +240, 5000 at
+						// +420, two -1 at +572 and +672, two small negative floats at +688. So this
+						// reader is right, and the space beyond the zones belongs to something else.
+						// The proof that the front really is coordinates: all five zones of the
+						// reference map come out as exact rectangles - four right angles, opposite
+						// edges equal to the millimetre, same corner order as `FORBIDDEN_ZONES` beside
+						// them, edges of 100 to 2837 mm. Bytes read at the wrong stride do not do that.
+						// What the padding carries is **not** established; do not write this block back.
 						case TYPES.DS_FORBIDDEN_ZONES:
 						case TYPES.CLF_FORBIDDEN_ZONES:
 						case TYPES.MODE_CARPET:
