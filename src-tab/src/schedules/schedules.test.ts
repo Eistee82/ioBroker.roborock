@@ -158,13 +158,13 @@ describe("building the model", () => {
 		expect(model.entries[0]?.rawTime).toBeNull();
 	});
 
-	it("neither switches nor deletes a schedule whose source was not recorded", () => {
-		// This is the B01/Q10 case. Its `enabled` is published writable, but a write there sends
-		// `upd_timer` - a V1 command - to a robot that speaks Tuya data points.
+	it("neither switches nor deletes a B01/Q10 schedule", () => {
+		// The adapter publishes these read-only and as an `indicator`, because they are built from
+		// Tuya data points that `upd_timer` never reaches. All three signals say so at once.
 		const model = buildSchedules({
 			root: ROOT,
 			definitions: [
-				object("local_01.enabled", { type: "boolean", role: "switch", write: true }),
+				object("local_01.enabled", { type: "boolean", role: "indicator", write: false }),
 				object("local_01.time", { type: "string", role: "text", write: false }),
 				object("local_01.weeks", { type: "string", role: "json", write: false }),
 			],
@@ -178,6 +178,34 @@ describe("building the model", () => {
 			timing: { time: "08:30", weekdays: [1, 2] },
 		});
 		expect(model.hasReadOnly).toBe(true);
+	});
+
+	it("refuses the switch when the object's own signals disagree", () => {
+		// An adapter older than the B01 correction published these writable while calling them a
+		// switch, and the write reached `handleScheduleToggle` and sent `upd_timer` to a Tuya device.
+		// The missing `source` is what still keeps that switch away.
+		const model = buildSchedules({
+			root: ROOT,
+			definitions: [object("local_01.enabled", { type: "boolean", role: "switch", write: true })],
+			values: values({ "local_01.enabled": true }),
+		});
+
+		expect(model.entries[0]?.canToggle).toBe(false);
+	});
+
+	it("refuses the switch on a writable object the adapter marked as an indicator", () => {
+		// The contradiction the other way round. The role is what the adapter deliberately corrected
+		// to describe the capability, so a disagreement is read as "not operable", never as operable.
+		const model = buildSchedules({
+			root: ROOT,
+			definitions: [
+				object("42.enabled", { type: "boolean", role: "indicator", write: true }),
+				object("42.source", { type: "string", role: "text", write: false }),
+			],
+			values: values({ "42.enabled": true, "42.source": "device" }),
+		});
+
+		expect(model.entries[0]?.canToggle).toBe(false);
 	});
 
 	it("keeps the robot's own text when the cron cannot be read", () => {

@@ -293,11 +293,22 @@ export function buildSchedules(input: BuildSchedulesInput): SchedulesModel {
 			}
 		}
 
-		// A switch is offered where the adapter made `enabled` writable **and** recorded where the
-		// schedule lives. The second half is what keeps the B01/Q10 entries out: their `enabled` is
-		// published as writable, but a write there sends `upd_timer` - a V1 command - to a robot that
-		// speaks Tuya data points, which is a control that looks alive and does nothing.
-		const canToggle = enabledDefinition?.common?.write === true && source !== "unknown";
+		// A switch is offered only where all three signals the adapter leaves agree that there is
+		// something to switch: the object is **writable**, its **role** is a switch rather than an
+		// indicator, and a `source` was recorded.
+		//
+		// They agree on all three shapes that exist. A V1 device timer is `switch`/writable with
+		// `source: "device"`; a server-side schedule is `indicator`/read-only, because switching one
+		// needs `upd_server_timer` and nobody has read that call; and a B01/Q10 schedule is
+		// `indicator`/read-only with no source at all, because it is built from Tuya data points that
+		// `upd_timer` never reaches.
+		//
+		// Requiring all three is therefore not three tests of the same thing but a refusal to act on
+		// an object whose signals contradict each other. The adapter went out of its way to make the
+		// role follow the capability precisely because `write: false` alone still looks operable to
+		// anything that renders by role - so reading only one of them would throw away the correction.
+		const enabledCommon = enabledDefinition?.common;
+		const canToggle = enabledCommon?.write === true && enabledCommon.role === "switch" && source !== "unknown";
 
 		entries.push({
 			id,

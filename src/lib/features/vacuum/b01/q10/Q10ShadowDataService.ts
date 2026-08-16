@@ -292,6 +292,33 @@ export class Q10ShadowDataService {
 		}
 	}
 
+	/**
+	 * Publishes the schedules a Q10 reports, as `schedules.<id>.{enabled,cron}`.
+	 *
+	 * ## Why `enabled` is read-only here
+	 *
+	 * It used to be writable, and that was a dead switch of the worst kind - one that reached a
+	 * handler and sent something. `Devices.*.schedules.*` is subscribed (`main.ts`), so the write
+	 * lands in `handleScheduleToggle`, which sends **`upd_timer`** - a V1 JSON-RPC command. A Q10 is
+	 * a B01 device and speaks Tuya data points; it never sees that method. The switch moved, the
+	 * robot did nothing, and nothing said so.
+	 *
+	 * **The Tuya counterpart was looked for and is not established.** These schedules are read with
+	 * one data point, `{"101": {"69": 0}}` (`Q10VacuumFeatures.requestQ10TimerList`), and that is the
+	 * only occurrence of DP 69 in the whole adapter - as a *list* request. What a write to it looks
+	 * like is documented in no report here, no Q10 control-plugin bundle is available under
+	 * `_appanalysis/plugins/` (only the a65 control plugin and the tile), and there is no B01 device
+	 * to observe. So there is nothing to wire it to that would not be guessed.
+	 *
+	 * Read-only is therefore not a stopgap but the accurate description: on this device the adapter
+	 * can show a schedule and cannot switch it. Same decision, same reason, as the server-side
+	 * schedules in `v1VacuumFeatures.updateServerTimers()`.
+	 *
+	 * The role follows the capability: `indicator`, not `switch`. A `switch` that cannot be operated
+	 * still looks operable in every UI that renders by role.
+	 *
+	 * @param dpResult The `result` list of the DP 69 answer.
+	 */
 	public async applyQ10TimersFromDpResult(dpResult: unknown): Promise<void> {
 		if (!Array.isArray(dpResult)) return;
 
@@ -306,12 +333,11 @@ export class Q10ShadowDataService {
 				const folder = `schedules.${id}`;
 
 				await this.stateWriter.ensureFolder(folder);
-				await this.stateWriter.ensureAndSetState(`${folder}.enabled`, {
+				// Read-only, and that is the honest state of things - see the note above this method.
+				await this.stateWriter.ensureAndSetValueState(`${folder}.enabled`, {
 					name: "Enabled",
 					type: "boolean",
-					role: "switch",
-					read: true,
-					write: true
+					role: "indicator"
 				}, enabledValue === "on");
 
 				await this.stateWriter.ensureAndSetValueState(`${folder}.cron`, {
@@ -381,7 +407,8 @@ export class Q10ShadowDataService {
 				const mapName = mapId > 0 ? await this.resolveQ10FloorName(mapId) : "";
 
 				await this.stateWriter.ensureFolder(folder, timeText);
-				await this.stateWriter.ensureAndSetValueState(`${folder}.enabled`, { name: "Enabled", type: "boolean", role: "switch" }, effective === 1);
+				// Read-only like its DP-69 namesake above, and for the same reason - the role says so.
+				await this.stateWriter.ensureAndSetValueState(`${folder}.enabled`, { name: "Enabled", type: "boolean", role: "indicator" }, effective === 1);
 				await this.stateWriter.ensureAndSetValueState(`${folder}.locked`, { name: "Locked", type: "boolean" }, lock === 1);
 				await this.stateWriter.ensureAndSetValueState(`${folder}.time`, { name: "Start Time", type: "string", role: "text" }, timeText);
 				await this.stateWriter.ensureAndSetValueState(`${folder}.hour`, { name: "Hour", type: "number" }, hour);
