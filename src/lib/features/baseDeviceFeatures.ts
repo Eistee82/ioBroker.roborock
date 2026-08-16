@@ -153,19 +153,104 @@ export abstract class BaseDeviceFeatures {
 
 	/**
 	 * Decorator to register a feature handler method.
+	 *
+	 * ## It lands in one of two places, and that is not this file's choice
+	 *
+	 * Written for TypeScript's **legacy** decorators (`experimentalDecorators`, which
+	 * `tsconfig.json` sets): the first argument is then the **prototype**, the second the method
+	 * name, and the registry ends up where {@link findFeatureMethod} looks first.
+	 *
+	 * Under the **standard** decorator proposal the same call gets `(methodFunction, context)`
+	 * instead, so the registry ends up on the **method function** and its values are context
+	 * objects rather than names. Which of the two applies is decided by the toolchain that
+	 * transpiles this file, not by the code - see {@link findFeatureMethod} for the measurements
+	 * and why the reader takes both.
+	 *
 	 * @param feature The Feature enum key.
 	 */
 	public static DeviceFeature(feature: Feature) {
-		return function (target: any, propertyKey: string) {
-			// 'target' is the prototype
-			let registry: Map<Feature, string> = target[BaseDeviceFeatures.FEATURE_METADATA_KEY];
+		// `target` is the prototype under legacy decorators and the method function under the
+		// standard ones; `propertyKey` is the method name or the context object to match.
+		return function (target: any, propertyKey: any) {
+			let registry: Map<Feature, unknown> = target[BaseDeviceFeatures.FEATURE_METADATA_KEY];
 			if (!registry) {
 				registry = new Map();
-				// Store on prototype
 				target[BaseDeviceFeatures.FEATURE_METADATA_KEY] = registry;
 			}
 			registry.set(feature, propertyKey);
 		};
+	}
+
+	/**
+	 * The name of the method registered for a feature, whichever way the decorator was compiled.
+	 *
+	 * ## Why this is not a single property read
+	 *
+	 * `@alcalzone/esbuild-register` - the loader js-controller starts a TypeScript adapter with -
+	 * reads only `jsxFactory`, `jsxFragment` and `target` out of `tsconfig.json`
+	 * (`dist/node.js:2710-2719`). **`experimentalDecorators` is not among them**, so esbuild never
+	 * learns that this project means the legacy semantics, and what it does instead depends on its
+	 * own version. Measured, each time with the conditions of an installed adapter (no
+	 * `tsconfig.json` is shipped, so no `target` is passed either):
+	 *
+	 * | esbuild | what it emits | consequence |
+	 * | --- | --- | --- |
+	 * | 0.11.23 - 0.17.19 | `__decorateClass(…, X.prototype, …)` | legacy: registry on the prototype |
+	 * | 0.18.20 - 0.20.2 | the decorator, verbatim | `SyntaxError` - the instance never starts |
+	 * | 0.21.5 and later | standard decorators | registry on the **method function** |
+	 *
+	 * An installation gets esbuild **0.11.23** today: `@alcalzone/esbuild-register` depends on
+	 * `esbuild: ^0.11.5` and exists in exactly one version, so the first row is what runs and
+	 * everything works. This repository pins `esbuild: ^0.25.12` for it (`package.json`,
+	 * `overrides`), which is why a plain `node -r @alcalzone/esbuild-register` **here** lands in
+	 * the third row and finds no features at all.
+	 *
+	 * Reading both places costs nothing in the normal case - the prototype is a single property
+	 * read - and removes a dependency on which esbuild happens to be installed. **It does not
+	 * remove all of it:** the middle row fails before any of this code runs, and nothing written
+	 * in JavaScript can catch a `SyntaxError` in its own module.
+	 *
+	 * ## The order, and why it is fixed rather than incidental
+	 *
+	 * The prototype wins. It is the form this project declares in `tsconfig.json` and the one every
+	 * test runs under, so where both exist it is the intended one; the method-borne registry only
+	 * appears when a toolchain silently chose otherwise. The scan is also the more expensive of the
+	 * two, and skipping it whenever the prototype answers keeps the normal path exactly as it was.
+	 *
+	 * @param feature The Feature enum key.
+	 * @returns The method name, or undefined when no method is registered for this feature.
+	 */
+	private findFeatureMethod(feature: Feature): string | undefined {
+		const key = BaseDeviceFeatures.FEATURE_METADATA_KEY;
+
+		// Legacy form: one registry inherited through the prototype chain, values are method names.
+		const onPrototype: Map<Feature, unknown> | undefined = (this as any)[key];
+		const declared = onPrototype?.get(feature);
+		if (typeof declared === "string") return declared;
+
+		// Standard form: one registry per decorated method, values are context objects whose `name`
+		// is the method name. Walked rather than indexed, because the name is what we are looking for.
+		let proto = Object.getPrototypeOf(this);
+		while (proto && proto !== Object.prototype) {
+			for (const name of Object.getOwnPropertyNames(proto)) {
+				// `getOwnPropertyDescriptor` rather than `proto[name]`: reading a getter here would
+				// run it on the prototype, and several of them touch instance state.
+				const value = Object.getOwnPropertyDescriptor(proto, name)?.value;
+				if (typeof value !== "function") continue;
+
+				const onMethod: Map<Feature, unknown> | undefined = value[key];
+				const context = onMethod?.get(feature);
+				if (context === undefined) continue;
+
+				// The context object carries the name; fall back to the property it was found under,
+				// which is the same string in every case measured so far.
+				const fromContext = (context as { name?: unknown }).name;
+				return typeof fromContext === "string" ? fromContext : name;
+			}
+			proto = Object.getPrototypeOf(proto);
+		}
+
+		return undefined;
 	}
 
 	// --- Feature Registry (Instance Based via Metadata) ---
@@ -204,27 +289,23 @@ export abstract class BaseDeviceFeatures {
 			return false;
 		}
 
-		// Get registry from instance metadata (prototype chain)
-		const registry: Map<Feature, string> | undefined = (this as any)[BaseDeviceFeatures.FEATURE_METADATA_KEY];
+		// Whichever way the decorator was compiled; see findFeatureMethod.
+		const methodName = this.findFeatureMethod(feature);
+		if (methodName === undefined) return false;
 
-		if (registry && registry.has(feature)) {
-			const methodName = registry.get(feature)!;
-			this.pendingFeatures.add(feature); // Lock
-			try {
-				const applyMethod = (this as unknown as Record<string, () => Promise<void>>)[methodName];
-				if (typeof applyMethod !== "function") throw new Error(`Feature ${String(feature)}: missing method ${methodName}`);
-				await applyMethod.call(this);
-				this.appliedFeatures.add(feature); // Mark applied after success
-				return true;
-			} catch (e: unknown) {
-				const stack = e instanceof Error ? e.stack : "";
-				this.deps.log.error(`[FeatureApply|${this.robotModel}|${this.duid}] Error applying feature '${feature}': ${this.deps.adapter.errorMessage(e)} ${stack}`);
-				return false;
-			} finally {
-				this.pendingFeatures.delete(feature); // Unlock
-			}
-		} else {
+		this.pendingFeatures.add(feature); // Lock
+		try {
+			const applyMethod = (this as unknown as Record<string, () => Promise<void>>)[methodName];
+			if (typeof applyMethod !== "function") throw new Error(`Feature ${String(feature)}: missing method ${methodName}`);
+			await applyMethod.call(this);
+			this.appliedFeatures.add(feature); // Mark applied after success
+			return true;
+		} catch (e: unknown) {
+			const stack = e instanceof Error ? e.stack : "";
+			this.deps.log.error(`[FeatureApply|${this.robotModel}|${this.duid}] Error applying feature '${feature}': ${this.deps.adapter.errorMessage(e)} ${stack}`);
 			return false;
+		} finally {
+			this.pendingFeatures.delete(feature); // Unlock
 		}
 	}
 
