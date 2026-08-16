@@ -94,7 +94,13 @@ const STATUS_WITH_RUNTIME_FEATURES = {
 	// Switches on Feature.ChildLock and Feature.DoNotDisturb (V1RobotSettingsService).
 	lock_status: 0,
 	dnd_enabled: 0,
-	// Switches on Feature.MopDry - the drying buttons.
+	// Switches on Feature.AutoEmptyDock - bits 6-7 are the dust bag status, and anything but 0 means
+	// the dock has one. This is the example for a command that lands in the `commands` folder.
+	dss: 1 << 6,
+	// Reported by the test device, and the field the drying switch hangs off. It used to switch on
+	// `Feature.MopDry` here as well; that inference is gone, because the two buttons it produced do
+	// not exist in the robot's firmware - see `v1VacuumFeatures.detectAndApplyRuntimeFeatures` and
+	// `status_field_toggles.test.ts` for what took their place and on which path it is unlocked.
 	dry_status: 0
 };
 
@@ -127,7 +133,7 @@ describe("commands registered by a runtime-detected feature", () => {
 		expect(harness.ensured.some((id) => id.endsWith("settings.set_dnd_timer"))).toBe(true);
 		expect(harness.ensured.some((id) => id.endsWith("settings.close_dnd_timer"))).toBe(true);
 		expect(harness.ensured.some((id) => id.endsWith("queries.get_dnd_timer"))).toBe(true);
-		expect(harness.ensured.some((id) => id.endsWith("commands.app_start_mop_drying"))).toBe(true);
+		expect(harness.ensured.some((id) => id.endsWith("commands.app_start_collect_dust"))).toBe(true);
 	});
 
 	it("are in the in-memory table as well, so the write path can find their spec", async () => {
@@ -136,7 +142,17 @@ describe("commands registered by a runtime-detected feature", () => {
 
 		expect(vacuum.getCommandSpec("settings", "set_child_lock_status")).toBeDefined();
 		expect(vacuum.getCommandSpec("settings", "set_dnd_timer")).toBeDefined();
-		expect(vacuum.getCommandSpec("commands", "app_start_mop_drying")).toBeDefined();
+		expect(vacuum.getCommandSpec("commands", "app_start_collect_dust")).toBeDefined();
+	});
+
+	it("no longer hands the drying buttons to a robot that only reports dry_status", async () => {
+		// The reported fault. `dry_status` says the dock dries; it never said the robot speaks
+		// `app_start_mop_drying`, and the test device answers that with `unknown_method`.
+		const harness = createDeps();
+		const vacuum = await bootAndDetect(harness);
+
+		expect(vacuum.getCommandSpec("commands", "app_start_mop_drying")).toBeUndefined();
+		expect(harness.ensured.some((id) => id.endsWith("commands.app_start_mop_drying"))).toBe(false);
 	});
 
 	it("runs the detection only once, however often a status arrives", async () => {

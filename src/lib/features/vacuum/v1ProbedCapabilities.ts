@@ -27,6 +27,11 @@ import { DeviceStateWriter } from "../deviceStateWriter";
  * | `setDustCollectionMode(a0)` | `'set_dust_collection_mode'` | `{mode: a0}` | A65:230399-230410 |
  * | `getDryerSetting` | `'app_get_dryer_setting'` | `[]` | A65:228556-228565 |
  * | `setDryerSetting(a0,a1)` | `'app_set_dryer_setting'` | `{on: {dry_time: a0}, status: a1}` | A65:230339-230374 |
+ * | `setDryerStatus(a0)` | `'app_set_dryer_status'` | `{status: a0}`, forwarded unread | A65:230375-230386 |
+ *
+ * The last two are neighbours in the plugin and are **not** two names for one call: the first
+ * configures automatic drying, the second starts and stops it now. What `a0` may be is not in that
+ * wrapper - see {@link STATUS_FIELD_TOGGLES} for the caller that decides it.
  *
  * Note the payload of `app_get_clean_estimate_info`: an empty **object**, where its neighbours send
  * an empty array. That is not a transcription slip, it is what the wrapper builds.
@@ -97,6 +102,15 @@ export const GET_DRYER_SETTING = "app_get_dryer_setting";
 
 /** RPC that sets the drying setting. */
 export const SET_DRYER_SETTING = "app_set_dryer_setting";
+
+/**
+ * RPC that starts and stops drying right now - a different call from {@link SET_DRYER_SETTING}.
+ *
+ * Both wrappers stand side by side in the plugin with different payloads
+ * (`_appanalysis/plugins/a65_control_v5208/api_params.tsv:205-206`); see {@link STATUS_FIELD_TOGGLES}
+ * for the proof chain and for what this replaces.
+ */
+export const SET_DRYER_STATUS = "app_set_dryer_status";
 
 /**
  * One on/off setting whose read and write are a matching `get_*`/`set_*` pair around a `status`
@@ -295,8 +309,60 @@ export interface StatusFieldToggle {
 	/** Roborock string key of the explanation shown as the object's description. */
 	descKey: string;
 	descFallback: string;
+	/**
+	 * How the app turns this status field into a switch position. Omitted means {@link FIELD_NONZERO}.
+	 * See {@link StatusFieldTest} for why there is not one rule for both entries.
+	 */
+	onWhen?: StatusFieldTest;
+	/**
+	 * Command folder the switch is published in. Omitted means {@link SETTINGS_GROUP}.
+	 *
+	 * Not decoration: the folder is what the admin tab looks in. The dock panel reads
+	 * `commands.<name>` and the settings panel reads `settings.<name>`, so a switch put in the wrong
+	 * one is invisible - which is how the drying control got reported as broken in the first place.
+	 */
+	group?: string;
 	/** Where the field, the payload and the label were read; goes into the log of a refused write. */
 	fundstelle: string;
+}
+
+/** Folder the status-carried settings are published in unless they say otherwise. */
+export const SETTINGS_GROUP = "settings";
+
+/** Folder one of these switches lives in. */
+export function statusFieldToggleGroup(toggle: StatusFieldToggle): string {
+	return toggle.group ?? SETTINGS_GROUP;
+}
+
+/**
+ * How a status field is read as "on".
+ *
+ * Two rules and not one, because the app really does both and the difference decides what a switch
+ * shows:
+ *
+ * - `nonzero` — `!!value`, what the app does for `corner_clean_mode` (A65:223836-223839).
+ * - `equals-one` — `1 == value`, what the app does for `dry_status` (A65:222781-222783). Any other
+ *   value therefore reads as "not drying" rather than as "drying".
+ *
+ * Copying the app per field rather than picking one rule for both is the same decision
+ * {@link ToggleShape} records one table further up: a value the robot means as a third state must
+ * not silently read as "on".
+ */
+export type StatusFieldTest = "nonzero" | "equals-one";
+
+/** The test all but one of the status-carried settings use. */
+export const FIELD_NONZERO: StatusFieldTest = "nonzero";
+
+/**
+ * Reads a status field as a switch position, the way the app reads that particular field.
+ * @param toggle Which setting the value belongs to.
+ * @param raw    Value of the status field, as the robot sent it.
+ * @returns Whether the setting is on.
+ */
+export function statusFieldIsOn(toggle: StatusFieldToggle, raw: unknown): boolean {
+	const numeric = finiteNumber(raw);
+	if ((toggle.onWhen ?? FIELD_NONZERO) === "equals-one") return numeric === 1;
+	return Boolean(numeric ?? raw);
 }
 
 /**
@@ -347,6 +413,48 @@ export interface StatusFieldToggle {
  * Roborock also calls it a single-use mode (`corner_clean_switch_desc`), so the robot is expected
  * to clear the flag itself after a run. Nothing here fights that: the switch mirrors whatever the
  * next status packet says.
+ *
+ * ## Mop drying, and why it is a switch rather than two buttons
+ *
+ * The adapter used to offer `app_start_mop_drying` / `app_stop_mop_drying` for this, unlocked by the
+ * very same `dry_status` field. The test device answers both with `unknown_method`, and the reason
+ * is not a firmware quirk: **neither name exists anywhere in the control plugin** - zero hits in the
+ * 44 MB decompilate and zero in `strings.txt`, likewise for `mop_drying`, `MopDrying` and
+ * `mopDrying` (`_appanalysis/32-presets.md` §8). The app never calls them. So the field was right
+ * and the command was wrong.
+ *
+ * What the app really sends is one call with the position in it, and the chain is closed end to end:
+ *
+ * ```
+ * onPressNewDryButton   setDryerStatus(RSM.isDrying ? 0 : 1)      A65:422887-422943
+ * setDryerStatus(a0)    'app_set_dryer_status', {status: a0}      A65:230375-230386
+ * RSM.isDrying          (1 == status.dry_status)                  A65:222781-222783
+ * ```
+ *
+ * The same handler then writes `dry_status` to the value it just sent and flips `isDrying`
+ * (A65:422917-422943), which is what proves the field and the payload are two views of one thing:
+ * **1 starts drying, 0 stops it, and `dry_status` is where it shows up.** That makes this a switch,
+ * not a pair of buttons - the robot has one flag, and a stop button beside a start button would be
+ * two controls for one bit.
+ *
+ * `app_set_dryer_setting` is a different call and stays where it is: it configures **automatic**
+ * drying and its duration (`{on: {dry_time}, status}`), while this one starts and stops drying now.
+ * Roborock keeps them apart too, with two wrappers side by side
+ * (`_appanalysis/plugins/a65_control_v5208/api_params.tsv:205-206`).
+ *
+ * **The app's own capability gate is not copied, and that is worth naming.** The dry button hangs off
+ * `Dock.isCollectWashDry` (A65:433615-433617), which is the negation of four dock kinds read from a
+ * `DK` enum (A65:218647-218677). Mapping those enum members onto the `dock_type` the adapter has was
+ * not traced, and a guessed mapping decides whether a control exists - so the question is put the way
+ * the app puts the *value*: a station that dries reports `dry_status`, one without a dryer does not.
+ * That is the same test the drying buttons already used, and the same one `corner_clean_mode` uses.
+ *
+ * It is deliberately **not** in `commandVerification.ts` either. The payload field is `status` and
+ * the status field is `dry_status`, so it would need a name mapping that module has none of on
+ * purpose; and how long a dock takes to report that it has started drying was never measured, so a
+ * ten-second window would risk exactly the false alarm that had to be removed from `set_dnd_timer`.
+ * The mirror on every poll is the honest check: a robot that drops the command lets the switch fall
+ * back by itself.
  */
 export const STATUS_FIELD_TOGGLES: ReadonlyArray<StatusFieldToggle> = [
 	{
@@ -357,6 +465,26 @@ export const STATUS_FIELD_TOGGLES: ReadonlyArray<StatusFieldToggle> = [
 		descKey: "corner_clean_switch_desc",
 		descFallback: "The robot will complete Deep mode around corners, which is a single-use mode. The Roborock app refuses to switch this on while the mopping route is set to Fast.",
 		fundstelle: "A65:230197-230216, A65:223836-223839, A65:246779-246788"
+	},
+	{
+		statusField: "dry_status",
+		setter: SET_DRYER_STATUS,
+		// The two labels the app puts on the one button, in its own words: `home_new_control_start_dry`
+		// while it is off and `dock_kit_setting9` while it is running (A65:430448 and A65:430459).
+		// A switch carries one name, so it gets the positive one; both exist in all eleven languages.
+		labelKey: "home_new_control_start_dry",
+		labelFallback: "Dry",
+		// Roborock's own sentence for exactly this control - "Drying can also be started manually" -
+		// and one of only five drying keys the catalogue carries in all eleven adapter languages. The
+		// obvious candidate `dry_interval_off_desc` says the same thing in better words and has no
+		// Chinese at all, which would have left one language on the English fallback.
+		descKey: "dock_kit_setting12",
+		descFallback: "Starts and stops drying the mop now. Drying automatically after a mop wash is the separate Auto Drying setting.",
+		onWhen: "equals-one",
+		// Beside the other dock actions rather than among the persistent settings: this one starts a
+		// machine now, and it is the folder the tab's dock panel reads.
+		group: "commands",
+		fundstelle: "A65:230375-230386, A65:422887-422943, A65:222781-222783"
 	}
 ];
 
@@ -806,7 +934,7 @@ export class V1ProbedCapabilityService {
 			desc: this.text(toggle.descKey, toggle.descFallback),
 			def: false,
 			write: true
-		}, "settings");
+		}, statusFieldToggleGroup(toggle));
 
 		this.claimed.add(toggle.setter);
 	}
@@ -818,11 +946,11 @@ export class V1ProbedCapabilityService {
 	 * @param raw Value of the status field, as the robot sent it.
 	 */
 	public async applyStatusFieldValue(toggle: StatusFieldToggle, raw: unknown): Promise<void> {
-		// `!!value` is what the app does (A65:223837-223839), not a comparison against 1 - this is
-		// the one place where the two differ, and copying the app is what keeps an unexpected value
-		// from reading as "off".
-		await this.deps.adapter.setStateChanged(`Devices.${this.duid}.settings.${toggle.setter}`, {
-			val: Boolean(finiteNumber(raw) ?? raw),
+		// Which of the two tests applies is per field, because the app reads its two fields
+		// differently - see {@link StatusFieldTest}. Copying the app per field is what keeps an
+		// unexpected value from reading as the wrong position.
+		await this.deps.adapter.setStateChanged(`Devices.${this.duid}.${statusFieldToggleGroup(toggle)}.${toggle.setter}`, {
+			val: statusFieldIsOn(toggle, raw),
 			ack: true
 		});
 	}

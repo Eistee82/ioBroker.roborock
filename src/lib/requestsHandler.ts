@@ -1,7 +1,7 @@
 import PQueue from "p-queue";
 import type { Roborock } from "../main";
 import { Q10CommandHandler } from "./b01/q10/Q10CommandHandler";
-import { classifyRequestFailure, classifyRobotAnswer, isShutdownFailure } from "./commandFeedback";
+import { classifyRequestFailure, classifyRobotAnswer, isShutdownFailure, isUnknownMethodAnswer } from "./commandFeedback";
 import type { CommandOrigin, CommandOutcome } from "./commandFeedback";
 import { isConnectivityLikeError } from "./errorUtils";
 import type { BaseDeviceFeatures } from "./features/baseDeviceFeatures";
@@ -835,6 +835,16 @@ export class requestsHandler {
 				}
 
 				await this.reportCommandOutcome(duid, method, origin, outcome, outcome === "rejected" ? this.describeAnswer(res) : undefined);
+
+				// A robot that says `unknown_method` has answered a question about itself, and the
+				// answer will not change while this firmware runs. Keeping the control would mean the
+				// same failure on every press - see `BaseDeviceFeatures.retireUnsupportedCommand` for
+				// why the control goes and why the "no" is not remembered across restarts. The mark is
+				// written first, on purpose: it is the state the user is watching, and it survives the
+				// object being removed underneath it.
+				if (outcome === "rejected" && isUnknownMethodAnswer(res) && _handler?.retireUnsupportedCommand) {
+					await _handler.retireUnsupportedCommand(method);
+				}
 
 				await _handler?.onCommandResult?.(method, finalMethod, res, finalParams);
 

@@ -275,6 +275,23 @@ export function isShutdownFailure(errorMessage: string): boolean {
 export const UNKNOWN_METHOD_ANSWER = "unknown_method";
 
 /**
+ * Whether the robot said, in so many words, that it does not know this method.
+ *
+ * Deliberately the **exact literal** and nothing looser, unlike {@link classifyRobotAnswer}, which
+ * takes any bare string as a refusal. The difference is what each judgement is used for: a refusal
+ * only writes a mark on a state, while this one is allowed to take a control away, and that must not
+ * happen because a robot once answered `"busy"` or `"in_cleaning"`. All 23 refusals of the reference
+ * device were this exact word (`_appanalysis/geraetefaehigkeiten-*.json`); anything else keeps the
+ * control and is reported as an ordinary rejection.
+ *
+ * @param result The robot's answer, as the transport handed it up.
+ * @returns True only for the literal `unknown_method`, bare or in a `data` envelope.
+ */
+export function isUnknownMethodAnswer(result: unknown): boolean {
+	return answerData(result) === UNKNOWN_METHOD_ANSWER;
+}
+
+/**
  * The answer `sendRequest` gives back when the robot asked to be retried and the retries ran out.
  *
  * `requestsHandler.ts:657-662` re-sends on `["retry"]` up to `MAX_REQUEST_RETRIES`; what reaches the

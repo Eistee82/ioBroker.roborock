@@ -2,6 +2,7 @@
 import { z } from "zod";
 
 import type { Roborock } from "../../main";
+import { UNKNOWN_METHOD_ANSWER } from "../commandFeedback";
 import { DeviceStateWriter } from "./deviceStateWriter";
 import { Feature } from "./features.enum";
 
@@ -720,6 +721,63 @@ export abstract class BaseDeviceFeatures {
 		}
 
 		return this.extraCommandGroups[folder]?.[command];
+	}
+
+	/**
+	 * Takes a command away after the robot said it does not know it.
+	 *
+	 * ## Why a control is removed rather than left standing
+	 *
+	 * `unknown_method` is the robot answering a question about itself, and the answer is final for
+	 * this firmware. Leaving the control there produces exactly the failure this project has been
+	 * removing since the eight dead switches of round 2: a button that looks like it works, fails on
+	 * every press, and writes a red mark that the user learns to ignore. The reported case is the
+	 * drying pair of the test device - offered because the dock reports `dry_status`, rejected by the
+	 * firmware because the commands do not exist in its plugin at all.
+	 *
+	 * Both halves are needed, and neither alone is enough:
+	 *
+	 * - the **spec** goes, or `getCommandParams` would keep building the request;
+	 * - the **object** goes, or the admin tab keeps offering it - the tab decides what to show from
+	 *   the objects that exist (`src-tab/src/engine/MapEngine.ts`, `populateDock`), which is how a
+	 *   leftover object turns into `Unregistered command …` on the next press.
+	 *
+	 * ## Why it is not remembered across restarts
+	 *
+	 * For the same reason `CapabilityProbe` does not persist its verdicts: a firmware update can add
+	 * a capability, and a stored "no" would outlive the reason for it. A command that comes back on
+	 * the next adapter start costs one rejected press; a wrong "no" that nobody can clear costs the
+	 * function. Where the adapter already knows better - the drying switch above - the command is not
+	 * offered again in the first place.
+	 *
+	 * @param command Command as it is registered, i.e. what the user pressed.
+	 * @returns The folder it was removed from, or null when there was nothing to remove.
+	 */
+	public async retireUnsupportedCommand(command: string): Promise<string | null> {
+		for (const folder of this.getCommandFolders()) {
+			const group = folder === "commands" ? this.commands : this.extraCommandGroups[folder];
+			if (!group || !Object.prototype.hasOwnProperty.call(group, command)) continue;
+
+			delete group[command];
+
+			const path = `Devices.${this.duid}.${folder}.${command}`;
+			try {
+				if (typeof this.deps.adapter.delObjectAsync === "function") {
+					await this.deps.adapter.delObjectAsync(path);
+				}
+			} catch (e: unknown) {
+				// The spec is gone either way, so the command can no longer be sent. A leftover object
+				// is a cosmetic problem next to that, and failing here would undo nothing.
+				this.deps.adapter.rLog("System", this.duid, "Warn", undefined, undefined,
+					`Could not remove the object of the unsupported command '${command}': ${this.deps.adapter.errorMessage(e)}`, "warn");
+			}
+
+			this.deps.adapter.rLog("System", this.duid, "Info", undefined, undefined,
+				`The robot answered '${command}' with '${UNKNOWN_METHOD_ANSWER}', so it does not have this function. Removed ${path}; it is offered again after an adapter restart.`, "info");
+			return folder;
+		}
+
+		return null;
 	}
 
 	/**

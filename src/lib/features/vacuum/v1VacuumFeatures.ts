@@ -642,15 +642,20 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			changed = true;
 		}
 
-		// A station that dries the mop reports `dry_status`; one without a dryer does not. That is
-		// the same test `ProductHelper.detectFeatures()` already applies to the product card, and it
-		// is what gives models such as the a65 - which lists neither MopWash nor MopDry statically -
-		// its drying buttons. Devices without the field keep the folder as it was.
-		if (statusData["dry_status"] !== undefined && await this.applyFeature(Feature.MopDry)) {
-			changed = true;
-		}
+		// `dry_status` used to unlock `Feature.MopDry`, i.e. the two buttons `app_start_mop_drying`
+		// and `app_stop_mop_drying`. **The field was right and the commands were wrong.** The test
+		// device reports `dry_status` and answers both buttons with `unknown_method`, and the reason
+		// is that neither name exists anywhere in its control plugin - zero hits in the 44 MB
+		// decompilate and zero in `strings.txt` (`_appanalysis/32-presets.md` §8). The app dries with
+		// `app_set_dryer_status`, whose payload and read-back are proven in `STATUS_FIELD_TOGGLES`,
+		// and which `applyStatusFieldToggles` unlocks from this very field one screen further down.
+		//
+		// The sixteen model classes that declare `Feature.MopDry` themselves keep it: this analysis
+		// covers one plugin for one model, and silently disarming a model somebody declared on
+		// purpose would be a guess in the other direction. What is removed is the inference that
+		// *every* drying station speaks these two calls.
 
-		// The two persistent settings, detected the same way the drying buttons above are: a robot
+		// The two persistent settings, detected the way the drying switch is: a robot
 		// that has the function reports its field in every status packet, one without it never
 		// does. That is the most dependable of the three tests report 18 lists for binding a
 		// command to a capability, and the only one that needs neither a model table nor a
