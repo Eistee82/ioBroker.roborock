@@ -214,6 +214,45 @@ describe("the surface picture carries nothing the 3D view draws as a body", () =
 	mustStayOff("the go-to pin", { GOTO_TARGET: [700, 500] });
 });
 
+/**
+ * The same rule for the cropped picture, and it is the one that used to be broken.
+ *
+ * The surface was opt-in from the day it existed; the crop was unconditional and read by nobody.
+ * Measured on a grid the size of the reference device's own: `canvasMap` takes 330 ms with it and
+ * 296 ms without - **34 ms of every render**, at the shipped `liveMapInterval: 3` once every three
+ * seconds per V1 device, for a PNG that was discarded on the next line.
+ *
+ * Pinned as `null` rather than as an empty string so a caller that starts reading it gets a type
+ * error instead of a picture that is silently blank.
+ */
+describe("the cropped picture is only produced when it is asked for", () => {
+	it("comes back as null by default, which is what every publishing path uses", async () => {
+		const builder = new MapBuilder(adapterStub() as never);
+		const [clean, full, cropped] = await builder.canvasMap({ ...baseMap(), PATH }, { duid: "duid1" });
+
+		expect(cropped).toBeNull();
+		// The guard that makes the line above mean something: the render really did run.
+		expect(clean.startsWith("data:image/png;base64,")).toBe(true);
+		expect(full.startsWith("data:image/png;base64,")).toBe(true);
+	});
+
+	it("comes back as a picture when it is asked for", async () => {
+		const builder = new MapBuilder(adapterStub() as never);
+		const [, , cropped] = await builder.canvasMap({ ...baseMap(), PATH }, { duid: "duid1", cropped: true });
+
+		expect(cropped?.startsWith("data:image/png;base64,")).toBe(true);
+	});
+
+	it("stays null on a map with no image block, rather than handing back the error canvas", async () => {
+		// The failure path returns a 1x1 canvas for the two pictures it must always produce. The
+		// crop follows the same rule there, so it cannot be relied on by way of the error case.
+		const builder = new MapBuilder(adapterStub() as never);
+		const [, , cropped] = await builder.canvasMap({ IMAGE: {} }, { duid: "duid1" });
+
+		expect(cropped).toBeNull();
+	});
+});
+
 describe("the surface picture is only produced when it is asked for", () => {
 	it("comes back as null by default, so no caller pays for a PNG it does not publish", async () => {
 		const builder = new MapBuilder(adapterStub() as never);

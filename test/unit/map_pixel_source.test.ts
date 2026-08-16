@@ -105,10 +105,18 @@ function adapterStub(): Record<string, unknown> {
 	};
 }
 
-/** What `canvasMap` returns: clean, full, cropped - and the surface picture, unasked for here. */
-async function render(image: Record<string, unknown>): Promise<[string, string, string, string | null]> {
+/**
+ * What `canvasMap` returns: clean, full, cropped - and the surface picture, unasked for here.
+ *
+ * The crop **is** asked for, and this is the only place in the project that does. It is off by
+ * default because no production path reads it and it costs a third of a tenth of every render; see
+ * `CanvasMapOptions.cropped`. It is still worth comparing here: the crop is derived from the
+ * drawing bounds, so a raster that produced different bounds than the cell lists would show up in
+ * this picture and in no other.
+ */
+async function render(image: Record<string, unknown>): Promise<[string, string, string | null, string | null]> {
 	const builder = new MapBuilder(adapterStub() as never);
-	return builder.canvasMap(mapDataAround(image), { duid: "duid1" });
+	return builder.canvasMap(mapDataAround(image), { duid: "duid1", cropped: true });
 }
 
 describe("the picture a map draws does not depend on which form it carries", () => {

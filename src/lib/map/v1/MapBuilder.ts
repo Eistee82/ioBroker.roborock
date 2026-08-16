@@ -38,6 +38,21 @@ interface CanvasMapOptions {
 	 * publish it as a state ask for it; the history maps and the tests do not.
 	 */
 	surface?: boolean;
+	/**
+	 * Also produce the cropped picture - the third entry of the returned tuple.
+	 *
+	 * **Off by default, and it used to be unconditional.** Nothing in the adapter reads it: the two
+	 * map-publishing sites and the history service all destructure past it (`MapManager.ts:205`,
+	 * `:605`, `V1MapService.ts:291`), and the history's own `mapBase64Truncated` comes out of the
+	 * B01 pipeline instead. The only caller that wants it is `test/unit/map_pixel_source.test.ts`,
+	 * which compares the picture a raster draws against the one the old cell lists drew.
+	 *
+	 * Measured on a grid the size of the reference device's own (427 x 365, canvas 1281 x 1095):
+	 * `canvasMap` takes **330 ms** with the crop and **296 ms** without it - **34 ms**, about a tenth
+	 * of every render, spent on a picture that is thrown away. At the shipped `liveMapInterval: 3`
+	 * that is once every three seconds, on every V1 device, for as long as the adapter runs.
+	 */
+	cropped?: boolean;
 	options?: {
 		FLOORCOLOR?: string;
 		WALLCOLOR?: string;
@@ -186,17 +201,21 @@ export class MapBuilder {
 	/**
 	 * Draws one V1 map and hands back the pictures the map states are built from.
 	 * @param mapdata Parsed V1 map.
-	 * @param params Rooms, model, device - and whether the surface picture is wanted.
-	 * @returns `[clean, full, cropped, surface]`. `surface` is null unless `params.surface` was set;
-	 * `CanvasMapRenderer.getSurfaceSnapshot` says what separates it from the other two.
+	 * @param params Rooms, model, device - and which of the two optional pictures are wanted.
+	 * @returns `[clean, full, cropped, surface]`. The last two are null unless `params.cropped` or
+	 * `params.surface` was set - each costs a PNG encode of its own, and neither is published on
+	 * every path. `CanvasMapRenderer.getSurfaceSnapshot` says what separates the surface from the
+	 * other two; {@link CanvasMapOptions.cropped} says what the crop costs and who reads it.
 	 */
-	public async canvasMap(mapdata: any, params: CanvasMapOptions = {}): Promise<[string, string, string, string | null]> {
+	public async canvasMap(mapdata: any, params: CanvasMapOptions = {}): Promise<[string, string, string | null, string | null]> {
 		const { mappedRooms = null, options = {} } = params;
 
 		if (!mapdata || !mapdata.IMAGE || !mapdata.IMAGE.dimensions) {
 			this.adapter.rLog("MapManager", params.model || null, "Warn", undefined, undefined, "Received invalid or empty map data, cannot generate map.", "warn");
 			const errorCanvas = createCanvas(1, 1).toDataURL();
-			return [errorCanvas, errorCanvas, errorCanvas, null];
+			// The crop follows the same rule on this path as on the good one: present only when
+			// asked for, so a caller cannot start relying on it by way of the failure case.
+			return [errorCanvas, errorCanvas, params.cropped ? errorCanvas : null, null];
 		}
 
 		this.applyOptions(options);
@@ -257,10 +276,15 @@ export class MapBuilder {
 		// as far as the clean cut. A caller that publishes it has to survive both.
 		const surfaceMapUncroppedBase64 = renderer.getSurfaceSnapshot();
 
-		const bounds = result.bounds
-			? { minleft: result.bounds.minX, mintop: result.bounds.minY, maxleft: result.bounds.maxX, maxtop: result.bounds.maxY }
-			: { minleft: 0, mintop: 0, maxleft: canvasWidth, maxtop: canvasHeight };
-		const croppedMapBase64 = this.cropMap(canvas, ctx, bounds);
+		// Only when asked for: a third PNG encode of the whole canvas, measured at 34 ms of a 330 ms
+		// render on the reference grid, for a picture no production path reads.
+		let croppedMapBase64: string | null = null;
+		if (params.cropped) {
+			const bounds = result.bounds
+				? { minleft: result.bounds.minX, mintop: result.bounds.minY, maxleft: result.bounds.maxX, maxtop: result.bounds.maxY }
+				: { minleft: 0, mintop: 0, maxleft: canvasWidth, maxtop: canvasHeight };
+			croppedMapBase64 = this.cropMap(canvas, ctx, bounds);
+		}
 
 		if (t1 - t0 > 1000) {
 			this.adapter.rLog("MapManager", params.model || null, "Warn", "MapProfiler", undefined, `[Slow Map] drawMapV1: ${t1 - t0}ms`, "debug");
