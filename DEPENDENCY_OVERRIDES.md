@@ -45,6 +45,53 @@ npm audit --omit=dev --audit-level=moderate
 npm ls @alcalzone/esbuild-register mocha diff serialize-javascript --omit=dev
 ```
 
+## The esbuild override changes how decorators are compiled — here only, on purpose
+
+**This is the one override with a behavioural side effect, and it is worth knowing about before
+anyone touches the line.** It does not reach users: npm applies a package's `overrides` only while
+that package is the root project, and an installed adapter is a dependency. So the two environments
+compile the same source differently, and the development one is the odd man out.
+
+`@alcalzone/esbuild-register` is the loader js-controller starts a TypeScript adapter with. It reads
+only `jsxFactory`, `jsxFragment` and `target` out of `tsconfig.json` (`dist/node.js:2710-2719`) —
+**`experimentalDecorators` is not among them.** esbuild therefore never learns that this project
+means TypeScript's legacy decorators, and what it does instead depends on its own version. Measured
+under the conditions of an installed adapter, i.e. with no `tsconfig.json` in reach, because none is
+shipped (`npm pack --dry-run`: 207 files, no `tsconfig`):
+
+| esbuild | what it emits | consequence |
+| --- | --- | --- |
+| 0.11.23 – 0.17.19 | `__decorateClass(…, X.prototype, …)` | legacy: registry on the prototype |
+| 0.18.20 – 0.20.2 | the decorator, verbatim | `SyntaxError` — the instance never starts |
+| 0.21.5 and later | standard decorators | registry on the **method function** |
+
+An installation gets **0.11.23** — the declared range is `^0.11.5` and the package exists in exactly
+one version — so the first row is what runs at a user's site, and everything works. Here the override
+pins `^0.25.12`, and the repository's own `tsconfig.json` *is* found, which lands this checkout in
+the third row.
+
+What that costs: a plain `node -r @alcalzone/esbuild-register …` in this checkout applies **no
+features at all** unless it passes `tsconfigRaw` itself. `npm run ci:check` is unaffected — vitest
+gets the `tsconfig.json` through vite and compiles the legacy form — which is precisely why nothing
+ever noticed.
+
+`BaseDeviceFeatures.findFeatureMethod` now reads both places, so the first and third rows behave
+alike. **The middle row it cannot help with**: that failure happens while the module is being
+parsed, and no JavaScript can catch a `SyntaxError` in its own file. Should the override or the
+upstream range ever move into 0.18–0.20, the adapter stops starting — the same shape as the two
+production incidents recorded in `CLAUDE.md`, only semantics rather than syntax.
+
+Check it on a running system with:
+
+```sh
+node -r @alcalzone/esbuild-register -e "
+const {V1VacuumFeatures}=require('./src/lib/features/vacuum/v1VacuumFeatures.ts');
+console.log(!!V1VacuumFeatures.prototype[Symbol.for('roborock.featureRegistry')]);"
+```
+
+`true` means the legacy form; `false` means the standard one, which the reader now also handles.
+In this checkout it prints `false`, and that is expected.
+
 ## When to remove them
 
 Review these overrides whenever Dependabot opens updates for any of these packages:
