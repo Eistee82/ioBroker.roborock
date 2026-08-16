@@ -400,6 +400,7 @@
   "ui_map3d_loading": "Chargement de la vue 3D…",
   "ui_map3d_failed": "La vue 3D n'a pas pu démarrer ; la carte 2D est affichée.",
   "ui_map3d_finish_zone": "Enregistrez ou annulez la zone en cours de placement avant de passer en 3D.",
+  "ui_map3d_finish_cleaning_zone": "Démarrez ou supprimez la zone de nettoyage tracée avant de passer en 3D.",
   "ui_segment_edit_intro": "Les numéros des pièces changent, ce qui concerne donc :",
   "ui_segment_edit_loses_modes": "Réglages d’aspiration et d’eau propres à chaque pièce dans le robot. L’adaptateur ne les possède pas et ne peut pas les rétablir.",
   "ui_segment_edit_loses_sequence": "L’ordre de nettoyage. L’adaptateur l’efface ensuite, car un ordre composé d’anciens numéros paraît valide tout en nettoyant les mauvaises pièces.",

@@ -400,6 +400,7 @@
   "ui_map3d_loading": "3D-weergave wordt geladen…",
   "ui_map3d_failed": "De 3D-weergave kon niet starten; de 2D-kaart wordt getoond.",
   "ui_map3d_finish_zone": "Sla de zone die u plaatst eerst op of verwijder deze voordat u naar 3D schakelt.",
+  "ui_map3d_finish_cleaning_zone": "Start of verwijder de getekende reinigingszone voordat u naar 3D schakelt.",
   "ui_segment_edit_intro": "De kamernummers veranderen, dit raakt daarom:",
   "ui_segment_edit_loses_modes": "Kamergebonden zuig- en waterinstellingen in de robot. De adapter heeft deze niet en kan ze niet herstellen.",
   "ui_segment_edit_loses_sequence": "De schoonmaakvolgorde. De adapter wist deze daarna, want een volgorde met oude kamernummers ziet er geldig uit en maakt de verkeerde kamers schoon.",

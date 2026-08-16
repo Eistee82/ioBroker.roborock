@@ -232,9 +232,11 @@ What it shows is honest about what the data supports. The floor **is** the 2D ma
 used as a texture — exactly what the Roborock app does. The walls are one box per cell the robot
 mapped as occupied, all of them 500 mm tall, which is the app's own fixed height; the robot does not
 measure how high a wall is, so nothing here can. Robot and dock appear as simple bodies at their
-reported positions. Furniture, zones and the cleaning path are not in it yet.
+reported positions. Furniture and the zones stored on the map — no-go zones, no-mop zones and
+virtual walls — stand in it as bodies too, while the driven path, the mopped band, the room names
+and the objects the robot found are painted into the floor picture.
 
-Two things are worth knowing:
+Three things are worth knowing:
 
 - **It costs nothing until you use it.** The 3D library is fetched the first time you press the
   button and never before, so an installation that stays in 2D downloads about 12 KB more than
@@ -242,6 +244,13 @@ Two things are worth knowing:
 - **The button only appears when it can work.** A browser without WebGL — common in kiosk setups
   and in containers without GPU access — gets no button rather than a black rectangle. If the view
   fails while starting anyway, the tab returns to 2D and says why.
+- **Rectangles are drawn in 2D, whichever view you start from.** Both the zones stored on the map
+  and the rectangle for a single zone-cleaning run are dragged flat on the 2D map, so pressing
+  either **+** while 3D is up returns to 2D first, where the handles are. For the same reason the
+  switch to 3D is refused while such a rectangle is unfinished, and says so instead of hiding it:
+  a saved zone is waiting for the panel's Save, and a cleaning rectangle is waiting for Start — one
+  you can no longer see is one the robot would be sent into blind. Coming **back** to 2D is never
+  refused.
 
 On a robot with more than one map, **the floor selector now marks the floor the robot is actually
 on**. Those two things come apart the moment you look at the cellar while the robot cleans the

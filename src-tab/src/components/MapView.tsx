@@ -571,6 +571,24 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 		engineRef.current?.startMapZone(kind);
 	}, []);
 
+	/**
+	 * Drops a **cleaning** rectangle onto the map, in the view that can actually place one.
+	 *
+	 * The same fault as {@link startMapZone} had, in the other kind of zone and left behind by the
+	 * fix for the first: `MapEngine.addZone` pushes into `MapEngine.rects` and draws through
+	 * `drawZones` - both in the 2D map's SVG layer, neither in `map.mapData`, so the 3D view has
+	 * nothing to show. Pressing the dock's + while 3D was up therefore did all of its work on a
+	 * hidden map: the rectangle existed, the run button renamed itself to "Start zone cleaning", and
+	 * the user saw neither.
+	 *
+	 * It goes through `ZONE_EDITING_VIEW` rather than repeating `setShow3D(false)` so the two
+	 * placements cannot drift apart again - which is exactly what happened the first time.
+	 */
+	const startCleaningZone = useCallback(() => {
+		setShow3D(ZONE_EDITING_VIEW === "3d");
+		engineRef.current?.addZone();
+	}, []);
+
 	const writeSetting = useCallback((write: SettingWrite) => {
 		void settingsSourceRef.current?.apply(write);
 	}, []);
@@ -714,11 +732,16 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 							value={show3D ? "3d" : "2d"}
 							onChange={(_event, next) => {
 								if (next !== "2d" && next !== "3d") return;
-								// The other half of the placing fix, and the rule lives in one place for both:
-								// an unsaved wall or zone exists only in the 2D map's SVG layer, so leaving for
-								// 3D would hide the very thing being dragged while the panel keeps offering
-								// Save. The panel's own two buttons are how to get out of that.
-								const decided = switchMapView(next, mapZones.drafting);
+								// The other half of the placing fix, and the rule lives in one place for all of
+								// it: a rectangle - a map zone being saved *or* a cleaning zone waiting to be
+								// started - exists only in the 2D map's SVG layer, so leaving for 3D would hide
+								// the very thing that was drawn. For the cleaning zone that is the worse of the
+								// two: no confirmation follows, so Start would send the robot into a rectangle
+								// the user can no longer see.
+								const decided = switchMapView(next, {
+									mapZone: mapZones.drafting,
+									cleaningZone: zones.count > 0
+								});
 								if (decided.refusedBecause) showError(I18n.t(decided.refusedBecause));
 								setShow3D(decided.show === "3d");
 							}}
@@ -905,7 +928,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 						onStop={() => engineRef.current?.stop()}
 						onDock={() => engineRef.current?.dock()}
 						onToggleGoTo={() => engineRef.current?.toggleGoTo()}
-						onAddZone={() => engineRef.current?.addZone()}
+						onAddZone={startCleaningZone}
 						onCleanRooms={() => engineRef.current?.cleanSelectedRooms()}
 						onClearRooms={() => engineRef.current?.clearRooms()}
 					/>

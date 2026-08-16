@@ -247,10 +247,12 @@ Was zu sehen ist, bleibt ehrlich gegenüber dem, was die Daten hergeben. Der Bod
 2D-Karte, flach gelegt und als Textur verwendet — genau das tut auch die Roborock-App. Die Wände
 sind je ein Quader auf jeder Zelle, die der Roboter als belegt kartiert hat, alle 500 mm hoch; das
 ist die feste Höhe der App. Der Roboter misst nicht, wie hoch eine Wand ist, also kann es hier
-niemand. Roboter und Station stehen als einfache Körper an ihrer gemeldeten Position. Möbel, Zonen
-und der Fahrweg sind noch nicht dabei.
+niemand. Roboter und Station stehen als einfache Körper an ihrer gemeldeten Position. Möbel und die
+auf der Karte gespeicherten Zonen — Sperrbereiche, Wischsperrbereiche und unsichtbare Wände —
+stehen ebenfalls als Körper darin, während Fahrweg, Wischspur, Raumnamen und die gefundenen
+Gegenstände in das Bodenbild gezeichnet sind.
 
-Zwei Dinge sind erwähnenswert:
+Drei Dinge sind erwähnenswert:
 
 - **Es kostet nichts, solange man es nicht benutzt.** Die 3D-Bibliothek wird erst beim ersten Druck
   auf den Schalter geladen und vorher nie. Eine Installation, die bei 2D bleibt, lädt rund 12 KB
@@ -258,6 +260,13 @@ Zwei Dinge sind erwähnenswert:
 - **Der Schalter erscheint nur, wenn er funktionieren kann.** Ein Browser ohne WebGL — verbreitet in
   Kiosk-Aufbauten und in Containern ohne GPU-Zugriff — bekommt keinen Schalter statt einer schwarzen
   Fläche. Scheitert die Ansicht trotzdem beim Start, kehrt der Tab zu 2D zurück und sagt warum.
+- **Rechtecke werden in 2D aufgezogen, egal aus welcher Ansicht heraus.** Sowohl die auf der Karte
+  gespeicherten Zonen als auch das Rechteck für eine einzelne Zonenreinigung werden flach auf der
+  2D-Karte gezogen. Ein Druck auf eines der **+** kehrt deshalb zuerst nach 2D zurück, wo die Griffe
+  sind. Aus demselben Grund wird der Wechsel nach 3D verweigert, solange ein solches Rechteck offen
+  ist, und sagt das, statt es zu verstecken: Eine gespeicherte Zone wartet auf „Speichern" im
+  Bedienfeld, ein Reinigungsrechteck auf „Start" — ein Rechteck, das man nicht mehr sieht, ist eines,
+  in das der Roboter blind geschickt würde. Der Weg **zurück** nach 2D wird nie verweigert.
 
 Bei einem Roboter mit mehreren Karten **markiert die Etagenauswahl jetzt die Etage, auf der der
 Roboter tatsächlich steht**. Beides fällt auseinander, sobald man den Keller ansieht, während der
