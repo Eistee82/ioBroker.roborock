@@ -451,5 +451,15 @@
   "ui_map_name_bytes": "%s von %s Byte",
   "ui_map_name_too_long": "Zu lang. Ein Kartenname muss unter %s Byte bleiben, so wie die App zählt: ein einfacher Buchstabe zählt eins, ein Umlaut zwei, die meisten anderen Zeichen drei.",
   "ui_map_name_duplicate": "Eine andere Karte heißt bereits so.",
-  "ui_map_name_unchanged": "So heißt diese Karte schon."
+  "ui_map_name_unchanged": "So heißt diese Karte schon.",
+  "ui_presets": "Gespeicherte Programme",
+  "ui_presets_hint": "Die in der Roborock-App gespeicherten Programme. Sie lassen sich hier starten; Anlegen, Umbenennen und Bearbeiten wird bewusst nicht angeboten.",
+  "ui_presets_cloud_required": "Name und Einstellungen eines Programms liegen im Roborock-Konto. Diese Instanz läuft ohne Cloud, deshalb sind keine lesbar.",
+  "ui_preset_unnamed": "Programm %s",
+  "ui_preset_start": "Programm starten",
+  "ui_preset_stale_hint": "Der Roboter kennt das Ziel dieses Programms nicht mehr, vermutlich weil die Karte neu aufgebaut wurde. Ein Start würde nichts bewirken.",
+  "ui_preset_disabled": "In der App ausgeschaltet",
+  "ui_preset_target_all": "Ganze Wohnung",
+  "ui_preset_target_segment": "Raum %s",
+  "ui_preset_target_zone": "Zone %s"
 }

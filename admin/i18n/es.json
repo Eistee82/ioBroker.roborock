@@ -451,5 +451,15 @@
   "ui_map_name_bytes": "%s de %s bytes",
   "ui_map_name_too_long": "Demasiado largo. El nombre de un mapa debe quedar por debajo de %s bytes tal y como los cuenta la aplicación: una letra sencilla cuenta uno, una letra acentuada dos, la mayoría de los demás caracteres tres.",
   "ui_map_name_duplicate": "Otro mapa ya se llama así.",
-  "ui_map_name_unchanged": "Este mapa ya se llama así."
+  "ui_map_name_unchanged": "Este mapa ya se llama así.",
+  "ui_presets": "Programas guardados",
+  "ui_presets_hint": "Los programas guardados en la aplicación Roborock. Aquí se pueden iniciar; crear, renombrar y editar no se ofrecen deliberadamente.",
+  "ui_presets_cloud_required": "El nombre y los ajustes de un programa están en la cuenta de Roborock. Esta instancia funciona sin la nube, por lo que no se pueden leer.",
+  "ui_preset_unnamed": "Programa %s",
+  "ui_preset_start": "Iniciar programa",
+  "ui_preset_stale_hint": "El robot ya no conoce el objetivo de este programa, probablemente porque el mapa se reconstruyó. Iniciarlo no haría nada.",
+  "ui_preset_disabled": "Desactivado en la aplicación",
+  "ui_preset_target_all": "Toda la vivienda",
+  "ui_preset_target_segment": "Habitación %s",
+  "ui_preset_target_zone": "Zona %s"
 }

@@ -25,6 +25,9 @@ import { Feature } from "./lib/features/features.enum";
 
 import { Device, http_api } from "./lib/httpApi";
 import { local_api } from "./lib/localApi";
+import { PROGRAMS_FOLDER, SCENE_PRESET_LIST_STATE } from "./common/scenePresets";
+import type { ScenePresetEntry } from "./common/scenePresets";
+import { GET_SCENES_VALID_TIDS, applySceneValidity, parseSceneValidTids, readScenePreset } from "./lib/scenePresetReader";
 import { MapManager } from "./lib/map/MapManager";
 import { isReportableMapTheme, resolveMapColorScheme } from "./lib/map/mapColorScheme";
 import { NON_ROOM_STATE_NAMES, normalizeRoomId } from "./lib/map/roomKey";
@@ -1714,6 +1717,23 @@ export class Roborock extends utils.Adapter {
 			return;
 		}
 
+		// A saved program's own start button (Devices.duid.programs.<sceneId>.start).
+		//
+		// Beside `programs.startProgram`, not instead of it. The collective state is a select whose
+		// `common.states` a script can read to find out which programs exist; the per-program button
+		// is what a panel of tiles needs, and it is also the one that survives two of them being
+		// pressed in quick succession - a select carries one value, so the second write would replace
+		// the first before the queue had picked it up.
+		if (folder === PROGRAMS_FOLDER && idParts.length >= 7 && idParts[6] === "start") {
+			if (this.isTruthy(state.val)) {
+				await this.executeSceneProgram(duid, idParts[5]);
+				// Reset through the shared helper, so the button is cleared by the same timer bookkeeping
+				// `onUnload` already empties - see {@link setResetTimeout}.
+				this.setResetTimeout(id);
+			}
+			return;
+		}
+
 		this.rLog("Requests", duid, "Info", undefined, undefined, `[onStateChange] Processing ${folder}.${command}`, "info");
 
 		const handler = this.deviceFeatureHandlers.get(duid);
@@ -2056,7 +2076,31 @@ export class Roborock extends utils.Adapter {
 	}
 
 	/**
-	 * Processes scenes from HTTP API.
+	 * Reads the saved programs out of the Roborock account and publishes them.
+	 *
+	 * ## Why the cloud, and what that costs
+	 *
+	 * A saved program is a **scene**, established from both ends in `_appanalysis/32-presets.md` §1.
+	 * Its name, its suction level and its water level exist only in the account; the robot knows a
+	 * `tid` and a target and nothing else. So this needs the cloud session and says so instead of
+	 * publishing an empty branch - in "local only" operation there are no saved programs at all, and
+	 * that is a property of the thing rather than a gap in this adapter.
+	 *
+	 * ## What is published, and why twice
+	 *
+	 * - `programs.list` - the whole list as one JSON value, shaped by `src/common/scenePresets.ts`.
+	 *   The admin tab reads this: a list has to arrive at once to be drawn, and assembling one by
+	 *   enumerating folders is what the schedules branch had to grow a debounce for.
+	 * - `programs.<id>.*` - one folder per program with the same facts as single states, for scripts.
+	 *
+	 * Both are written from the same parse in the same pass, so they cannot disagree.
+	 *
+	 * ## The validity check
+	 *
+	 * `get_scenes_valid_tids` is asked once per device, read-only. A program whose `tid` the robot no
+	 * longer lists - after the map was rebuilt, say - is still shown by the cloud and would start into
+	 * nothing. A robot that does not answer the call leaves `valid` unset, which reads as "not
+	 * checked" rather than as a warning; see {@link applySceneValidity}.
 	 */
 	async processScenes() {
 		if (!this.http_api.hasCloudSession()) {
@@ -2066,41 +2110,239 @@ export class Roborock extends utils.Adapter {
 		const scenes = await this.http_api.getScenes();
 		if (!scenes?.result) return;
 
-		const data = scenes.result;
-		const programs: Record<string, Record<string, string>> = {};
+		const byDevice = new Map<string, ScenePresetEntry[]>();
+		const labels = new Map<string, Record<string, string>>();
 
-		for (const program of data) {
+		for (const program of scenes.result) {
 			try {
-				const { enabled, id, name, param } = program;
-				const params = JSON.parse(param);
-				const duid = params.action.items[0].entityId;
+				// One row per device the scene addresses, not one for `items[0].entityId`. The measured
+				// account has a scene whose two steps run on a second robot; attributing it to the first
+				// one put it in the wrong device's folder.
+				for (const [duid, entry] of readScenePreset(program)) {
+					const rows = byDevice.get(duid) ?? [];
+					rows.push(entry);
+					byDevice.set(duid, rows);
 
-				if (!programs[duid]) programs[duid] = {};
-				programs[duid][id] = name;
-
-				await this.ensureFolder(`Devices.${duid}.programs`);
-				await this.setObjectNotExistsAsync(`Devices.${duid}.programs.${id}`, {
-					type: "folder",
-					common: { name },
-					native: {},
-				});
-
-				await this.ensureState(`Devices.${duid}.programs.${id}.enabled`, { name: "Enabled", type: "boolean" });
-				this.setState(`Devices.${duid}.programs.${id}.enabled`, enabled, true);
+					const known = labels.get(duid) ?? {};
+					// The select needs a label per value. A program the user left unnamed keeps its id
+					// there rather than an empty entry, which in a dropdown is an unpickable blank row.
+					known[entry.id] = entry.name ?? entry.id;
+					labels.set(duid, known);
+				}
 			} catch (e: unknown) {
 				const errorMsg = e instanceof Error ? e.message : String(e);
 				this.rLog("Requests", null, "Warn", undefined, undefined, `[processScenes] Failed to process scene "${program.name}" (${program.id}): ${errorMsg}`, "warn");
 			}
 		}
 
-		for (const duid in programs) {
-			await this.ensureState(`Devices.${duid}.programs.startProgram`, {
-				name: "Start saved program",
+		for (const [duid, entries] of byDevice) {
+			try {
+				applySceneValidity(entries, await this.readSceneValidTids(duid));
+				await this.publishScenePresets(duid, entries, labels.get(duid) ?? {});
+			} catch (e: unknown) {
+				this.rLog("Requests", duid, "Warn", undefined, undefined, `[processScenes] Failed to publish saved programs: ${this.errorMessage(e)}`, "warn");
+			}
+		}
+	}
+
+	/**
+	 * Asks one robot which scene targets it still knows.
+	 *
+	 * Read-only and best effort. Every way this can go wrong - no handler, no answer, an answer that
+	 * is not a list, `unknown_method` - ends in null, which means "not checked" and leaves every
+	 * program unmarked. That is deliberate: a device whose firmware lacks the getter must not end up
+	 * with a warning on each of its programs.
+	 *
+	 * @param duid Device to ask.
+	 * @returns The `tid`s it listed, or null when nothing usable came back.
+	 */
+	private async readSceneValidTids(duid: string): Promise<string[] | null> {
+		if (!this.deviceFeatureHandlers.has(duid)) return null;
+		try {
+			const response = await this.requestsHandler.sendRequest(duid, GET_SCENES_VALID_TIDS, [], { priority: -5 });
+			const tids = parseSceneValidTids(response);
+			if (tids === null) {
+				this.rLog("Requests", duid, "Debug", undefined, undefined, `[processScenes] ${GET_SCENES_VALID_TIDS} answered '${JSON.stringify(response)}'; saved programs stay unchecked.`, "debug");
+			}
+			return tids;
+		} catch (e: unknown) {
+			this.rLog("Requests", duid, "Debug", undefined, undefined, `[processScenes] ${GET_SCENES_VALID_TIDS} failed, saved programs stay unchecked: ${this.errorMessage(e)}`, "debug");
+			return null;
+		}
+	}
+
+	/**
+	 * Writes the saved programs of one device.
+	 *
+	 * @param duid Device the programs run on.
+	 * @param entries Its programs, already marked with the robot's verdict.
+	 * @param labels Value-to-name map for the collective `startProgram` select.
+	 */
+	private async publishScenePresets(duid: string, entries: ScenePresetEntry[], labels: Record<string, string>): Promise<void> {
+		const root = `Devices.${duid}.${PROGRAMS_FOLDER}`;
+		await this.ensureFolder(root);
+
+		await this.ensureState(`Devices.${duid}.${SCENE_PRESET_LIST_STATE}`, {
+			name: "Saved programs",
+			desc:
+				"Read-only list of the scenes this device appears in: id, name, enabled, valid and the "
+				+ "steps with their target, fan_power, water_box_mode, mop_mode and repeat. The names come "
+				+ "from the Roborock account and are unavailable in 'local only' mode.",
+			type: "string",
+			role: "json",
+			read: true,
+			write: false,
+		});
+		await this.setStateChanged(`Devices.${duid}.${SCENE_PRESET_LIST_STATE}`, { val: JSON.stringify(entries), ack: true });
+
+		for (const entry of entries) {
+			const folder = `${root}.${entry.id}`;
+			await this.ensureFolder(folder, entry.name ?? entry.id);
+
+			await this.ensureState(`${folder}.enabled`, { name: "Enabled", type: "boolean" });
+			await this.setStateChanged(`${folder}.enabled`, { val: entry.enabled, ack: true });
+
+			await this.ensureState(`${folder}.name`, { name: "Name", type: "string", role: "text" });
+			await this.setStateChanged(`${folder}.name`, { val: entry.name, ack: true });
+
+			// The steps as JSON rather than as a folder per step: a step has no identity of its own -
+			// reordering one in the app would renumber every folder below it - and the measured account
+			// already has a scene with two. A single value that is rewritten has no such problem, which
+			// is why the map backups are published this way as well.
+			await this.ensureState(`${folder}.steps`, {
+				name: "Steps",
+				desc: "Read-only. The commands this program sends, with their target and cleaning values.",
 				type: "string",
-				write: true,
-				states: programs[duid],
+				role: "json",
+				read: true,
+				write: false,
 			});
-			await this.ensureSceneQueueState(duid);
+			await this.setStateChanged(`${folder}.steps`, { val: JSON.stringify(entry.steps), ack: true });
+
+			await this.publishScenePresetScalars(folder, entry);
+
+			// `valid` exists only where the robot answered. A state written `null` for every device
+			// that cannot be asked is one a script has to special-case; an absent state says the same
+			// thing without being read at all.
+			if (entry.valid !== null) {
+				await this.ensureState(`${folder}.valid`, {
+					name: "Known to the robot",
+					desc: `True when every tid of this program is in the robot's own ${GET_SCENES_VALID_TIDS} list.`,
+					type: "boolean",
+					role: "indicator",
+					read: true,
+					write: false,
+				});
+				await this.setStateChanged(`${folder}.valid`, { val: entry.valid, ack: true });
+			}
+
+			await this.ensureState(`${folder}.start`, {
+				name: "Start saved program",
+				desc: "Runs this program. A program whose steps address several robots starts all of them.",
+				type: "boolean",
+				role: "button",
+				read: false,
+				write: true,
+				def: false,
+			});
+		}
+
+		await this.ensureState(`${root}.startProgram`, {
+			name: "Start saved program",
+			type: "string",
+			write: true,
+			states: labels,
+		});
+		await this.ensureSceneQueueState(duid);
+		await this.pruneScenePresetFolders(duid, entries);
+	}
+
+	/**
+	 * Writes the single-value states of one program.
+	 *
+	 * Every one of them is written **only when all steps agree**, and null otherwise. The measured
+	 * account has a scene that vacuums the flat and then mops it: its two steps carry different
+	 * suction and water levels, and picking either one for a state called `fanPower` would state
+	 * something about the program that is not true of it. The whole truth is in `steps`; these states
+	 * exist so the common case - one step - is readable without parsing JSON.
+	 *
+	 * @param folder Object folder of the program.
+	 * @param entry The program.
+	 */
+	private async publishScenePresetScalars(folder: string, entry: ScenePresetEntry): Promise<void> {
+		/** The value all steps share, or null when they do not share one. */
+		const agreed = <T>(pick: (step: ScenePresetEntry["steps"][number]) => T): T | null => {
+			if (entry.steps.length === 0) return null;
+			const first = pick(entry.steps[0]);
+			const same = entry.steps.every((step) => {
+				const value = pick(step);
+				return Array.isArray(first) && Array.isArray(value) ? JSON.stringify(first) === JSON.stringify(value) : value === first;
+			});
+			return same ? first : null;
+		};
+
+		const numbers: Array<[string, string, number | null]> = [
+			["mapFlag", "Map the program runs on", agreed((step) => step.mapFlag)],
+			["fanPower", "Suction level", agreed((step) => step.fanPower)],
+			["waterBoxMode", "Water level", agreed((step) => step.waterBoxMode)],
+			["mopMode", "Mop route", agreed((step) => step.mopMode)],
+			["repeat", "Passes", agreed((step) => step.repeat)],
+		];
+		for (const entryDef of numbers) {
+			await this.ensureState(`${folder}.${entryDef[0]}`, { name: entryDef[1], type: "number", role: "value", read: true, write: false });
+			await this.setStateChanged(`${folder}.${entryDef[0]}`, { val: entryDef[2], ack: true });
+		}
+
+		const texts: Array<[string, string, string | null]> = [
+			["target", "What the program cleans", agreed((step) => step.target)],
+			["mode", "Vacuum, mop, or both", agreed((step) => step.mode)],
+			["targetIds", "Segment or zone ids", JSON.stringify(agreed((step) => step.targetIds) ?? [])],
+		];
+		for (const entryDef of texts) {
+			await this.ensureState(`${folder}.${entryDef[0]}`, { name: entryDef[1], type: "string", role: "text", read: true, write: false });
+			await this.setStateChanged(`${folder}.${entryDef[0]}`, { val: entryDef[2], ack: true });
+		}
+	}
+
+	/**
+	 * Removes the folders of programs the account no longer has.
+	 *
+	 * Without this a deleted program leaves its folder behind for good, with a start button that would
+	 * look up a scene id the cloud has never heard of.
+	 *
+	 * Two guards, both taken from `DeviceManager.cleanupOrphanedDevices`, which learned them the hard
+	 * way: only folders sitting **directly** below `programs` are considered, and nothing is removed
+	 * at all when the fresh list is empty while stored folders exist. The second one is the important
+	 * one - a cloud answer that came back empty by mistake would otherwise wipe every program.
+	 *
+	 * @param duid Device whose branch to tidy.
+	 * @param entries The programs that exist now.
+	 */
+	private async pruneScenePresetFolders(duid: string, entries: ScenePresetEntry[]): Promise<void> {
+		const prefix = `${this.namespace}.Devices.${duid}.${PROGRAMS_FOLDER}.`;
+		const keep = new Set(entries.map((entry) => entry.id));
+
+		let objects: Record<string, ioBroker.Object> = {};
+		try {
+			objects = (await this.getForeignObjectsAsync(`${prefix}*`, "folder")) as Record<string, ioBroker.Object>;
+		} catch (e: unknown) {
+			this.rLog("Requests", duid, "Debug", undefined, undefined, `[processScenes] Could not list the saved-program folders: ${this.errorMessage(e)}`, "debug");
+			return;
+		}
+
+		const stored = Object.keys(objects ?? {})
+			.filter((id) => id.startsWith(prefix) && !id.slice(prefix.length).includes("."))
+			.map((id) => ({ id, sceneId: id.slice(prefix.length) }));
+
+		if (entries.length === 0 && stored.length > 0) {
+			this.rLog("Requests", duid, "Warn", undefined, undefined, "[processScenes] The account listed no saved program for this device although folders exist; nothing removed.", "warn");
+			return;
+		}
+
+		for (const folder of stored) {
+			if (keep.has(folder.sceneId)) continue;
+			this.rLog("Requests", duid, "Info", undefined, undefined, `[processScenes] Removing the folder of saved program ${folder.sceneId}, which the account no longer lists.`, "info");
+			await this.delObjectAsync(folder.id, { recursive: true });
 		}
 	}
 

@@ -59,6 +59,9 @@ import type { ScenePalette } from "../map3d/scene";
 import { RemotePad } from "./RemotePad";
 import { EMPTY_REMOTE, RemoteDriver } from "../remote/remoteDriver";
 import type { RemoteDriverModel } from "../remote/remoteDriver";
+import { PresetsPanel } from "./PresetsPanel";
+import { EMPTY_PRESETS, ScenePresetSource } from "../scenes/presetSource";
+import type { ScenePresetModel } from "../scenes/presetSource";
 
 interface MapViewProps {
 	socket: AdminConnection;
@@ -202,6 +205,9 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [activeFloor, setActiveFloor] = useState<number | null>(null);
 	// The robot's stored maps, and whether it offers a rename. Empty keeps the panel away.
 	const [mapList, setMapList] = useState<MapListModel>(EMPTY_MAP_LIST);
+	// The saved programs of the account. Empty keeps the panel away - unless the instance runs
+	// cloud-free, which is the one case in which the panel appears to say why it is empty.
+	const [presets, setPresets] = useState<ScenePresetModel>(EMPTY_PRESETS);
 	// The 3D view: whether it is on, and what it would draw. `null` means nothing drawable yet.
 	const [show3D, setShow3D] = useState(false);
 	const [map3d, setMap3d] = useState<Map3DModel | null>(null);
@@ -216,6 +222,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const remoteDriverRef = useRef<RemoteDriver | null>(null);
 	const activeFloorRef = useRef<ActiveFloorSource | null>(null);
 	const mapListRef = useRef<MapListSource | null>(null);
+	const presetSourceRef = useRef<ScenePresetSource | null>(null);
 	const map3dRef = useRef<Map3DSource | null>(null);
 
 	/** Everything the tab itself could not do; always an error, never an open question. */
@@ -443,6 +450,25 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 
 	useEffect(() => {
 		void mapListRef.current?.setDevice(instanceId, selectedRobot);
+	}, [connection, instanceId, selectedRobot]);
+
+	/*
+	 * The saved programs. Its own source again, and for one reason the others do not have: it needs
+	 * to know whether the instance runs cloud-free, because that is the difference between "no
+	 * programs" and "programs cannot be read from here" - see `scenes/presetSource.ts`.
+	 */
+	useEffect(() => {
+		const source = new ScenePresetSource(connection, { onPresets: setPresets, onError: showError });
+		presetSourceRef.current = source;
+
+		return () => {
+			source.destroy();
+			presetSourceRef.current = null;
+		};
+	}, [connection, showError]);
+
+	useEffect(() => {
+		void presetSourceRef.current?.setDevice(instanceId, selectedRobot);
 	}, [connection, instanceId, selectedRobot]);
 
 	/*
@@ -745,6 +771,21 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				<SettingsPanel
 					settings={robotSettings}
 					onWrite={writeSetting}
+				/>
+				{/*
+				 * Beside the schedules, because the two are the same kind of thing from the user's
+				 * side: something saved that runs a cleaning job. A schedule runs it at a time, a
+				 * program runs it on request.
+				 */}
+				<PresetsPanel
+					presets={presets}
+					rooms={roomList}
+					modes={modes}
+					assetBase={assetBase}
+					// The admin's own light or dark, not the map's colour scheme: this is an icon on a
+					// panel, not something drawn onto the bitmap.
+					themeType={theme.palette.mode === "dark" ? "dark" : "light"}
+					onStart={sceneId => void presetSourceRef.current?.start(sceneId)}
 				/>
 				<SchedulesPanel
 					schedules={schedules}

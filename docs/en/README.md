@@ -481,10 +481,43 @@ All device objects live below `roborock.<instance>.Devices.<duid>`:
 | `cleaningInfo.records.<index>` | The individual cleaning runs of the history, newest first, with the rendered map of each run below `map`. |
 | `floors` | One entry per stored map, including the button that loads it. |
 | `schedules` | The robot's timers, in three shapes. A timer a **V1** robot keeps itself has `cron`, a writable `enabled` switch, `source: "device"` and a `delete` button. A robot that keeps its schedules on **Roborock's server** instead gets one entry per schedule with `source: "server"`, a **read-only** `enabled`, a `delete` button and `raw`, the entry exactly as the robot reported it - see below. On a **B01/Q10** robot the schedules are read over a Tuya data point: `enabled` is **read-only** as well and there is neither a `source` nor a `delete`, because the write command for it is not established and a switch wired to a command this device does not speak would look like it works. |
-| `programs` | The scenes saved in the Roborock app. |
+| `programs` | The scenes saved in the Roborock app - see below. |
 | `map` | The rendered map and the room names. Three pictures, because they answer different questions: `map.mapBase64` is the complete one, `map.mapBase64Clean` shows the room surfaces alone, and `map.mapBase64Surface` sits between them - everything that lies **on** the floor (carpet, driven path, mopped band, predicted route, room names, object icons) and nothing that stands **in** the room (zones, virtual walls, robot, dock, go-to pin). The last one is what the 3D view textures its floor with, and it only appears on robots whose map the adapter renders itself; a B01/Q10 robot has none, and the 3D view uses the clean picture there. `map.liveTrackLearnedPause` reports, read only, the pause the adapter worked out for this robot's live position - see **Live position: match the robot** in the settings. It stays empty until enough position changes have been seen, and while the option is switched off. |
 | `deviceInfo`, `networkInfo`, `connection` | Model and firmware information, network data and the state of the local/cloud channels. |
 | `dockingStationStatus` | Dock states, only on models with a dock that reports them. |
+
+#### Saved programs
+
+The tiles the Roborock app shows above its map are **scenes** held in your Roborock account. Each of
+them appears as `programs.<sceneId>`, and the whole list additionally as one JSON value in
+`programs.list`, which is what the admin tab reads.
+
+| State | Type | Writable | Description |
+| --- | --- | --- | --- |
+| `programs.list` | `string` (JSON) | no | Every program of this robot at once: `id`, `name`, `enabled`, `valid` and `steps`. |
+| `programs.startProgram` | `string` | yes | Select of all programs; writing an id starts that one. |
+| `programs.<id>.name` | `string` | no | The name given in the app. |
+| `programs.<id>.enabled` | `boolean` | no | Whether the program is switched on in the app. It can be started here either way. |
+| `programs.<id>.start` | `boolean` | yes | Button. Runs this program. |
+| `programs.<id>.steps` | `string` (JSON) | no | The commands the program sends, with target and cleaning values. The full truth for a multi-step program. |
+| `programs.<id>.target` | `string` | no | `segment`, `zone` or `all`. Empty when the steps disagree. |
+| `programs.<id>.targetIds` | `string` (JSON) | no | The segment or zone ids, e.g. `[18]`. |
+| `programs.<id>.mapFlag` | `number` | no | Which stored map the program belongs to. |
+| `programs.<id>.fanPower` | `number` | no | Suction level. Empty when the steps disagree. |
+| `programs.<id>.waterBoxMode` | `number` | no | Water level. Empty when the steps disagree. |
+| `programs.<id>.mopMode` | `number` | no | Mop route. Empty when the steps disagree. |
+| `programs.<id>.repeat` | `number` | no | Number of passes. |
+| `programs.<id>.mode` | `string` | no | `vacuum`, `mop` or `vacmop`, worked out from suction and water level. |
+| `programs.<id>.valid` | `boolean` | no | **Only present when the robot answered.** False means the robot no longer knows this program's target - it was probably removed with the map, and starting the program would do nothing. |
+
+Two properties are worth knowing:
+
+- **The single-value states are written only when all steps agree.** A program that vacuums the flat
+  and then mops it has two different suction levels, and `fanPower` is left empty rather than picking
+  one of them. `steps` always has both.
+- **Names and settings come from the cloud.** The robot itself knows only an internal identifier and
+  a geometry, so in cloud-free operation this folder does not exist at all. That is a property of
+  Roborock's design, not a limitation of this adapter.
 
 #### What became of a command
 

@@ -76,6 +76,7 @@ export class socketHandler {
 		this.commandHandlers.set("reset_consumable", (msg) => this.handleResetConsumable(msg));
 		this.commandHandlers.set("set_schedule_enabled", (msg) => this.handleSetScheduleEnabled(msg));
 		this.commandHandlers.set("delete_schedule", (msg) => this.handleDeleteSchedule(msg));
+		this.commandHandlers.set("start_program", (msg) => this.handleStartProgram(msg));
 		this.commandHandlers.set("get_translations", () => this.handleGetTranslations());
 		this.commandHandlers.set("set_map_theme", (msg) => this.handleSetMapTheme(msg));
 		this.commandHandlers.set("set_room_selection", (msg) => this.handleSetRoomSelection(msg));
@@ -611,6 +612,47 @@ export class socketHandler {
 		);
 
 		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'delete_schedule' for ${message.timerId}`, "info");
+
+		await this.adapter.setState(stateId, { val: true, ack: false });
+		return { result: "accepted" };
+	}
+
+	/**
+	 * Starts one saved program.
+	 *
+	 * The button is written rather than {@link Roborock.executeSceneProgram} being called directly, so
+	 * that a start from the tab runs the exact path a start from the object view runs - one code path,
+	 * one set of log lines, one place where a failure can appear.
+	 *
+	 * What is checked here is that the target really is a program **this adapter published for this
+	 * device**: the object has to exist, be a state, and be the writable boolean button
+	 * `programs.<sceneId>.start`. A scene id from anywhere else therefore cannot reach the scene queue,
+	 * and a program of a different robot cannot be started through this robot's duid.
+	 *
+	 * `accepted` is all this can answer. The program queues a chain of robot commands that outlives
+	 * the message; what became of them appears on the command states as feedback.
+	 */
+	private async handleStartProgram(message: { duid: string; sceneId: string }): Promise<CommandAcknowledgement> {
+		const duid = message?.duid;
+		const sceneId = message?.sceneId === undefined || message?.sceneId === null ? "" : String(message.sceneId);
+
+		if (!duid || !sceneId) {
+			throw new Error("Invalid 'start_program' message: requires 'duid' and 'sceneId'");
+		}
+		if (!SAFE_PATH_SEGMENT.test(String(duid)) || !SAFE_PATH_SEGMENT.test(sceneId)) {
+			throw new Error("Invalid 'start_program' message: illegal characters in target");
+		}
+		if (!this.adapter.deviceFeatureHandlers.get(duid)) throw new Error(`No handler for DUID ${duid}`);
+
+		const stateId = `Devices.${duid}.programs.${sceneId}.start`;
+		const object = await this.adapter.getObjectAsync(stateId);
+		const common = (object as { common?: Partial<ioBroker.StateCommon> } | null | undefined)?.common;
+
+		if (!object || (object as ioBroker.Object).type !== "state" || common?.type !== "boolean" || common?.role !== "button" || common?.write !== true) {
+			throw new Error(`'${sceneId}' is not a saved program of DUID ${duid}`);
+		}
+
+		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'start_program' for ${sceneId}`, "info");
 
 		await this.adapter.setState(stateId, { val: true, ack: false });
 		return { result: "accepted" };

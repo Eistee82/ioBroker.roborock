@@ -451,5 +451,15 @@
   "ui_map_name_bytes": "%s / %s 字节",
   "ui_map_name_too_long": "太长了。按应用的计数方式，地图名称必须少于 %s 字节：普通字母算一个，变音字母算两个，大多数其他字符算三个。",
   "ui_map_name_duplicate": "已有另一张地图使用该名称。",
-  "ui_map_name_unchanged": "这张地图已经叫这个名字了。"
+  "ui_map_name_unchanged": "这张地图已经叫这个名字了。",
+  "ui_presets": "已保存的程序",
+  "ui_presets_hint": "在 Roborock 应用中保存的程序。此处可以启动它们；创建、重命名和编辑是有意不提供的。",
+  "ui_presets_cloud_required": "程序的名称和设置保存在 Roborock 账户中。此实例在无云端模式下运行，因此无法读取。",
+  "ui_preset_unnamed": "程序 %s",
+  "ui_preset_start": "启动程序",
+  "ui_preset_stale_hint": "扫地机已不知道此程序的目标，可能是因为地图被重建。启动它不会有任何作用。",
+  "ui_preset_disabled": "已在应用中关闭",
+  "ui_preset_target_all": "整个住所",
+  "ui_preset_target_segment": "房间 %s",
+  "ui_preset_target_zone": "区域 %s"
 }

@@ -52,6 +52,8 @@ describe("state subscriptions cover every writable state", () => {
 		expect(isWatched("Devices.duid1.commands.app_start")).toBe(true);
 		expect(isWatched("Devices.duid1.resetConsumables.reset_main_brush")).toBe(true);
 		expect(isWatched("Devices.duid1.programs.startProgram")).toBe(true);
+		// One level deeper than the collective select: the start button of a single saved program.
+		expect(isWatched("Devices.duid1.programs.7085747.start")).toBe(true);
 		expect(isWatched("loginCode")).toBe(true);
 		// a179 registers extra command groups; they are derived from the handlers at runtime.
 		expect(isWatched("Devices.duid1.settings.some_setting", ["commands", "queries", "settings"])).toBe(true);
