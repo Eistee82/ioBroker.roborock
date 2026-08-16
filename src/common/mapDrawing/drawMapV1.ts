@@ -6,7 +6,7 @@ import { robotToPixel } from "../coordTransformation";
 import { processPaths } from "../pathProcessor";
 import type { PathResult } from "../pathProcessor";
 import { getPixelFromScaledDimensions } from "./coordHelpers";
-import { hexToRgbaString, LEGACY_COLORS, VISUAL_BLOCK_SIZE } from "./constants";
+import { hexToRgbaString, LEGACY_COLORS, PATH_WIDTH_FACTORS, VISUAL_BLOCK_SIZE } from "./constants";
 import type { MapSurfaceColors } from "./constants";
 import { imagePixels } from "../segmentRaster";
 import type { SegmentRaster } from "../segmentRaster";
@@ -200,8 +200,12 @@ export async function drawMapV1(
 				mopPathD: "",
 			  };
 
-	const lwMain = Math.max(1, VISUAL_BLOCK_SIZE / 2);
-	const lwBackwash = VISUAL_BLOCK_SIZE * 0.5;
+	// One table for both renderers; see PATH_WIDTH_FACTORS for why the driven path used to be
+	// narrower here than in the admin tab's SVG, and what that cost the 3D floor.
+	const lwMop = PATH_WIDTH_FACTORS.mop * VISUAL_BLOCK_SIZE;
+	const lwMain = Math.max(1, VISUAL_BLOCK_SIZE * PATH_WIDTH_FACTORS.main);
+	const lwBackwash = VISUAL_BLOCK_SIZE * PATH_WIDTH_FACTORS.backwash;
+	const lwPureClean = VISUAL_BLOCK_SIZE * PATH_WIDTH_FACTORS.pureClean;
 	// Only the main line follows the colour scheme. The app does carry dark values for the mop
 	// band, the backwash and the pure-clean track too, but its light values for those three are
 	// not the ones drawn here - swapping only the dark half would pair a proven colour with an
@@ -209,7 +213,7 @@ export async function drawMapV1(
 	renderer.drawPath({
 		segments: pathResult.mopPath,
 		stroke: "rgba(255, 255, 255, 1)",
-		lineWidth: 6.5 * VISUAL_BLOCK_SIZE,
+		lineWidth: lwMop,
 		opacity: 0.18,
 		pathLayer: "mop",
 	});
@@ -229,7 +233,7 @@ export async function drawMapV1(
 	renderer.drawPath({
 		segments: pathResult.pureCleanPath,
 		stroke: "rgba(255, 255, 255, 1)",
-		lineWidth: lwBackwash,
+		lineWidth: lwPureClean,
 		pathLayer: "pure",
 	});
 

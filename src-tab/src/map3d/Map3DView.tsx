@@ -73,16 +73,34 @@ interface CameraMemory {
  * Decoded before it is handed over, because a texture built from an image that has not loaded yet
  * paints the floor black for the first frames.
  *
+ * ## Why the anisotropy matters here more than anywhere else
+ *
+ * The floor is the one surface in this scene that is **always** seen at a shallow angle - the
+ * camera is tilted about 50 degrees onto it and the far half of the map runs away towards the
+ * horizon. That is the exact case in which a texel's footprint on screen is long and thin, the
+ * sampler falls back to a coarser mip level, and one-pixel-wide detail is averaged out of
+ * existence. The map picture's thinnest feature is the line the robot drove.
+ *
+ * Anisotropic sampling is what that setting exists for, and it costs nothing to ask for: the value
+ * is the hardware's own maximum, so a device that offers none gets 1 and behaves as before.
+ *
+ * **Stated as a mechanism, not as a measurement.** Everything else in this round was measured, and
+ * this could not be: there is no GPU in the test run, so the loss it addresses cannot be
+ * reproduced here. What *was* measured is that the line is thin enough for it to matter - see
+ * `PATH_WIDTH_FACTORS`.
+ *
  * @param three The loaded three.js namespace.
  * @param imageSrc The picture as a data URI.
+ * @param anisotropy Maximum the renderer supports; 1 where it is not known yet.
  * @returns The texture, ready to use.
  */
-async function makeTexture(three: any, imageSrc: string): Promise<any> {
+async function makeTexture(three: any, imageSrc: string, anisotropy: number): Promise<any> {
 	const image = new Image();
 	image.src = imageSrc;
 	await image.decode().catch(() => undefined);
 	const texture = new three.Texture(image);
 	texture.colorSpace = three.SRGBColorSpace;
+	texture.anisotropy = anisotropy;
 	texture.needsUpdate = true;
 	return texture;
 }
@@ -94,6 +112,8 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 	const threeRef = useRef<any>(null);
 	/** The texture currently on the floor. Whoever replaces it disposes the one it replaced. */
 	const textureRef = useRef<any>(null);
+	/** Largest anisotropy the renderer supports; see {@link makeTexture}. */
+	const anisotropyRef = useRef<number>(1);
 	/** The newest model, read by the start-up effect at the moment it runs. */
 	const modelRef = useRef<Map3DModel>(model);
 	const cameraMemoryRef = useRef<CameraMemory | null>(null);
@@ -155,7 +175,26 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 				const current = modelRef.current;
 				builtMapFlag = current.mapFlag;
 
-				const texture = await makeTexture(three, current.imageSrc);
+				// Built before the texture, and only for that reason: the texture wants the largest
+				// anisotropy this hardware offers, and only a renderer can say what that is.
+				//
+				// Transparent rather than filled: the canvas sits on the panel the tab already
+				// painted, so letting that show through is right in either theme and stays right
+				// when the admin switches one. Painting a background here meant carrying the
+				// theme's colour into WebGL, and a colour space conversion on the way made it come
+				// out near-black in the light theme - a canvas that has no background of its own
+				// cannot get that wrong.
+				renderer = new three.WebGLRenderer({ antialias: true, alpha: true });
+				renderer.setClearColor(0x000000, 0);
+				renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+				host.appendChild(renderer.domElement);
+				renderer.domElement.style.width = "100%";
+				renderer.domElement.style.height = "100%";
+				renderer.domElement.style.display = "block";
+
+				anisotropyRef.current = Math.max(1, Number(renderer.capabilities?.getMaxAnisotropy?.()) || 1);
+
+				const texture = await makeTexture(three, current.imageSrc, anisotropyRef.current);
 				if (cancelled) {
 					texture.dispose?.();
 					return;
@@ -176,20 +215,6 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 				builtRef.current = built;
 				threeRef.current = three;
 				textureRef.current = texture;
-
-				// Transparent rather than filled: the canvas sits on the panel the tab already
-				// painted, so letting that show through is right in either theme and stays right
-				// when the admin switches one. Painting a background here meant carrying the
-				// theme's colour into WebGL, and a colour space conversion on the way made it come
-				// out near-black in the light theme - a canvas that has no background of its own
-				// cannot get that wrong.
-				renderer = new three.WebGLRenderer({ antialias: true, alpha: true });
-				renderer.setClearColor(0x000000, 0);
-				renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-				host.appendChild(renderer.domElement);
-				renderer.domElement.style.width = "100%";
-				renderer.domElement.style.height = "100%";
-				renderer.domElement.style.display = "block";
 
 				controls = new OrbitControls(built.camera, renderer.domElement);
 				controls.enableDamping = true;
@@ -283,7 +308,7 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 
 		let cancelled = false;
 		void (async () => {
-			const texture = await makeTexture(three, model.imageSrc);
+			const texture = await makeTexture(three, model.imageSrc, anisotropyRef.current);
 			// A rebuild that started meanwhile owns the floor now; this texture belongs to a scene
 			// that no longer exists and would otherwise leak.
 			if (cancelled || builtRef.current !== built) {

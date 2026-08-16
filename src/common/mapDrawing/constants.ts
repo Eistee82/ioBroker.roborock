@@ -5,6 +5,49 @@ export const ROBOROCK_PALETTE = [
 	"#DFDFDFff", "#50A4FF", "#FF744D", "#008FA8", "#F5AF10", "#E9E9E9ff"
 ];
 
+/**
+ * How wide each of the four path layers is drawn, as a multiple of {@link VISUAL_BLOCK_SIZE}.
+ *
+ * **Shared because the two renderers had drifted apart, and one layer had drifted alone.** The map
+ * bitmap is drawn by `drawMapV1` through `CanvasMapRenderer`; the admin tab draws the same four
+ * layers a second time as SVG over the clean picture. Three of the four factors agreed - the mopped
+ * band at 6.5 and the backwash and pure-clean tracks at 0.5 - and the **driven path** did not: the
+ * bitmap used `VISUAL_BLOCK_SIZE / 2` while the tab used `0.8`.
+ *
+ * That was the reported "the driven path is still missing on the 3D floor". The 3D floor is
+ * textured with the bitmap, so it got the 1.5-pixel version, while the 2D view beside it drew its
+ * own 2.4-pixel one over the clean picture and looked right.
+ *
+ * **What the wider line does, measured, and what it does not.** Rendering the same map at both
+ * settings and comparing the pictures pixel by pixel: the fully covered core is **one pixel row at
+ * either width** - 49 pixels for this test path, unchanged. What grows is everything beside it. The
+ * pixels carrying more than a fifth of the line's colour go from **49 to 149**, because the
+ * flanking rows move from faint anti-aliasing to roughly seven tenths coverage. So the line reads
+ * about three times as solid; it does not become three times as bright.
+ *
+ * Reading them from one table is what makes a second drift impossible rather than merely unlikely,
+ * and `test/unit/map_path_widths.test.ts` asserts that both renderers use it.
+ *
+ * **This is the half of the problem that could be measured here.** The other half is that the 3D
+ * floor is a texture seen at a shallow angle, where thin detail is lost to mip sampling - that is
+ * addressed in `src-tab/src/map3d/Map3DView.tsx` and is reasoning rather than measurement, because
+ * the test run has no GPU.
+ *
+ * The **colours** are deliberately not here: they are the app's own, read out of the control plugin
+ * per theme (see {@link LEGACY_COLORS} and {@link DARK_MAP_COLORS}), and they belong with the
+ * theme rather than with the geometry.
+ */
+export const PATH_WIDTH_FACTORS = {
+	/** The mopped band: a wide translucent area rather than a line. */
+	mop: 6.5,
+	/** The line the robot drove - the one that had drifted. */
+	main: 0.8,
+	/** The backwash track, dashed. */
+	backwash: 0.5,
+	/** The pure-clean track; drawn at the backwash width in both renderers. */
+	pureClean: 0.5
+} as const;
+
 /** Which of the two colour sets the map bitmap is painted with. */
 export type MapColorScheme = "light" | "dark";
 

@@ -1,6 +1,7 @@
 import * as d3 from "d3";
 import { localCoordsToRobotCoords, robotCoordsToLocalCoords } from "@adapter/common/coordTransformation";
 import { drawMapV1 } from "@adapter/common/mapDrawing/drawMapV1";
+import { PATH_WIDTH_FACTORS } from "@adapter/common/mapDrawing/constants";
 import { IMG_CHARGER, IMG_GO_TO_PIN, IMG_ROBOT_ORIGINAL } from "@adapter/common/images";
 import type { DrawObstacleInput, DrawRoomLabelInput, DrawVirtualWallInput } from "@adapter/common/mapDrawing/types";
 import type { B01MapData } from "@adapter/lib/map/b01/types";
@@ -372,7 +373,9 @@ interface DockStatusRow {
 	unit: string;
 }
 
-const UI_CONSTANTS = {
+// Exported so `pathWidths.test.ts` can assert that the path widths here really are the adapter's
+// shared ones. Nothing else reads it from outside this module.
+export const UI_CONSTANTS = {
 	/**
 	 * Robot and dock, in map cells - which is to say, to scale.
 	 *
@@ -416,9 +419,16 @@ const UI_CONSTANTS = {
 	PIN_WIDTH_BASE: 29,
 	PIN_HEIGHT_BASE: 24,
 	PIN_Y_OFFSET_BASE: 5,
-	PATH_MOP_WIDTH_BASE: 6.5,
-	PATH_MAIN_WIDTH_RATIO_BASE: 0.8,
-	PATH_BACKWASH_WIDTH_BASE: 0.5,
+	/*
+	 * The four path widths come from the adapter's own table rather than from numbers repeated
+	 * here. They were repeated here, and one of them had drifted: the driven path was 0.8 in this
+	 * view and `VISUAL_BLOCK_SIZE / 2` in the bitmap `drawMapV1` produces. The 3D floor is textured
+	 * with that bitmap, which is why the driven path was missing there while this view showed it.
+	 * See `PATH_WIDTH_FACTORS` for the measurement.
+	 */
+	PATH_MOP_WIDTH_BASE: PATH_WIDTH_FACTORS.mop,
+	PATH_MAIN_WIDTH_RATIO_BASE: PATH_WIDTH_FACTORS.main,
+	PATH_BACKWASH_WIDTH_BASE: PATH_WIDTH_FACTORS.backwash,
 };
 
 /** Type → suffix (429.js); asset obstacle_new_p{suffix}.png */
