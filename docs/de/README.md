@@ -323,6 +323,50 @@ Aus demselben Grund ist der Schalter eines solchen Zeitplans hier nur lesbar: Ih
 auszuschalten bräuchte einen Befehl, dessen Form nicht belegt ist — und ein Schalter am falschen
 Befehl sähe aus, als arbeite er, und täte nichts.
 
+**Einen Gerätezeitplan zu schalten, bestätigt die Liste des Roboters, nicht seine Antwort.** Der
+Roboter antwortet auf den Schaltbefehl mit `ok`, und das heißt nur, dass er ihn angenommen hat —
+deshalb liest der Adapter danach die Zeitplanliste erneut (bis zu dreimal über zwei Sekunden, weil
+ein Roboter einen Moment brauchen kann) und bestätigt den Schalter mit dem, was die Liste meldet.
+Steht der Zeitplan weiterhin andersherum, zeigt der State den Wert des Roboters und trägt den Grund,
+warum das Schalten nicht angekommen ist. Genauso bei einem Befehl, der nicht hinausging, abgelehnt
+wurde oder in eine Zeitüberschreitung lief: Der Grund steht als Qualität und Kommentar am State
+selbst statt nur im Log. Ein Fall bleibt bewusst still — ist der Zeitplan zwischenzeitlich aus der
+Liste verschwunden, wird über ihn gar nichts behauptet, weil es keinen Zeitplan mehr gibt, über den
+sich etwas behaupten ließe.
+
+Ob ein Zeitplan als **eingeschaltet** gilt, wird für beide Listenarten gleich entschieden: nicht,
+indem gefragt wird, ob der Roboter `on` gesagt hat, sondern ob er eines der Wörter gesagt hat, die
+„aus" bedeuten. Zwei Schreibweisen sind bekannt und sie widersprechen sich — die App prüft auf
+`disable`, der vermessene Roboter antwortete `on` —, also ist eine dritte möglich, und ein laufender
+Zeitplan würde hier sonst als ausgeschaltet angezeigt. Der sichtbare Fehler ist der harmlosere.
+
+**Löschen geht dagegen.** Jeder Zeitplan hat einen Knopf `delete` und daneben ein `source`, das
+sagt, welche der beiden Arten er ist; der Adapter schickt den passenden Befehl und fragt danach die
+Liste des Roboters erneut ab. Erst wenn die Kennung darin nicht mehr auftaucht, gilt der Zeitplan
+als gelöscht und sein Ordner verschwindet — meldet der Roboter ihn weiterhin, bleibt der Ordner
+stehen, und der Knopf sagt, dass die Löschung nicht angekommen ist. **Zurück geht es nicht:** Der
+Adapter kann einen Zeitplan schalten, aber keinen schreiben; ein gelöschter Zeitplan muss in der
+Roborock-App neu angelegt werden.
+
+Bei einem Zeitplan vom Server ist eine Grenze vor dem Drücken wichtig. Die App löscht einen solchen
+Zeitplan an zwei Stellen — im Roboter und im Roborock-Konto —, und von hier aus ist nur der Roboter
+erreichbar. Die Kopie im Konto bleibt, deshalb führt die Handy-App den Zeitplan weiterhin auf und
+zeigt ihn als eingeschaltet, obwohl der Roboter ihn nicht mehr kennt. Der Knopf sagt das ebenfalls.
+
+**Das alles steht jetzt auch im Tab.** Neben den Einstellungen liegt eine Tafel *Zeitpläne*,
+eingeklappt wie ihre Nachbarn und bei einem Roboter ohne Zeitplan gar nicht vorhanden. Jede Zeile
+trägt oben die Startzeit, darunter die Wochentage, daneben eine Marke, ob der Zeitplan im Roboter
+oder auf dem Server liegt, und — sofern sie angeboten werden dürfen — den Schalter und das Löschen.
+Die Warnung von oben steht in der Tafel **vor** dem Löschen, nicht danach. Ein Zeitplan, dessen Art
+der Adapter nicht festhalten konnte, bekommt eine Zeile, die zeigt, was er tut, und gar keine
+Bedienelemente; das ist der Fall bei B01 und Q10, deren Zeitpläne aus Datenpunkten stammen, die
+keiner der beiden Löschbefehle erreicht. Einen Zeitplan, dessen Zeit dieser Stand nicht lesen kann,
+zeigt die Tafel mit dem Text des Roboters statt mit einer gedeuteten Zeit, und bei einem Zeitplan vom
+Server steht dabei, warum überhaupt keine Zeit erscheint. Einen Zeitplan **anlegen** kann man in der
+Tafel bewusst nicht — aus dem oben genannten Grund: Der Adapter kann keinen schreiben. Und die
+Zeiten sind die des Roboters; er führt seine Zeitpläne in seiner eigenen Zeitzone aus, genau die,
+die die App zu jedem gespeicherten Zeitplan mitschreibt.
+
 Die Ladestation zeichnet die Karte mit der Grafik, die auch die Roborock-App dafür
 verwendet, und dreht sie so, wie der Roboter die Ausrichtung der Station meldet. Welche
 Grafik es wird, hängt vom gemeldeten Stationstyp ab: eine einfache Ladeschale bekommt eine
@@ -435,7 +479,7 @@ Alle Geräteobjekte liegen unter `roborock.<instanz>.Devices.<duid>`:
 | `cleaningInfo` | Gesamtwerte über die Lebensdauer (Fläche, Zeit, Anzahl der Läufe). |
 | `cleaningInfo.records.<index>` | Die einzelnen Reinigungsläufe der Historie, neueste zuerst; die gerenderte Karte je Lauf liegt unter `map`. |
 | `floors` | Ein Eintrag je gespeicherter Karte, inklusive Knopf zum Laden. |
-| `schedules` | Die Zeitpläne des Roboters. Ein Zeitplan, den der Roboter selbst führt, hat `cron` und einen schreibbaren Schalter `enabled`. Ein Roboter, der seine Zeitpläne stattdessen auf dem Roborock-Server führt, bekommt je Zeitplan einen Eintrag mit `source: "server"`, einem **nur lesbaren** `enabled` und `raw` — dem Eintrag genau so, wie der Roboter ihn gemeldet hat. Siehe unten. |
+| `schedules` | Die Zeitpläne des Roboters, in drei Ausprägungen. Ein Zeitplan, den ein **V1**-Roboter selbst führt, hat `cron`, einen schreibbaren Schalter `enabled`, `source: "device"` und einen Knopf `delete`. Ein Roboter, der seine Zeitpläne stattdessen auf dem **Roborock-Server** führt, bekommt je Zeitplan einen Eintrag mit `source: "server"`, einem **nur lesbaren** `enabled`, einem Knopf `delete` und `raw` — dem Eintrag genau so, wie der Roboter ihn gemeldet hat. Siehe unten. Bei einem **B01/Q10**-Roboter kommen die Zeitpläne über einen Tuya-Datenpunkt: `enabled` ist dort **ebenfalls nur lesbar**, und es gibt weder `source` noch `delete` — der Schreibbefehl dafür ist nicht belegt, und ein Schalter an einem Befehl, den dieses Gerät nicht spricht, sähe aus, als arbeite er. |
 | `programs` | Die in der Roborock-App gespeicherten Szenen. |
 | `map` | Die gerenderte Karte und die Raumnamen. `map.liveTrackLearnedPause` meldet nur lesbar die Pause, die der Adapter für die Live-Position dieses Roboters ermittelt hat — siehe **Live-Position: am Roboter ausrichten** in den Einstellungen. Der State bleibt leer, solange noch nicht genug Positionswechsel gesehen wurden und solange die Option ausgeschaltet ist. |
 | `deviceInfo`, `networkInfo`, `connection` | Modell- und Firmware-Informationen, Netzwerkdaten und der Zustand der lokalen bzw. Cloud-Kanäle. |

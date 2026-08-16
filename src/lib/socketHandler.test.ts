@@ -272,6 +272,126 @@ describe("socketHandler", () => {
 		});
 	});
 
+	describe("the two schedule messages", () => {
+		/** Mimics the objects `v1VacuumFeatures` publishes beside a schedule. */
+		function createScheduleAdapter(objects: Record<string, unknown>) {
+			return createAdapter({
+				getObjectAsync: vi.fn(async (id: string) => objects[id] ?? null)
+			});
+		}
+
+		/** A device timer: a writable switch and the delete button beside it. */
+		const deviceSwitch = { type: "state", common: { name: "Enabled", type: "boolean", role: "switch", write: true } };
+		const deleteButton = { type: "state", common: { name: "Delete this schedule", type: "boolean", role: "button", write: true } };
+		/** A server-side schedule: the adapter publishes its switch read-only. */
+		const serverSwitch = { type: "state", common: { name: "Enabled", type: "boolean", role: "indicator", write: false } };
+
+		describe("set_schedule_enabled", () => {
+			it("writes the switch unacknowledged, so main.ts asks the robot", async () => {
+				const scheduleAdapter = createScheduleAdapter({ "Devices.duid1.schedules.1498595904821.enabled": deviceSwitch });
+
+				const result = await send(scheduleAdapter, "set_schedule_enabled", { duid: "duid1", timerId: "1498595904821", enabled: false });
+
+				expect(result).toEqual({ result: "accepted" });
+				expect(scheduleAdapter.setState).toHaveBeenCalledWith("Devices.duid1.schedules.1498595904821.enabled", { val: false, ack: false });
+			});
+
+			it("derives the value instead of taking it from the message", async () => {
+				const scheduleAdapter = createScheduleAdapter({ "Devices.duid1.schedules.1498595904821.enabled": deviceSwitch });
+
+				await send(scheduleAdapter, "set_schedule_enabled", { duid: "duid1", timerId: "1498595904821", enabled: "yes please" });
+
+				expect(scheduleAdapter.setState).toHaveBeenCalledWith("Devices.duid1.schedules.1498595904821.enabled", { val: false, ack: false });
+			});
+
+			it("refuses the read-only switch of a server-side schedule", async () => {
+				// Switching one needs `upd_server_timer`, and nobody has read that call. The adapter says
+				// so by publishing the state read-only; this is where that decision is enforced.
+				const scheduleAdapter = createScheduleAdapter({ "Devices.duid1.schedules.1743140136890.enabled": serverSwitch });
+
+				const result = await send(scheduleAdapter, "set_schedule_enabled", { duid: "duid1", timerId: "1743140136890", enabled: true });
+
+				expect(result.error).toMatch(/is not a schedule of DUID duid1 that 'set_schedule_enabled' can act on/);
+				expect(scheduleAdapter.setState).not.toHaveBeenCalled();
+			});
+
+			it("refuses a schedule that does not exist", async () => {
+				const scheduleAdapter = createScheduleAdapter({});
+
+				const result = await send(scheduleAdapter, "set_schedule_enabled", { duid: "duid1", timerId: "12345", enabled: true });
+
+				expect(result.error).toMatch(/is not a schedule of DUID duid1/);
+				expect(scheduleAdapter.setState).not.toHaveBeenCalled();
+			});
+
+			it("refuses path traversal out of the schedules folder", async () => {
+				const scheduleAdapter = createScheduleAdapter({ "Devices.duid1.schedules.1.enabled": deviceSwitch });
+
+				const result = await send(scheduleAdapter, "set_schedule_enabled", { duid: "duid1", timerId: "../../commands/app_start", enabled: true });
+
+				expect(result.error).toMatch(/illegal characters/);
+				expect(scheduleAdapter.setState).not.toHaveBeenCalled();
+			});
+
+			it("requires duid and timerId", async () => {
+				const result = await send(adapter, "set_schedule_enabled", { duid: "duid1" });
+
+				expect(result.error).toMatch(/requires 'duid' and 'timerId'/);
+			});
+
+			it("rejects unknown devices", async () => {
+				const scheduleAdapter = createScheduleAdapter({ "Devices.nope.schedules.1.enabled": deviceSwitch });
+
+				const result = await send(scheduleAdapter, "set_schedule_enabled", { duid: "nope", timerId: "1", enabled: true });
+
+				expect(result.error).toMatch(/No handler for DUID/);
+				expect(scheduleAdapter.setState).not.toHaveBeenCalled();
+			});
+		});
+
+		describe("delete_schedule", () => {
+			it("presses the delete button the adapter published", async () => {
+				const scheduleAdapter = createScheduleAdapter({ "Devices.duid1.schedules.1743140136890.delete": deleteButton });
+
+				const result = await send(scheduleAdapter, "delete_schedule", { duid: "duid1", timerId: "1743140136890" });
+
+				expect(result).toEqual({ result: "accepted" });
+				expect(scheduleAdapter.setState).toHaveBeenCalledWith("Devices.duid1.schedules.1743140136890.delete", { val: true, ack: false });
+			});
+
+			it("refuses a schedule that has no delete button", async () => {
+				// A B01/Q10 schedule has none: it is built from Tuya data points that neither delete
+				// command reaches, so the adapter never publishes a button beside it.
+				const scheduleAdapter = createScheduleAdapter({ "Devices.duid1.schedules.local_01.enabled": deviceSwitch });
+
+				const result = await send(scheduleAdapter, "delete_schedule", { duid: "duid1", timerId: "local_01" });
+
+				expect(result.error).toMatch(/is not a schedule of DUID duid1 that 'delete_schedule' can act on/);
+				expect(scheduleAdapter.setState).not.toHaveBeenCalled();
+			});
+
+			it("refuses a state in the folder that is not a writable boolean button", async () => {
+				const scheduleAdapter = createScheduleAdapter({
+					"Devices.duid1.schedules.1.delete": { type: "state", common: { type: "string", role: "text", write: false } }
+				});
+
+				const result = await send(scheduleAdapter, "delete_schedule", { duid: "duid1", timerId: "1" });
+
+				expect(result.error).toMatch(/is not a schedule of DUID duid1/);
+				expect(scheduleAdapter.setState).not.toHaveBeenCalled();
+			});
+
+			it("refuses a foreign state id smuggled through the duid", async () => {
+				const scheduleAdapter = createScheduleAdapter({ "Devices.duid1.schedules.1.delete": deleteButton });
+
+				const result = await send(scheduleAdapter, "delete_schedule", { duid: "duid1.schedules.1", timerId: "1" });
+
+				expect(result.error).toMatch(/illegal characters/);
+				expect(scheduleAdapter.setState).not.toHaveBeenCalled();
+			});
+		});
+	});
+
 	describe("get_translations", () => {
 		it("returns the adapter language and its loaded translations", async () => {
 			const result = await send(adapter, "get_translations", {});

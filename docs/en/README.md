@@ -301,6 +301,47 @@ the same reason the switch of such a schedule is read-only here: turning a serve
 or off needs a command whose form has not been established, and a switch wired to the wrong command
 would look like it works and do nothing.
 
+**Switching a device schedule is confirmed by the robot's list, not by its answer.** The robot
+answers the switch command with `ok`, and that only says it took the command - so after switching,
+the adapter reads the robot's timer list again (up to three times over two seconds, because a robot
+may need a moment) and acknowledges the switch with what the list reports. If the schedule is still
+the other way round, the state shows the robot's value and carries the reason why the switch did not
+take. The same happens when the command could not be sent, was refused or timed out: the reason is
+written onto the state itself, as a quality and a comment, instead of only into the log. One case is
+deliberately quiet - if the schedule has vanished from the list in the meantime, nothing is claimed
+about it at all, because there is no longer a schedule the claim could be about.
+
+Whether a schedule counts as switched **on** is decided the same way for both kinds of list: not by
+asking whether the robot said `on`, but by asking whether it said one of the words that mean off.
+Two spellings are known and they disagree - the app tests for `disable`, the measured robot answered
+`on` - so a third is possible, and a schedule that runs would otherwise be shown here as switched
+off. The safer error is the visible one.
+
+**A schedule can be deleted, though.** Every schedule carries a `delete` button and a `source`
+saying which of the two kinds it is; the adapter sends the command that matches, and afterwards asks
+the robot for its list again. Only when the identifier is gone from that list is the schedule
+treated as deleted and its folder removed - a robot that still reports it keeps its folder, and the
+button says that the deletion did not take. **There is no way back:** the adapter can switch a
+schedule but not write one, so a deleted schedule has to be created again in the Roborock app.
+
+For a server-side schedule one limit is worth knowing before you press it. The app deletes such a
+schedule in two places - on the robot and in your Roborock account - and only the robot is reachable
+from here. The copy in the account stays, so the phone app will keep listing the schedule and will
+show it as switched on, even though the robot no longer knows it. The button says so as well.
+
+**All of this is in the tab as well.** A *Schedules* panel sits beside the settings, collapsed like
+its neighbours and absent on a robot that has none. Each row is headed by the start time, with the
+days it repeats on below it, a chip saying whether the schedule lives in the robot or on the server,
+and - where they can be offered - the switch and the delete. The warning above is shown in the panel
+**before** anything is deleted rather than afterwards. A schedule whose kind the adapter could not
+record gets a row that shows what it is doing and no control at all; that is the B01 and Q10 case,
+where the schedules are built from data points that neither delete command reaches. A schedule whose
+time this build cannot read keeps the robot's own text instead of an interpreted one, and a
+server-side schedule says why it shows no time at all. There is deliberately **no way to create a
+schedule** in the panel, for the reason above: the adapter cannot write one. And the times are the
+robot's own - it runs its schedules in its own time zone, which is what the app writes beside every
+schedule it saves.
+
 The dock is drawn with the Roborock app's own picture of it, turned the way the robot
 reports the dock to stand. Which picture depends on the reported dock type: a plain
 charging dock gets a different graphic from a station that empties, washes or dries. Those
@@ -409,7 +450,7 @@ All device objects live below `roborock.<instance>.Devices.<duid>`:
 | `cleaningInfo` | Lifetime totals (area, time, number of runs). |
 | `cleaningInfo.records.<index>` | The individual cleaning runs of the history, newest first, with the rendered map of each run below `map`. |
 | `floors` | One entry per stored map, including the button that loads it. |
-| `schedules` | The robot's timers. A timer the robot keeps itself has `cron` and a writable `enabled` switch. A robot that keeps its schedules on Roborock's server instead gets one entry per schedule with `source: "server"`, a **read-only** `enabled` and `raw`, the entry exactly as the robot reported it - see below. |
+| `schedules` | The robot's timers, in three shapes. A timer a **V1** robot keeps itself has `cron`, a writable `enabled` switch, `source: "device"` and a `delete` button. A robot that keeps its schedules on **Roborock's server** instead gets one entry per schedule with `source: "server"`, a **read-only** `enabled`, a `delete` button and `raw`, the entry exactly as the robot reported it - see below. On a **B01/Q10** robot the schedules are read over a Tuya data point: `enabled` is **read-only** as well and there is neither a `source` nor a `delete`, because the write command for it is not established and a switch wired to a command this device does not speak would look like it works. |
 | `programs` | The scenes saved in the Roborock app. |
 | `map` | The rendered map and the room names. `map.liveTrackLearnedPause` reports, read only, the pause the adapter worked out for this robot's live position - see **Live position: match the robot** in the settings. It stays empty until enough position changes have been seen, and while the option is switched off. |
 | `deviceInfo`, `networkInfo`, `connection` | Model and firmware information, network data and the state of the local/cloud channels. |

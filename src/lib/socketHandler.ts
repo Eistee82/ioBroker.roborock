@@ -74,6 +74,8 @@ export class socketHandler {
 		this.commandHandlers.set("load_multi_map", (msg) => this.handleLoadMultiMap(msg));
 		this.commandHandlers.set("set_state", (msg) => this.handleSetState(msg));
 		this.commandHandlers.set("reset_consumable", (msg) => this.handleResetConsumable(msg));
+		this.commandHandlers.set("set_schedule_enabled", (msg) => this.handleSetScheduleEnabled(msg));
+		this.commandHandlers.set("delete_schedule", (msg) => this.handleDeleteSchedule(msg));
 		this.commandHandlers.set("get_translations", () => this.handleGetTranslations());
 		this.commandHandlers.set("set_map_theme", (msg) => this.handleSetMapTheme(msg));
 		this.commandHandlers.set("set_room_selection", (msg) => this.handleSetRoomSelection(msg));
@@ -514,6 +516,102 @@ export class socketHandler {
 		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'reset_consumable' for ${consumable}`, "info");
 
 		// Unacknowledged on purpose: main.ts turns this write into the reset_consumable request.
+		await this.adapter.setState(stateId, { val: true, ack: false });
+		return { result: "accepted" };
+	}
+
+	/**
+	 * Finds the state of one schedule the tab may write to.
+	 *
+	 * A security boundary of the same kind as `reset_consumable`, and drawn the same way: the target
+	 * is composed here rather than taken from the message, the identifier may not contain a path
+	 * separator, and the object has to be one the adapter itself published in the expected shape.
+	 * `schedules.<id>.<leaf>` sits two levels below the device, so neither the registered command
+	 * folders of `set_state` nor the flat check of `reset_consumable` covers it.
+	 *
+	 * @param message  Payload carrying `duid` and `timerId`.
+	 * @param leaf     State beside the schedule, `enabled` or `delete`.
+	 * @param command  Name of the message, for the error text.
+	 * @param accept   Whether the object found is the kind this message may write to.
+	 * @returns Device id and the full state id.
+	 */
+	private async scheduleStateTarget(
+		message: { duid: string; timerId: string },
+		leaf: string,
+		command: string,
+		accept: (common: Partial<ioBroker.StateCommon> | undefined) => boolean
+	): Promise<{ duid: string; stateId: string }> {
+		const duid = message?.duid;
+		const timerId = message?.timerId;
+
+		if (!duid || !timerId) {
+			throw new Error(`Invalid '${command}' message: requires 'duid' and 'timerId'`);
+		}
+		if (!SAFE_PATH_SEGMENT.test(String(duid)) || !SAFE_PATH_SEGMENT.test(String(timerId))) {
+			throw new Error(`Invalid '${command}' message: illegal characters in target`);
+		}
+
+		if (!this.adapter.deviceFeatureHandlers.get(duid)) throw new Error(`No handler for DUID ${duid}`);
+
+		const stateId = `Devices.${duid}.schedules.${timerId}.${leaf}`;
+		const object = await this.adapter.getObjectAsync(stateId);
+		const common = (object as { common?: Partial<ioBroker.StateCommon> } | null | undefined)?.common;
+
+		if (!object || (object as ioBroker.Object).type !== "state" || !accept(common)) {
+			throw new Error(`'${timerId}' is not a schedule of DUID ${duid} that '${command}' can act on`);
+		}
+
+		return { duid: String(duid), stateId };
+	}
+
+	/**
+	 * Switches one schedule on or off.
+	 *
+	 * The value is derived from the message, never taken from it, and the write is unacknowledged on
+	 * purpose: that is the path a script and the object tree take, and it is what carries the write
+	 * into `main.ts handleScheduleToggle`, where the robot is asked and the switch is only confirmed
+	 * once the robot agreed.
+	 *
+	 * **Which schedules are switchable is not decided here.** The object is: only a writable boolean
+	 * `enabled` passes, and the adapter publishes a read-only one for a schedule whose switching
+	 * command has not been proven - a server-side schedule is switched by `upd_server_timer`, and
+	 * nobody has read that call. The tab additionally keeps its switch away from a schedule with no
+	 * recorded `source`; see `src-tab/src/schedules/schedules.ts`.
+	 */
+	private async handleSetScheduleEnabled(message: { duid: string; timerId: string; enabled: unknown }): Promise<CommandAcknowledgement> {
+		const { duid, stateId } = await this.scheduleStateTarget(
+			message,
+			"enabled",
+			"set_schedule_enabled",
+			(common) => common?.type === "boolean" && common?.write === true
+		);
+
+		const enabled = message.enabled === true;
+		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'set_schedule_enabled' for ${message.timerId} = ${enabled}`, "info");
+
+		await this.adapter.setState(stateId, { val: enabled, ack: false });
+		return { result: "accepted" };
+	}
+
+	/**
+	 * Deletes one schedule for good.
+	 *
+	 * Nothing about the deletion is decided here either: the value is always `true`, so the tab cannot
+	 * choose it, and which of the two delete commands is sent follows from `schedules.<id>.source`,
+	 * which `main.ts handleScheduleDelete` reads. A schedule without a usable source is refused there,
+	 * and the object this method insists on - the `delete` button - only exists beside a schedule that
+	 * has one.
+	 */
+	private async handleDeleteSchedule(message: { duid: string; timerId: string }): Promise<CommandAcknowledgement> {
+		const { duid, stateId } = await this.scheduleStateTarget(
+			message,
+			"delete",
+			"delete_schedule",
+			(common) => common?.type === "boolean" && common?.role === "button" && common?.write === true
+		);
+
+		this.adapter.rLog("System", duid, "Info", undefined, undefined, `Received 'delete_schedule' for ${message.timerId}`, "info");
+
 		await this.adapter.setState(stateId, { val: true, ack: false });
 		return { result: "accepted" };
 	}

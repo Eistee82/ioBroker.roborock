@@ -82,6 +82,28 @@ describe("Schedule (Timer) Verification", () => {
 		await mockAdapter.expectState(`Devices.${duid}.schedules.timer_id_3.cron`, { val: "0 8 * * 1,3,5" });
 	});
 
+	it("reads a state field it does not know as on, not as off", async () => {
+		// The device list used to be read with `timer[1] === "on"`, while the app tests the very same
+		// field of the very same rows against `'disable'` (A65:582384-582389) and the test device
+		// answered `"on"`. Two spellings that disagree mean a third is possible, and with an equality
+		// test a running schedule would have been shown as switched off - the error nobody notices.
+		const timerResponse = [
+			["timer_id_1", "enable", ["0 14 * * 5", ["Start Cleaning", []], 1234567890]],
+			["timer_id_2", "disable", ["0 10 * * *", ["Start Cleaning", []], 1234567891]]
+		];
+		const originalSendRequest = depsMock.requestsHandler.sendRequest;
+		depsMock.requestsHandler.sendRequest = vi.fn().mockImplementation(async (duid, method, params) => {
+			if (method === "get_timer") return timerResponse;
+			return originalSendRequest(duid, method, params);
+		});
+
+		await vacuumFeatures.updateTimers();
+
+		await mockAdapter.expectState(`Devices.${mockRobot.duid}.schedules.timer_id_1.enabled`, { val: true });
+		// `disable` is a known off spelling - the app's own - and stays off.
+		await mockAdapter.expectState(`Devices.${mockRobot.duid}.schedules.timer_id_2.enabled`, { val: false });
+	});
+
 	it("keeps the enabled switch writable so it can be toggled", async () => {
 		await vacuumFeatures.updateTimers();
 
@@ -110,5 +132,100 @@ describe("Schedule (Timer) Verification", () => {
 	it("rejects an upd_timer for an unknown timer id", async () => {
 		const result = await depsMock.requestsHandler.sendRequest(mockRobot.duid, "upd_timer", ["does_not_exist", "off"]);
 		expect(result).toEqual(["unknown_id"]);
+	});
+
+	describe("deleting a schedule", () => {
+		it("publishes where each schedule lives and a button to remove it", async () => {
+			await vacuumFeatures.updateTimers();
+			const timerId = mockRobot.timers[0][0];
+
+			await mockAdapter.expectState(`Devices.${mockRobot.duid}.schedules.${timerId}.source`, { val: "device" });
+
+			const button = await mockAdapter.getObjectAsync(`Devices.${mockRobot.duid}.schedules.${timerId}.delete`);
+			expect(button.common.write).toBe(true);
+			expect(button.common.role).toBe("button");
+			expect(button.common.type).toBe("boolean");
+		});
+
+		it("sends del_timer with the very id get_timer reported, and takes the object away", async () => {
+			await vacuumFeatures.updateTimers();
+			const timerId = mockRobot.timers[0][0];
+			mockRobot.seen.length = 0;
+
+			const result = await vacuumFeatures.deleteSchedule(timerId, "device");
+
+			expect(result.outcome).toBe("confirmed");
+			// A65:582570-582583 hands the wrapper one argument, and A65:582378 proves that argument is
+			// get_timer row index 0 - the same string the folder is named after.
+			expect(mockRobot.seen.find((call) => call.method === "del_timer")?.params).toEqual([timerId]);
+			expect(mockRobot.timers.some((entry: any[]) => entry[0] === timerId)).toBe(false);
+			expect(await mockAdapter.getObjectAsync(`Devices.${mockRobot.duid}.schedules.${timerId}.delete`)).toBeFalsy();
+		});
+
+		it("sends del_server_timer for a schedule that lives on the server", async () => {
+			mockRobot.serverTimers = [["1743140136890", "on", -1]];
+			await vacuumFeatures.updateTimers();
+			await mockAdapter.expectState(`Devices.${mockRobot.duid}.schedules.1743140136890.source`, { val: "server" });
+			mockRobot.seen.length = 0;
+
+			const result = await vacuumFeatures.deleteSchedule("1743140136890", "server");
+
+			expect(result.outcome).toBe("confirmed");
+			expect(mockRobot.seen.find((call) => call.method === "del_server_timer")?.params).toEqual(["1743140136890"]);
+			expect(mockRobot.seen.some((call) => call.method === "del_timer")).toBe(false);
+			expect(mockRobot.serverTimers).toEqual([]);
+		});
+
+		it("says on the button that the copy in the Roborock account stays", async () => {
+			mockAdapter.translations = {};
+			mockRobot.serverTimers = [["1743140136890", "on", -1]];
+			await vacuumFeatures.updateTimers();
+
+			const serverButton = await mockAdapter.getObjectAsync(`Devices.${mockRobot.duid}.schedules.1743140136890.delete`);
+			expect(String(serverButton.common.desc)).toMatch(/Roborock account stays/);
+
+			const deviceButton = await mockAdapter.getObjectAsync(`Devices.${mockRobot.duid}.schedules.${mockRobot.timers[0][0]}.delete`);
+			expect(String(deviceButton.common.desc)).not.toMatch(/Roborock account stays/);
+		});
+
+		it("keeps the schedule when the robot still lists it afterwards", async () => {
+			await vacuumFeatures.updateTimers();
+			const timerId = mockRobot.timers[0][0];
+
+			// The robot answers the delete and changes nothing - the silent case this project keeps
+			// finding. Only the list read afterwards can tell, which is why the answer is not the test.
+			const original = depsMock.requestsHandler.sendRequest;
+			depsMock.requestsHandler.sendRequest = async (duid: string, method: string, params: any[]) =>
+				method === "del_timer" ? ["ok"] : original(duid, method, params);
+
+			const result = await vacuumFeatures.deleteSchedule(timerId, "device");
+
+			expect(result.outcome).toBe("ineffective");
+			expect(await mockAdapter.getObjectAsync(`Devices.${mockRobot.duid}.schedules.${timerId}.delete`)).toBeTruthy();
+		});
+
+		it("reports 'unknown' rather than success when the list read fails", async () => {
+			await vacuumFeatures.updateTimers();
+			const timerId = mockRobot.timers[0][0];
+
+			const original = depsMock.requestsHandler.sendRequest;
+			depsMock.requestsHandler.sendRequest = async (duid: string, method: string, params: any[]) => {
+				if (method === "get_timer") throw new Error("Timeout");
+				return original(duid, method, params);
+			};
+
+			const result = await vacuumFeatures.deleteSchedule(timerId, "device");
+
+			expect(result.outcome).toBe("no_answer");
+			expect(await mockAdapter.getObjectAsync(`Devices.${mockRobot.duid}.schedules.${timerId}.delete`)).toBeTruthy();
+		});
+
+		it("does not send anything for an id that could escape its path", async () => {
+			mockRobot.seen.length = 0;
+			const result = await vacuumFeatures.deleteSchedule("../../other", "device");
+
+			expect(result.outcome).toBe("not_sent");
+			expect(mockRobot.seen).toEqual([]);
+		});
 	});
 });

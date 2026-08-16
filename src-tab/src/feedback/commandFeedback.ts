@@ -20,10 +20,16 @@
  * `floors` is narrowed to the load button for the same reason: the room selection lives beside it
  * and is written on every click.
  *
+ * `schedules` is narrowed to the delete button, and that one is worth watching where the switch
+ * beside it is not: a delete that did not take leaves the schedule standing and says why only here -
+ * `del_timer` has no answer of its own, so the adapter re-reads the robot's list and marks the button
+ * with what it found. A refused switch corrects itself visibly instead, because the adapter re-reads
+ * the timers and the switch springs back to what the robot really does.
+ *
  * A command in some other folder is not watched, which costs nothing: this is about the commands
  * *this page* sends, and it sends to exactly these.
  */
-export const WATCHED_COMMAND_PATTERNS: readonly string[] = ["commands.*", "settings.*", "resetConsumables.*", "floors.*.load"];
+export const WATCHED_COMMAND_PATTERNS: readonly string[] = ["commands.*", "settings.*", "resetConsumables.*", "floors.*.load", "schedules.*.delete"];
 
 /**
  * Builds the state patterns to watch for one device.

@@ -49,6 +49,12 @@ export const GET_SERVER_TIMER = "get_server_timer";
  *
  * `off` is here because that is the vocabulary `upd_timer` uses for the device timers
  * (`PROJECT_STATE.md`, round 2: `params: [timerId, "on"|"off"]`).
+ *
+ * **Both lists are read with this set**, and that is the point of it. The evidence does not divide
+ * along the two lists either: `disable` comes from the app, which reads it out of *device* timer
+ * rows as well (`row[1] === 'disable'`, A65:582384-582389), and `on` is what a *server* entry
+ * answered on the test device. Splitting the question in two would mean one of the readers asking
+ * it the unsafe way round again.
  */
 const INACTIVE_STATES = new Set(["disable", "off"]);
 
@@ -70,8 +76,15 @@ export interface ServerTimerEntry {
 	raw: string;
 }
 
-/** True when the state field is not one of the known "off" spellings. */
-export function isServerTimerActive(state: unknown): boolean {
+/**
+ * True when the state field is not one of the known "off" spellings.
+ *
+ * Used for both timer lists - see {@link INACTIVE_STATES} for why it asks the question this way
+ * round, and why the answer must not differ between them.
+ * @param state The state field of a row, as the robot reported it.
+ * @returns True unless it is a known "off" spelling.
+ */
+export function isTimerActive(state: unknown): boolean {
 	if (typeof state !== "string") return true;
 	return !INACTIVE_STATES.has(state.trim().toLowerCase());
 }
@@ -106,7 +119,7 @@ export function parseServerTimerList(response: unknown): ServerTimerEntry[] {
 		const state = typeof row[1] === "string" ? row[1] : "";
 		entries.push({
 			id: identifier,
-			active: isServerTimerActive(row[1]),
+			active: isTimerActive(row[1]),
 			state,
 			raw: JSON.stringify(row),
 		});

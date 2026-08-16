@@ -42,6 +42,12 @@ describe("state subscriptions cover every writable state", () => {
 		expect(isWatched("Devices.duid1.floors.0.load")).toBe(true);
 	});
 
+	it("watches the button that deletes a schedule", () => {
+		// It sits one level below the folder, exactly like the switch beside it. A button that is not
+		// subscribed is the fault this whole test file exists for.
+		expect(isWatched("Devices.duid1.schedules.1749184337669.delete")).toBe(true);
+	});
+
 	it("watches the already working write surfaces", () => {
 		expect(isWatched("Devices.duid1.commands.app_start")).toBe(true);
 		expect(isWatched("Devices.duid1.resetConsumables.reset_main_brush")).toBe(true);

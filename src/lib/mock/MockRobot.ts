@@ -13,6 +13,14 @@ export class MockRobot {
 	public roomMapping: any[];
 	public timers: any[];
 
+	/**
+	 * The schedules this robot keeps on Roborock's server, in the shape `get_server_timer` reports:
+	 * `[[id, state, -1], …]`. Empty by default, because the two lists are alternatives - the test
+	 * device answers `get_timer` with `[]` and has its schedule here, and a robot on the other branch
+	 * does the reverse (`serverTimers.ts`).
+	 */
+	public serverTimers: any[] = [];
+
 	/** Ordered segment ids of the cleaning sequence; empty means "robot decides". */
 	public cleanSequence: number[] = [];
 
@@ -106,6 +114,12 @@ export class MockRobot {
 				return this.timers;
 			case "upd_timer":
 				return this.handleUpdTimer(params);
+			case "get_server_timer":
+				return this.serverTimers;
+			case "del_timer":
+				return this.handleDelTimer(this.timers, params);
+			case "del_server_timer":
+				return this.handleDelTimer(this.serverTimers, params);
 			case "app_start":
 				this.updateState({ state: 5, in_cleaning: 1 }); // 5 = Cleaning
 				return ["ok"];
@@ -253,6 +267,25 @@ export class MockRobot {
 	 * `upd_timer` flips an existing timer on/off: params are `[timerId, "on"|"off"]`, answer `["ok"]`.
 	 * @param params Raw request params.
 	 */
+	/**
+	 * `del_timer` and `del_server_timer` remove one entry: params are `[timerId]`.
+	 *
+	 * The answer is deliberately `["ok"]` and deliberately not what the adapter judges by. The app
+	 * never reads either answer (`timerDeletion.ts` section 3), so nothing about its shape is proven;
+	 * the mock has to answer something, and the test that matters checks the list afterwards.
+	 *
+	 * @param list   The list to remove from.
+	 * @param params Raw request params.
+	 */
+	private handleDelTimer(list: any[], params: any[]): any[] {
+		const [timerId] = params;
+		const index = list.findIndex((entry) => Array.isArray(entry) && String(entry[0]) === String(timerId));
+		if (index < 0) return ["unknown_id"];
+
+		list.splice(index, 1);
+		return ["ok"];
+	}
+
 	private handleUpdTimer(params: any[]): any[] {
 		const [timerId, mode] = params;
 		if (mode !== "on" && mode !== "off") return ["invalid_params"];

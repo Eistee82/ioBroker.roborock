@@ -6,7 +6,17 @@ import { StationService } from "./services/StationService";
 import { V1ConsumableService } from "./services/V1ConsumableService";
 import { V1MapService } from "./services/V1MapService";
 import { CapabilityProbe } from "../capabilityProbe";
-import { GET_SERVER_TIMER, parseServerTimerList } from "./serverTimers";
+import { GET_SERVER_TIMER, isTimerActive, parseServerTimerList } from "./serverTimers";
+import {
+	TIMER_SOURCE_DEVICE,
+	TIMER_SOURCE_SERVER,
+	deleteMethodForSource,
+	isSendableTimerId,
+	listMethodForSource,
+	timerIsGone
+} from "./timerDeletion";
+import type { ScheduleDeleteResult } from "./timerDeletion";
+import type { TimerSource } from "./timerDeletion";
 import {
 	CLOSE_DND_TIMER,
 	DND_ENABLED_FIELD,
@@ -84,7 +94,9 @@ import { FEATURE_INFO_FIELDS, FEATURE_STR_FIELD, INIT_STATUS_METHOD, readFeature
 import { floorFolderId, groupSelectedRoomsByMapFlag, normalizeMapFlag, sortRoomIds } from "../../map/roomKey";
 import { CommandVerifier, VERIFIABLE_SET_COMMANDS } from "./commandVerification";
 import type { CommandVerificationResult } from "./commandVerification";
+import { classifyRequestFailure, isShutdownFailure } from "../../commandFeedback";
 import type { CommandOutcome } from "../../commandFeedback";
+import { isChannelUnavailableError } from "../../requestPolicy";
 
 // --- Shared Constants ---
 // These are the *selectable* levels: what a model profile offers in its pickers. The markers the
@@ -1556,6 +1568,9 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	 * `enabled` is writable; writes are picked up in main.ts (`handleScheduleToggle`) and sent to
 	 * the robot as `upd_timer [timerId, "on"|"off"]`. `cron` stays read-only – changing a
 	 * schedule's time needs `set_timer`, which rewrites the whole timer and is not implemented.
+	 *
+	 * `delete` removes the schedule for good; `source` says which of the two delete commands applies.
+	 * Both are explained in `timerDeletion.ts`.
 	 */
 	public async updateTimers(): Promise<void> {
 		try {
@@ -1566,7 +1581,9 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 					// timer structure: [id, enabled, [cron, [cmd, params], createTime]]
 					if (Array.isArray(timer) && timer.length >= 3) {
 						const id = timer[0];
-						const enabled = timer[1] === "on";
+						// Asked as "not one of the known off spellings", the same way round as the server
+						// list - a third spelling would otherwise show a running schedule as switched off.
+						const enabled = isTimerActive(timer[1]);
 						const segments = timer[2];
 						const cron = Array.isArray(segments) ? segments[0] : "";
 
@@ -1577,6 +1594,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 						await this.deps.ensureState(`Devices.${this.duid}.schedules.${id}.cron`, { name: "CRON", type: "string", role: "text", write: false });
 						await this.deps.adapter.setStateChanged(`Devices.${this.duid}.schedules.${id}.cron`, { val: cron, ack: true });
+
+						await this.publishScheduleSourceAndDelete(String(id), TIMER_SOURCE_DEVICE);
 					}
 				}));
 			}
@@ -1615,11 +1634,10 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 				await this.deps.ensureState(`${folder}.enabled`, { name: "Enabled", type: "boolean", role: "indicator", write: false });
 				await this.deps.adapter.setStateChanged(`${folder}.enabled`, { val: entry.active, ack: true });
 
-				await this.deps.ensureState(`${folder}.source`, { name: "Where this schedule lives", type: "string", role: "text", write: false });
-				await this.deps.adapter.setStateChanged(`${folder}.source`, { val: "server", ack: true });
-
 				await this.deps.ensureState(`${folder}.raw`, { name: "Entry as reported", type: "string", role: "json", write: false });
 				await this.deps.adapter.setStateChanged(`${folder}.raw`, { val: entry.raw, ack: true });
+
+				await this.publishScheduleSourceAndDelete(entry.id, TIMER_SOURCE_SERVER);
 			}
 
 			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined,
@@ -1631,6 +1649,138 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			// itself, which is the other half of the same branch.
 			this.deps.adapter.rLog("System", this.duid, "Debug", "1.0", undefined,
 				`No server-side schedules read: ${this.deps.adapter.errorMessage(e)}`, "debug");
+		}
+	}
+
+	/** English fallback of the note the delete button carries; see `schedule_delete_hint`. */
+	private static readonly SCHEDULE_DELETE_HINT_EN = "Removes this schedule for good. It cannot be undone from here - the robot keeps no copy, and the adapter can only set a schedule's switch, not write one back.";
+
+	/**
+	 * English fallback of the extra note a server-side schedule carries; see
+	 * `schedule_delete_server_hint`.
+	 */
+	private static readonly SCHEDULE_DELETE_SERVER_HINT_EN = "This schedule lives on Roborock's server. The adapter deletes the robot's half of it; the copy in the Roborock account stays, so the phone app will keep listing this schedule and will show it as switched on.";
+
+	/**
+	 * Publishes where a schedule lives and the button that removes it.
+	 *
+	 * The `source` state is not decoration: it is what decides which of the two delete commands is
+	 * sent, and putting it in the object tree means the branch can be read off the device instead of
+	 * being reasoned about. Which value it gets is not computed from a feature bit but from the read
+	 * that produced the entry - see `timerDeletion.ts`.
+	 *
+	 * The button exists **only** where a schedule exists, which is the whole capability test. A robot
+	 * that has no schedule of a kind is never offered a way to delete one, and one that answered the
+	 * matching list at all has met exactly the criterion `capabilityProbe.ts` applies: a list answer
+	 * counts as "the robot has this".
+	 *
+	 * @param timerId Identifier of the schedule, as the robot reported it.
+	 * @param source  Which of the two lists produced it.
+	 */
+	private async publishScheduleSourceAndDelete(timerId: string, source: TimerSource): Promise<void> {
+		const folder = `Devices.${this.duid}.schedules.${timerId}`;
+		const translations = this.deps.adapter.translations;
+
+		await this.deps.ensureState(`${folder}.source`, { name: "Where this schedule lives", type: "string", role: "text", write: false });
+		await this.deps.adapter.setStateChanged(`${folder}.source`, { val: source, ack: true });
+
+		let hint = translations["schedule_delete_hint"] || V1VacuumFeatures.SCHEDULE_DELETE_HINT_EN;
+		if (source === TIMER_SOURCE_SERVER) {
+			hint = `${hint} ${translations["schedule_delete_server_hint"] || V1VacuumFeatures.SCHEDULE_DELETE_SERVER_HINT_EN}`;
+		}
+
+		await this.deps.ensureState(`${folder}.delete`, {
+			name: translations["schedule_delete"] || "Delete this schedule",
+			type: "boolean",
+			role: "button",
+			write: true,
+			def: false,
+			desc: hint
+		});
+	}
+
+	/**
+	 * Removes one schedule and reports whether it is really gone.
+	 *
+	 * The command itself is one line; everything around it is the confirmation. Neither `del_timer`
+	 * nor `del_server_timer` has a documented answer - the app logs the result and carries on
+	 * (A65:582583-582600, A65:446232-446250) - so the robot's own list is asked again, and only its
+	 * silence about the identifier counts as a deletion. See `timerDeletion.ts` section 3.
+	 *
+	 * The object is removed only once that test passed. A schedule that is still on the robot keeps
+	 * its folder, because a control that vanishes while the schedule keeps running is the worst of
+	 * the possible outcomes.
+	 *
+	 * @param timerId Identifier of the schedule.
+	 * @param source  Which list it came from.
+	 * @returns What became of it, in the vocabulary of `commandFeedback.ts`.
+	 */
+	public async deleteSchedule(timerId: string, source: TimerSource): Promise<ScheduleDeleteResult> {
+		if (!isSendableTimerId(timerId)) {
+			return { outcome: "not_sent", detail: "the schedule id is not a usable identifier" };
+		}
+
+		const startedAt = Date.now();
+		const method = deleteMethodForSource(source);
+		try {
+			this.deps.adapter.rLog("Requests", this.duid, "Info", "1.0", undefined,
+				`[scheduleDelete] Sending ${method} for ${timerId}`, "info");
+			await this.deps.adapter.requestsHandler.sendRequest(this.duid, method, [timerId]);
+		} catch (e: unknown) {
+			const message = this.deps.adapter.errorMessage(e);
+			if (isShutdownFailure(message)) return { outcome: "error", detail: message };
+			const outcome = classifyRequestFailure(message, isChannelUnavailableError(e));
+			return { outcome, detail: outcome === "error" ? message : undefined };
+		}
+
+		// The honest test: ask the list again. A read that fails says nothing about the deletion, so it
+		// is reported as "unknown", not as success.
+		const listMethod = listMethodForSource(source);
+		let listing: unknown;
+		try {
+			listing = await this.deps.adapter.requestsHandler.sendRequest(this.duid, listMethod, []);
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("Requests", this.duid, "Warn", "1.0", undefined,
+				`[scheduleDelete] ${method} was sent, but ${listMethod} did not answer: ${this.deps.adapter.errorMessage(e)}`, "warn");
+			return {
+				outcome: "no_answer",
+				detail: `${listMethod} did not answer, so whether the schedule is gone is unknown`
+			};
+		}
+
+		if (!timerIsGone(listing, timerId)) {
+			this.deps.adapter.rLog("Requests", this.duid, "Warn", "1.0", undefined,
+				`[scheduleDelete] ${method} was sent for ${timerId}, but ${listMethod} still lists it; the schedule was kept.`, "warn");
+			return {
+				outcome: "ineffective",
+				extraArgs: [`${Math.max(1, Math.round((Date.now() - startedAt) / 1000))}s`, "this schedule"]
+			};
+		}
+
+		await this.removeScheduleObject(timerId);
+		if (source === TIMER_SOURCE_SERVER) {
+			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined,
+				`Schedule ${timerId} is gone from the robot. It lived on Roborock's server, and only the robot's half was deleted - `
+				+ "the copy in the Roborock account stays, so the phone app will keep listing it and will show it as switched on.",
+				"info");
+		}
+		return { outcome: "confirmed" };
+	}
+
+	/**
+	 * Takes the schedule's folder out of the object tree once the robot no longer lists it.
+	 * @param timerId Identifier of the schedule.
+	 */
+	private async removeScheduleObject(timerId: string): Promise<void> {
+		const folder = `Devices.${this.duid}.schedules.${timerId}`;
+		try {
+			await this.deps.adapter.delObjectAsync(folder, { recursive: true });
+			this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined, `Schedule ${timerId} deleted; removed ${folder}.`, "info");
+		} catch (e: unknown) {
+			// The schedule really is gone from the robot; a leftover folder is untidy, not wrong, and
+			// the next timer read will not bring it back.
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
+				`Schedule ${timerId} was deleted on the robot, but ${folder} could not be removed: ${this.deps.adapter.errorMessage(e)}`, "warn");
 		}
 	}
 

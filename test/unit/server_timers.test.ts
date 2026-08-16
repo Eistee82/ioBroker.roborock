@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isServerTimerActive, parseServerTimerList } from "../../src/lib/features/vacuum/serverTimers";
+import { isTimerActive, parseServerTimerList } from "../../src/lib/features/vacuum/serverTimers";
 
 /**
  * Reading the schedules a robot keeps on Roborock's server.
@@ -10,29 +10,32 @@ import { isServerTimerActive, parseServerTimerList } from "../../src/lib/feature
  * the test device answered `"on"`. A third spelling nobody has seen is therefore possible, so the
  * check asks whether the state is one of the known **off** words - never whether it equals `"on"`.
  * An unknown word then reads as "on", which is the error that can be noticed.
+ *
+ * The same test now serves the **device** list as well (`v1VacuumFeatures.updateTimers`), which
+ * asked for equality with `"on"` until then; `schedules.test.ts` pins that side of it.
  */
 
 describe("reading the on/off state", () => {
 	it("treats the two known off spellings as off", () => {
 		// 'disable' is what the app itself tests for; 'off' is the vocabulary upd_timer uses.
-		expect(isServerTimerActive("disable")).toBe(false);
-		expect(isServerTimerActive("off")).toBe(false);
-		expect(isServerTimerActive("DISABLE")).toBe(false);
-		expect(isServerTimerActive(" off ")).toBe(false);
+		expect(isTimerActive("disable")).toBe(false);
+		expect(isTimerActive("off")).toBe(false);
+		expect(isTimerActive("DISABLE")).toBe(false);
+		expect(isTimerActive(" off ")).toBe(false);
 	});
 
 	it("treats the measured value as on", () => {
-		expect(isServerTimerActive("on")).toBe(true);
+		expect(isTimerActive("on")).toBe(true);
 	});
 
 	it("treats a spelling nobody has seen as on, not as off", () => {
 		// The whole point: comparing against "on" would call these switched off, and a schedule
 		// wrongly shown as off is the error nobody notices.
-		expect(isServerTimerActive("enabled")).toBe(true);
-		expect(isServerTimerActive("1")).toBe(true);
-		expect(isServerTimerActive("active")).toBe(true);
-		expect(isServerTimerActive(1)).toBe(true);
-		expect(isServerTimerActive(undefined)).toBe(true);
+		expect(isTimerActive("enabled")).toBe(true);
+		expect(isTimerActive("1")).toBe(true);
+		expect(isTimerActive("active")).toBe(true);
+		expect(isTimerActive(1)).toBe(true);
+		expect(isTimerActive(undefined)).toBe(true);
 	});
 });
 
