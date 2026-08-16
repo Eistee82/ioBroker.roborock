@@ -495,7 +495,12 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	 * background, walls, markers - belongs to the admin's light or dark mode.
 	 */
 	const scenePalette = useMemo<ScenePalette>(() => ({
-		background: theme.palette.background.default,
+		// The ground around the flat, and it is **the map's** ground rather than the admin page's.
+		// `theme.palette.background.default` is the colour of the surrounding admin, which in the
+		// dark theme is near-black - so the 3D view came out black around the rooms while the 2D
+		// view beside it showed the map's own ground. One surface, one colour: this is the same
+		// `--rr-map-ground` that `.rr-root` paints behind the 2D map.
+		background: theme.palette.mode === "dark" ? "#0b111b" : "#dfe9f7",
 		wall: theme.palette.mode === "dark" ? "#5a6270" : "#b8bec9",
 		robot: theme.palette.primary.main,
 		charger: theme.palette.mode === "dark" ? "#8f96a3" : "#7c8494",

@@ -165,11 +165,14 @@ export function buildScene(
 	models?: Record<string, RoborockModel> | null
 ): BuiltScene {
 	const scene = new three.Scene();
-	// No background of its own. The renderer clears to transparent and the panel behind the canvas
-	// supplies the colour, which is the tab's own and therefore already correct in both themes -
-	// see the note at the renderer in `Map3DView`. `palette.background` is kept because the
-	// callers pass a full palette and because a future offscreen render would need it.
-	scene.background = null;
+	// The scene paints the ground itself, in the map's own colour rather than the admin page's -
+	// see `scenePalette` in `MapView`, where taking the wrong one of the two turned the area
+	// around the rooms black in the dark theme.
+	//
+	// Painted here **and** left transparent at the renderer: a canvas asked for an alpha buffer
+	// does not always get one, and a clear colour of transparent black then arrives as plain
+	// black. With the scene carrying the colour, the picture is right either way.
+	scene.background = new three.Color(palette.background);
 
 	const disposables: Array<{ dispose: () => void }> = [];
 	const centre = { x: model.width / 2, z: model.height / 2 };
