@@ -111,9 +111,13 @@ export class CanvasMapRenderer implements IMapRenderer {
 	/**
 	 * The map with everything that **lies on** the floor, and nothing that **stands in** the room.
 	 *
-	 * On it: carpet, the driven path, the mopped band, the detected objects and the room labels.
-	 * Off it: no-go and no-mop zones, virtual walls, the active cleaning zone, the predicted route,
-	 * the robot, the dock and the go-to pin.
+	 * On it: carpet, the driven path, the mopped band, the predicted route, the detected objects and
+	 * the room labels. Off it: no-go and no-mop zones, virtual walls, the active cleaning zone, the
+	 * robot, the dock and the go-to pin.
+	 *
+	 * The line runs between "a marking of the floor" and "a thing standing in the room". The route
+	 * and the pin it leads to fall on opposite sides of it: the route is a line drawn on the ground,
+	 * the pin is a marker meant to be seen upright.
 	 *
 	 * That split exists for the 3D view, whose floor is textured with a map picture while the robot,
 	 * the dock, the zones and the walls are bodies standing on it. `mapBase64Clean` leaves it with
@@ -415,27 +419,32 @@ export class CanvasMapRenderer implements IMapRenderer {
 
 	drawPredictedPath(input: DrawPredictedPathInput): void {
 		if (!input.points.length) return;
-		this.ctx.lineWidth = input.lineWidth;
-		this.ctx.strokeStyle = input.stroke;
-		this.ctx.setLineDash(input.dashArray);
-		this.ctx.lineCap = "round";
-		this.ctx.beginPath();
-		let lastX = -1,
-			lastY = -1;
-		input.points.forEach((p, index) => {
-			if (index === 0) {
-				this.ctx.fillStyle = "rgba(255, 255, 255, 1)";
-				this.ctx.fillRect(p.x, p.y, (1 * VISUAL_BLOCK_SIZE) / 2, (1 * VISUAL_BLOCK_SIZE) / 2);
-				this.ctx.moveTo(p.x, p.y);
-			} else if (p.x !== lastX || p.y !== lastY) {
-				this.ctx.lineTo(p.x, p.y);
-			}
-			lastX = p.x;
-			lastY = p.y;
-		});
-		this.ctx.stroke();
-		this.ctx.setLineDash([]);
-		this.ctx.lineCap = "butt";
+		// On the surface as well, unlike the go-to pin it leads to. The pin is a marker meant to stand
+		// upright and reads wrong lying flat; the route to it is a line on the floor, like the driven
+		// path beside it, and 3D gives it no body of its own to be doubled against.
+		for (const ctx of this.surfaceTargets()) {
+			ctx.lineWidth = input.lineWidth;
+			ctx.strokeStyle = input.stroke;
+			ctx.setLineDash(input.dashArray);
+			ctx.lineCap = "round";
+			ctx.beginPath();
+			let lastX = -1,
+				lastY = -1;
+			input.points.forEach((p, index) => {
+				if (index === 0) {
+					ctx.fillStyle = "rgba(255, 255, 255, 1)";
+					ctx.fillRect(p.x, p.y, (1 * VISUAL_BLOCK_SIZE) / 2, (1 * VISUAL_BLOCK_SIZE) / 2);
+					ctx.moveTo(p.x, p.y);
+				} else if (p.x !== lastX || p.y !== lastY) {
+					ctx.lineTo(p.x, p.y);
+				}
+				lastX = p.x;
+				lastY = p.y;
+			});
+			ctx.stroke();
+			ctx.setLineDash([]);
+			ctx.lineCap = "butt";
+		}
 	}
 }
 

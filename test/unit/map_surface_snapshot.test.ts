@@ -172,6 +172,17 @@ describe("the surface picture carries what lies on the floor", () => {
 		expect(named.surface).not.toBe(without.surface);
 		expect(named.full).not.toBe(without.full);
 	});
+
+	it("gains the predicted route, although the pin it leads to stays off", async () => {
+		// The one case on the line between the two sets. The route is a line drawn on the ground,
+		// like the driven path beside it, and 3D gives it no body to be doubled against; the pin is
+		// a marker meant to be seen upright and reads wrong lying flat. They go opposite ways.
+		const without = await render();
+		const withRoute = await render({ GOTO_PREDICTED_PATH: { points: [[200, 500], [900, 500]] } });
+
+		expect(withRoute.surface).not.toBe(without.surface);
+		expect(withRoute.full).not.toBe(without.full);
+	});
 });
 
 describe("the surface picture carries nothing the 3D view draws as a body", () => {
@@ -201,9 +212,6 @@ describe("the surface picture carries nothing the 3D view draws as a body", () =
 	mustStayOff("the robot", { ROBOT_POSITION: { position: [300, 300], angle: 0 } });
 	mustStayOff("the dock", { CHARGER_LOCATION: { position: [900, 300], angle: 0 } });
 	mustStayOff("the go-to pin", { GOTO_TARGET: [700, 500] });
-	mustStayOff("the predicted route to the go-to pin", {
-		GOTO_PREDICTED_PATH: { points: [[200, 500], [900, 500]] }
-	});
 });
 
 describe("the surface picture is only produced when it is asked for", () => {
