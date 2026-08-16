@@ -36,6 +36,7 @@ const HISTORY: CleaningHistoryModel = {
 		{ key: "clean_count", name: "clean_count", value: 190, unit: "" },
 	],
 	runs: [run(), run({ index: 1, startedAt: 1764939602, finished: false, finishReason: 60 })],
+	canDelete: false,
 };
 
 function renderPanel(history: CleaningHistoryModel | null) {
@@ -59,7 +60,7 @@ describe("HistoryPanel", () => {
 		renderPanel(null);
 		expect(screen.queryByText(I18n.t("ui_history"))).toBeNull();
 
-		renderPanel({ summary: [], runs: [] });
+		renderPanel({ summary: [], runs: [], canDelete: false });
 		expect(screen.queryByText(I18n.t("ui_history"))).toBeNull();
 	});
 
@@ -91,7 +92,7 @@ describe("HistoryPanel", () => {
 	});
 
 	it("shows the bare code for a type Roborock's table does not list", () => {
-		renderPanel({ summary: [], runs: [run({ cleanType: 42 })] });
+		renderPanel({ summary: [], runs: [run({ cleanType: 42 })], canDelete: false });
 		expand();
 		expect(screen.getByText("42")).toBeTruthy();
 	});
@@ -106,13 +107,13 @@ describe("HistoryPanel", () => {
 	});
 
 	it("says so when the device reports totals but no single run", () => {
-		renderPanel({ summary: HISTORY.summary, runs: [] });
+		renderPanel({ summary: HISTORY.summary, runs: [], canDelete: false });
 		expand();
 		expect(screen.getByText(I18n.t("ui_history_empty"))).toBeTruthy();
 	});
 
 	it("shows a bare number for a total the adapter declared no unit for", () => {
-		renderPanel({ summary: [{ key: "clean_count", name: "clean_count", value: 190, unit: "" }], runs: [] });
+		renderPanel({ summary: [{ key: "clean_count", name: "clean_count", value: 190, unit: "" }], runs: [], canDelete: false });
 		expand();
 		expect(screen.getByText("190")).toBeTruthy();
 	});

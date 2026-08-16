@@ -174,7 +174,9 @@ describe("CleaningHistorySource", () => {
 		await vi.advanceTimersByTimeAsync(600);
 		await settle();
 
-		expect((h.connection.getObjectViewSystem as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before + 1);
+		// Two views per reload, not one: the branch below `cleaningInfo`, and the single object that
+		// says whether this robot has a delete command at all.
+		expect((h.connection.getObjectViewSystem as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before + 2);
 	});
 
 	it("reports the scheme the adapter painted its maps in", async () => {
@@ -216,6 +218,8 @@ describe("CleaningHistorySource", () => {
 		h.source.setDevice("roborock.0", "duid1", "en");
 		await settle();
 
-		expect(h.models[h.models.length - 1]).toEqual({ summary: [], runs: [] });
+		// Including the delete command: a read that fails answers "no", because offering a control on
+		// a maybe is what the object check exists to prevent.
+		expect(h.models[h.models.length - 1]).toEqual({ summary: [], runs: [], canDelete: false });
 	});
 });

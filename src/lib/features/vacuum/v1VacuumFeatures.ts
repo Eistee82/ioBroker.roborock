@@ -37,7 +37,9 @@ import {
 	SET_DUST_COLLECTION_MODE,
 	STATUS_FIELD_TOGGLES,
 	STATUS_TOGGLES,
-	V1ProbedCapabilityService
+	V1ProbedCapabilityService,
+	statusToggleFor,
+	statusToggleGetterParams
 } from "./v1ProbedCapabilities";
 import type { StatusToggle } from "./v1ProbedCapabilities";
 import { CHANGE_SOUND_VOLUME, GET_SOUND_VOLUME, V1SoundVolumeService } from "./v1SoundVolume";
@@ -57,6 +59,7 @@ import {
 	APP_SET_CARPET_DEEP_CLEAN_STATUS,
 	V1CarpetDeepCleanService
 } from "./v1CarpetDeepClean";
+import { DEL_CLEAN_RECORD, V1CleanRecordDeleteService, parseRecordStartTime } from "./v1CleanRecordDelete";
 import {
 	APP_RC_END,
 	APP_RC_MOVE,
@@ -177,6 +180,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected offPeakService: V1OffPeakChargingService;
 	protected mopWashSettingsService: V1MopWashSettingsService;
 	protected carpetDeepCleanService: V1CarpetDeepCleanService;
+	protected cleanRecordDeleteService: V1CleanRecordDeleteService;
 
 	/**
 	 * Asks the robot which commands it knows, once per adapter run.
@@ -240,6 +244,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.offPeakService = new V1OffPeakChargingService(this.deps, this.duid);
 		this.mopWashSettingsService = new V1MopWashSettingsService(this.deps, this.duid);
 		this.carpetDeepCleanService = new V1CarpetDeepCleanService(this.deps, this.duid);
+		this.cleanRecordDeleteService = new V1CleanRecordDeleteService(this.deps, this.duid);
 		// Splitting or merging rooms renumbers the segments, so everything the adapter holds about
 		// them is stale the moment the robot confirms; the service asks for a refresh at that point.
 		this.mapEditService = new MapEditService(this.deps, this.duid, () => this.getCurrentMapIndex(), async () => {
@@ -819,6 +824,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			void this.readProbedValue(GET_SMART_WASH_PARAMS, {}, (r) => this.mopWashSettingsService.applySmartWashResponse(r));
 		} else if (finalMethod === APP_GET_CARPET_DEEP_CLEAN_STATUS) {
 			await this.carpetDeepCleanService.applyResponse(response);
+		} else if (finalMethod === DEL_CLEAN_RECORD) {
+			await this.verifyCleanRecordDeletion(params);
 		} else if (finalMethod === APP_SET_CARPET_DEEP_CLEAN_STATUS) {
 			void this.readProbedValue(APP_GET_CARPET_DEEP_CLEAN_STATUS, {}, (r) => this.carpetDeepCleanService.applyResponse(r));
 		} else if (finalMethod === GET_MULTI_MAPS_LIST && this.hasFeature(Feature.MapInventory)) {
@@ -1014,6 +1021,9 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		}
 
 		if (this.probedService.handles(method)) {
+			// Throws for the two settings the app holds back while the robot is out; nothing has been
+			// sent at that point, so the command state says `not_sent` with the reason on it.
+			this.refuseWhileRunning(method);
 			return this.probedService.buildCommandParams(method, params);
 		}
 
@@ -1035,6 +1045,10 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		if (this.mopWashSettingsService.handles(method)) {
 			return this.mopWashSettingsService.buildCommandParams(method, params);
+		}
+
+		if (this.cleanRecordDeleteService.handles(method)) {
+			return this.cleanRecordDeleteService.buildCommandParams(method, params);
 		}
 
 		if (this.carpetDeepCleanService.handles(method)) {
@@ -1319,6 +1333,14 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		await this.writeV1CleaningInfoJson(records, recordPayloads);
 		await this.syncV1CleanRecords(records, recordPayloads);
+
+		// The capability answer for deleting a run, and the guard for which run may be deleted. A
+		// probe is impossible here - it would be the deletion - so the question is whether the robot
+		// listed anything at all, the same construction the schedule switch uses. Applied after the
+		// states are written, so the timestamps the button needs already exist when it appears.
+		if (this.cleanRecordDeleteService.noteRecords(records)) {
+			await this.applyFeature(Feature.CleanRecordDelete);
+		}
 	}
 
 	private async fetchV1CleanRecordPayloads(records: number[]): Promise<Map<number, unknown>> {
@@ -1819,6 +1841,14 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		// The settings that have no getter: the packet is both the capability answer and the value.
 		await this.applyStatusFieldToggles(validStatus);
 
+		// Remembered, not published: two settings must not be written while the robot is out, and
+		// this is the field the app decides that from. `deviceStatus.in_fresh_state` is written by
+		// the generic loop below as before.
+		if (validStatus.in_fresh_state !== undefined && validStatus.in_fresh_state !== null) {
+			const parsed = Number(validStatus.in_fresh_state);
+			this.lastInFreshState = Number.isFinite(parsed) ? parsed : null;
+		}
+
 		if (validStatus.dss !== undefined) {
 			await this.updateDockingStationStatus(Number(validStatus.dss));
 			delete validStatus.dss;
@@ -2075,6 +2105,55 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	 * The switch is not in the status packet either, and a switch that shows "off" on a robot that
 	 * has it on would invite the user to turn on what is already running.
 	 */
+	/**
+	 * Publishes the button that deletes one run from the history.
+	 *
+	 * Nothing is read afterwards, unlike its neighbours: the run list this needs is the one that has
+	 * just been read, and it is what applied the feature in the first place.
+	 */
+	@BaseDeviceFeatures.DeviceFeature(Feature.CleanRecordDelete)
+	public async initCleanRecordDelete(): Promise<void> {
+		this.cleanRecordDeleteService.registerCommands((name, spec, group) => this.addCommand(name, spec, group));
+	}
+
+	/**
+	 * Judges a deletion by reading the history again.
+	 *
+	 * `del_clean_record` is not a `set_*`, so the answer check calls anything but a bare string
+	 * "accepted" - which means the robot replied and nothing more. For a deletion that is not enough,
+	 * so the list decides: gone means it worked, still there means it did not, and a summary that
+	 * cannot be read means unknown rather than either.
+	 *
+	 * @param params What really went on the wire, i.e. `[startTime]`.
+	 */
+	private async verifyCleanRecordDeletion(params: unknown): Promise<void> {
+		const startTime = parseRecordStartTime(Array.isArray(params) ? params[0] : params);
+		if (startTime === null) return;
+
+		const before = this.cleanRecordDeleteService.records.length;
+		try {
+			await this.updateCleanSummary();
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
+				`Deleted run ${startTime}, but the history could not be read back (${this.deps.adapter.errorMessage(e)}); whether it is gone is unknown.`, "warn");
+			return;
+		}
+
+		const remaining = this.cleanRecordDeleteService.records;
+		if (!this.cleanRecordDeleteService.isDeleted(startTime, remaining)) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
+				`The robot answered ${DEL_CLEAN_RECORD} for run ${startTime}, but still reports it. The run was not deleted.`, "warn");
+			return;
+		}
+
+		// The history is published as a dense list and the writer only ever moves entries forward, so
+		// a shorter list would otherwise leave the last folder showing the run that was deleted.
+		if (remaining.length < before) await this.cleanRecordDeleteService.pruneRecordFolders(remaining.length);
+
+		this.deps.adapter.rLog("System", this.duid, "Info", "1.0", undefined,
+			`Run ${startTime} is gone from the robot's history; ${remaining.length} left.`, "info");
+	}
+
 	@BaseDeviceFeatures.DeviceFeature(Feature.CarpetDeepClean)
 	public async initCarpetDeepClean(): Promise<void> {
 		this.carpetDeepCleanService.registerCommands((name, spec, group) => this.addCommand(name, spec, group));
@@ -2206,7 +2285,9 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		for (const toggle of STATUS_TOGGLES) {
 			if (this.folderOfCommand(toggle.setter)) continue;
 
-			const verdict = await this.capabilityProbe.probe(toggle.getter, []);
+			// Each getter is asked with exactly what its own wrapper sends; two of them build an
+			// empty object where the rest build an empty array.
+			const verdict = await this.capabilityProbe.probe(toggle.getter, statusToggleGetterParams(toggle));
 			if (verdict !== "capable") continue;
 
 			this.probedStatusToggles.add(toggle.setter);
@@ -2311,7 +2392,56 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 	/** Reads one on/off setting and publishes its position, swallowing failure. */
 	private async readStatusToggle(toggle: StatusToggle): Promise<void> {
-		await this.readProbedValue(toggle.getter, [], (response) => this.probedService.applyStatusToggleResponse(toggle, response));
+		await this.readProbedValue(toggle.getter, statusToggleGetterParams(toggle), (response) => this.probedService.applyStatusToggleResponse(toggle, response));
+	}
+
+	/**
+	 * Last `in_fresh_state` the robot reported, or null while none has arrived.
+	 *
+	 * Kept because two settings must not be written while the robot is out cleaning, and the robot
+	 * says so in a field the adapter already receives - see {@link isRobotRunning}.
+	 */
+	private lastInFreshState: number | null = null;
+
+	/**
+	 * Whether the robot is out on a job, by the app's own definition.
+	 *
+	 * `RSM.isRunning = (1 != status.in_fresh_state)` (A65:223255-223259), read off the same function
+	 * that fills `cleanArea`, `fanPower`, `battery` and a dozen other fields the test device really
+	 * sends - so the object being read there is the status packet, not something named like it.
+	 *
+	 * The test device reports `in_fresh_state` in every measured packet
+	 * (`_appanalysis/geraetefaehigkeiten-*.json`, `_appanalysis/local-mitschnitt.log`), with both
+	 * values occurring.
+	 *
+	 * @returns True while the robot is running, false while it is not, null while nothing is known.
+	 */
+	private isRobotRunning(): boolean | null {
+		if (this.lastInFreshState === null) return null;
+		return this.lastInFreshState !== 1;
+	}
+
+	/**
+	 * Refuses a setting the app would not send right now, before anything goes on the wire.
+	 *
+	 * Only for the settings whose entry says the app has that guard, and only when the robot has
+	 * actually said it is running. **A robot that has not reported `in_fresh_state` yet is not
+	 * stopped** - erring towards refusal there would disable two switches on every device that does
+	 * not carry the field, which is a guess in the expensive direction.
+	 *
+	 * @param method Command as it was registered.
+	 * @throws When the setting may not be written at the moment.
+	 */
+	private refuseWhileRunning(method: string): void {
+		const toggle = statusToggleFor(method);
+		if (!toggle?.refuseWhileRunning || method !== toggle.setter) return;
+		if (this.isRobotRunning() !== true) return;
+
+		throw new Error(
+			`${method} is not sent while the robot is cleaning: the Roborock app refuses it too (${toggle.fundstelle}). `
+			+ `Whether the firmware would reject or silently drop it was never observed, because the app never lets it happen. `
+			+ `Send it again once the robot is back in its dock.`
+		);
 	}
 
 	/**

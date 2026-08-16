@@ -9,6 +9,7 @@ import {
 	V1ProbedCapabilityService,
 	parseStatusToggleResponse,
 	statusToggleFor,
+	statusToggleGetterParams,
 	toggleShape
 } from "../../src/lib/features/vacuum/v1ProbedCapabilities";
 
@@ -198,8 +199,18 @@ describe("reading the position back", () => {
 });
 
 describe("the payload that goes on the wire", () => {
-	it.each(STATUS_TOGGLES.map((toggle) => [toggle.getter]))("sends %s an empty array", (getter) => {
-		expect(createService().buildCommandParams(getter, undefined)).toEqual({ method: getter, params: [] });
+	it.each(STATUS_TOGGLES.map((toggle) => [toggle.getter]))("sends %s exactly what its own wrapper sends", (getter) => {
+		// Not "an empty array for all of them", which is what this used to assert. Five wrappers build
+		// `new Array(0)` and two build `r1 = {}` (A65:228871 and A65:228523) - a generalisation from
+		// the first five that the next two disproved. The expectation therefore comes from the entry.
+		const toggle = STATUS_TOGGLES.find((entry) => entry.getter === getter)!;
+		expect(createService().buildCommandParams(getter, undefined)).toEqual({ method: getter, params: statusToggleGetterParams(toggle) });
+	});
+
+	it("tells the two empty shapes apart, because a robot does", () => {
+		expect(statusToggleGetterParams(STATUS_TOGGLES.find((entry) => entry.getter === "get_led_status")!)).toEqual([]);
+		expect(statusToggleGetterParams(STATUS_TOGGLES.find((entry) => entry.getter === "get_pet_supplies_deep_clean_status")!)).toEqual({});
+		expect(statusToggleGetterParams(STATUS_TOGGLES.find((entry) => entry.getter === "get_dirty_object_detect_status")!)).toEqual({});
 	});
 
 	it.each(STATUS_TOGGLES.map((toggle) => [toggle.setter, toggleShape(toggle)]))("sends %s a 1 or a 0 in its own shape (%s)", (setter, shape) => {
@@ -379,6 +390,61 @@ describe("who is offered one of these switches", () => {
 			"Devices.duid-test.settings.set_optimize_battery_status",
 			{ val: true, ack: true }
 		);
+	});
+
+	/**
+	 * The two settings the app holds back while the robot is out.
+	 *
+	 * The app wraps both in `if (RSM.isRunning) → abort` before anything goes out (A65:858688,
+	 * A65:858390, and the second dirt-detection call site A65:946370). What the firmware would do is
+	 * therefore **not observable from the app**, which is exactly why the guard is copied rather than
+	 * tried: a switch that quietly does nothing during a clean and reports success is the failure
+	 * this project keeps removing.
+	 *
+	 * `RSM.isRunning = (1 != status.in_fresh_state)`, A65:223255-223259.
+	 */
+	describe("the two settings that are not sent while the robot is out", () => {
+		const GUARDED = STATUS_TOGGLES.filter((toggle) => toggle.refuseWhileRunning).map((toggle) => toggle.setter);
+
+		it("guards exactly the two the app guards", () => {
+			expect(GUARDED).toEqual(["set_pet_supplies_deep_clean_status", "set_dirty_object_detect_status"]);
+		});
+
+		it.each(GUARDED)("refuses %s while the robot reports it is running", async (setter) => {
+			const vacuum = createVacuum();
+			await vacuum.runDetection();
+			await vacuum.processStatus({ state: 5, in_fresh_state: 0 });
+
+			await expect(vacuum.getCommandParams(setter, true)).rejects.toThrow(/not sent while the robot is cleaning/);
+		});
+
+		it.each(GUARDED)("sends %s once the robot is back", async (setter) => {
+			const vacuum = createVacuum();
+			await vacuum.runDetection();
+			await vacuum.processStatus({ state: 5, in_fresh_state: 0 });
+			await vacuum.processStatus({ state: 8, in_fresh_state: 1 });
+
+			await expect(vacuum.getCommandParams(setter, true)).resolves.toEqual({ method: setter, params: { status: 1 } });
+		});
+
+		it("does not refuse on a robot that never reported the field", async () => {
+			// Erring towards refusal here would disable both switches on every device that does not
+			// carry `in_fresh_state` - a guess in the expensive direction.
+			const vacuum = createVacuum();
+			await vacuum.runDetection();
+			await vacuum.processStatus({ state: 8 });
+
+			await expect(vacuum.getCommandParams(GUARDED[0], true)).resolves.toBeTruthy();
+		});
+
+		it("leaves the reading side alone, and the unguarded switches too", async () => {
+			const vacuum = createVacuum();
+			await vacuum.runDetection();
+			await vacuum.processStatus({ state: 5, in_fresh_state: 0 });
+
+			await expect(vacuum.getCommandParams("get_pet_supplies_deep_clean_status", undefined)).resolves.toBeTruthy();
+			await expect(vacuum.getCommandParams("set_optimize_battery_status", true)).resolves.toBeTruthy();
+		});
 	});
 
 	it("does not ask about a switch a model class already declared", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { HistoryDialog } from "./HistoryDialog";
 import type { CleaningRunModel } from "../history/historyTypes";
@@ -32,18 +32,21 @@ function run(over: Partial<CleaningRunModel> = {}): CleaningRunModel {
 	};
 }
 
-function renderDialog(model: CleaningRunModel | null, loaded: string | null = IMAGE) {
+function renderDialog(model: CleaningRunModel | null, loaded: string | null = IMAGE, canDelete = false) {
 	const loadMap = vi.fn().mockResolvedValue(loaded);
+	const onDelete = vi.fn();
 	render(
 		<HistoryDialog
 			run={model}
 			language="en"
 			mapColorScheme="light"
 			loadMap={loadMap}
+			canDelete={canDelete}
+			onDelete={onDelete}
 			onClose={vi.fn()}
 		/>,
 	);
-	return { loadMap };
+	return { loadMap, onDelete };
 }
 
 describe("HistoryDialog", () => {
@@ -89,5 +92,54 @@ describe("HistoryDialog", () => {
 		expect(screen.getByText(I18n.t("ui_history_more_values"))).toBeTruthy();
 		expect(screen.getByText("Avoid Count")).toBeTruthy();
 		expect(screen.getByText("50")).toBeTruthy();
+	});
+
+	/**
+	 * Deleting a run.
+	 *
+	 * A deleted run is gone from the robot for good - the adapter cannot write one back - so the
+	 * button asks first. The three tests below are all about *not* deleting: hidden where the robot
+	 * has no such command, nothing sent on the first press, nothing sent when the question is
+	 * answered with no.
+	 */
+	describe("the delete button", () => {
+		it("is absent on a robot that published no delete command", () => {
+			renderDialog(run(), IMAGE, false);
+			expect(screen.queryByText(I18n.t("ui_history_delete"))).toBeNull();
+		});
+
+		it("asks before it deletes, and sends nothing on the first press", async () => {
+			const { onDelete } = renderDialog(run(), IMAGE, true);
+
+			fireEvent.click(screen.getByText(I18n.t("ui_history_delete")));
+
+			expect(screen.getByText(I18n.t("ui_history_delete_confirm"))).toBeTruthy();
+			expect(onDelete).not.toHaveBeenCalled();
+		});
+
+		it("sends the run's own start timestamp on the second press", () => {
+			const { onDelete } = renderDialog(run({ startedAt: 1764939602 }), IMAGE, true);
+
+			fireEvent.click(screen.getByText(I18n.t("ui_history_delete")));
+			fireEvent.click(screen.getByText(I18n.t("ui_history_delete_yes")));
+
+			// `del_clean_record` names the run by when it began and by nothing else.
+			expect(onDelete).toHaveBeenCalledWith(1764939602);
+		});
+
+		it("sends nothing when the question is answered with no", () => {
+			const { onDelete } = renderDialog(run(), IMAGE, true);
+
+			fireEvent.click(screen.getByText(I18n.t("ui_history_delete")));
+			fireEvent.click(screen.getByText(I18n.t("ui_cancel")));
+
+			expect(onDelete).not.toHaveBeenCalled();
+			expect(screen.queryByText(I18n.t("ui_history_delete_confirm"))).toBeNull();
+		});
+
+		it("is absent for a run with no start timestamp, because that is the argument", () => {
+			renderDialog(run({ startedAt: null }), IMAGE, true);
+			expect(screen.queryByText(I18n.t("ui_history_delete"))).toBeNull();
+		});
 	});
 });

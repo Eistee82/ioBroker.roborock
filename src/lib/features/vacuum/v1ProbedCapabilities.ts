@@ -139,8 +139,35 @@ export interface StatusToggle {
 	 * the seven use; see {@link ToggleShape} for why the seventh needed a second one.
 	 */
 	shape?: ToggleShape;
+	/**
+	 * What the getter sends. Omitted means `[]`, which five of the nine use.
+	 *
+	 * Read off each wrapper rather than assumed: `get_pet_supplies_deep_clean_status` (A65:228871)
+	 * and `get_dirty_object_detect_status` (A65:228523) build `r1 = {}` where their neighbours build
+	 * `new Array(0)`. Sending the wrong empty thing is the kind of difference a robot answers with
+	 * `unknown_method`, which the probe would then read as "this robot cannot do it".
+	 */
+	getterParams?: "empty-object";
+	/**
+	 * Whether the app refuses to send this **setter** while the robot is out cleaning.
+	 *
+	 * Only set where the app really has that guard, and only for the two it has it on: both are
+	 * wrapped in `if (RSM.isRunning) → abort` before anything goes out (A65:858688-858689,
+	 * A65:858390-858391, and again at the second dirt-detection call site, A65:946370-946371).
+	 *
+	 * **What the firmware does in that case is not known** - the app never lets it happen, so no
+	 * answer was ever observed. That is exactly why the adapter copies the guard rather than trying
+	 * it: a switch that silently does nothing during a clean and reports success is the failure mode
+	 * this project keeps removing. The refusal is visible instead, with its reason on the state.
+	 */
+	refuseWhileRunning?: boolean;
 	/** Where the value and the payload were read; goes into the log of a refused write. */
 	fundstelle: string;
+}
+
+/** What one of these getters sends; see {@link StatusToggle.getterParams}. */
+export function statusToggleGetterParams(toggle: StatusToggle): unknown {
+	return toggle.getterParams === "empty-object" ? {} : [];
 }
 
 /**
@@ -274,6 +301,50 @@ export const STATUS_TOGGLES: ReadonlyArray<StatusToggle> = [
 		descFallback: "When this is off, the robot's indicator light goes out a minute after it is fully charged.",
 		shape: "bare-array",
 		fundstelle: "A65:230545-230561, A65:849705-849712"
+	},
+	{
+		// Deep cleaning around pet bowls. The wrapper forwards `a0` unread (A65:230673-230681); the
+		// caller builds `{status: on ? 1 : 0}` (A65:858691-858706). The answer is read back as
+		// `1 == result.status` (A65:860143-860152), which is what `parseStatusToggleResponse` does.
+		//
+		// The app also gates the switch on a feature bit, `NewFeatureStrBit.PetSuppliesDeepClean`
+		// (A65:861249-861256). That is not usable here for the reason `corner_clean_mode` records:
+		// neither feature bitfield reaches the adapter (`lib/featureStr.ts`). The getter is the
+		// question that can be asked, and it is the one this whole table is built on.
+		//
+		// `pet_supplies_deep_clean_details_warn` is deliberately **not** the description. It is what
+		// the app shows under `noPetProp`, i.e. when the current map has no pet bowls on it - a "this
+		// does nothing for you right now" notice that depends on the map, not on the setting. The
+		// adapter would have to decide that per map and would get it wrong the moment one is added.
+		getter: "get_pet_supplies_deep_clean_status",
+		setter: "set_pet_supplies_deep_clean_status",
+		labelKey: "pet_supplies_deep_clean_title",
+		labelFallback: "Pet Area Deep Cleaning",
+		descKey: "pet_supplies_deep_clean_details",
+		descFallback: "After activating the function, the surrounding area of pet supplies (furniture) will be thoroughly cleaned.",
+		getterParams: "empty-object",
+		refuseWhileRunning: true,
+		fundstelle: "A65:230673-230681, A65:858691-858706, A65:228871"
+	},
+	{
+		// Deep cleaning where the robot sees heavy dirt. Same construction as the entry above, and
+		// checked the same way: wrapper forwards (A65:230273-230281), caller builds
+		// `{status: on ? 1 : 0}` (A65:858392-858407), answer read as `1 == result.status`
+		// (A65:860026-860032).
+		//
+		// This one has a **second** call site, `onToggleDirtyDetectEnabled` (A65:946357-946384). It
+		// was read rather than assumed to agree, and it does: the same object, and a running guard of
+		// its own (`this.checkRuning()`). Two independent call sites building the same payload is the
+		// strongest form this table has.
+		getter: "get_dirty_object_detect_status",
+		setter: "set_dirty_object_detect_status",
+		labelKey: "setting_ground_dirty_detect_title",
+		labelFallback: "Deep Cleaning for Heavy Dirt",
+		descKey: "setting_ground_dirty_detect_detail",
+		descFallback: "The robot will automatically start deep cleaning when any heavy dirt is detected.",
+		getterParams: "empty-object",
+		refuseWhileRunning: true,
+		fundstelle: "A65:230273-230281, A65:858392-858407, A65:946370-946384"
 	}
 ];
 
@@ -997,9 +1068,10 @@ export class V1ProbedCapabilityService {
 	public buildCommandParams(method: string, value: unknown): { method: string; params: unknown } {
 		const toggle = statusToggleFor(method);
 		if (toggle) {
-			// Every getter here takes `new Array(0)`, whatever shape its answer has - checked for
-			// all seven, the status light included (A65:228688-228703).
-			if (method === toggle.getter) return { method, params: [] };
+			// Most getters here take `new Array(0)`, whatever shape their answer has - checked one by
+			// one, the status light included (A65:228688-228703). Two build an empty **object**
+			// instead, so the payload travels on the entry rather than being assumed here.
+			if (method === toggle.getter) return { method, params: statusToggleGetterParams(toggle) };
 
 			const flag = toBooleanFlag(value);
 			return toggleShape(toggle) === "bare-array"

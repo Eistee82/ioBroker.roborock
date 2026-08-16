@@ -43,6 +43,9 @@ export enum Feature {
 	WashTowelMode = "WashTowelMode", // Adds how thoroughly the dock washes the mop
 	SmartWash = "SmartWash", // Adds how often the robot returns to wash the mop
 	CarpetDeepClean = "CarpetDeepClean", // Adds the switch for re-cleaning carpets after a room clean
+	// Deleting one run from the history. Not probed and cannot be: the probe would be the deletion.
+	// Unlocked by the robot listing runs in `get_clean_summary`, see v1CleanRecordDelete.ts.
+	CleanRecordDelete = "CleanRecordDelete", // Adds deleting a single run from the cleaning history
 	// Not a probe: the four `app_rc_*` calls are all actions, and a capability probe may only send a
 	// `get_*` (capabilityProbe.ts). The robot reports this one itself, as firmware feature 125 - the
 	// same number the app reads in `isRemoteSupported()`. See lib/features/vacuum/remoteControl.ts.

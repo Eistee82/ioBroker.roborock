@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Box, Chip, CircularProgress, Dialog, DialogContent, DialogTitle, Divider, Stack, Typography } from "@mui/material";
+import { Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Stack, Typography } from "@mui/material";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { CLEAN_TYPE_LABEL_KEYS, resolveFinishReasonKey } from "../history/cleaningHistory";
 import { formatFieldValue, formatMeasure, formatRunStart } from "../history/historyFormat";
@@ -18,6 +19,14 @@ interface HistoryDialogProps {
 	mapColorScheme: MapColorScheme;
 	/** Fetches the image on demand; the list never carries it. */
 	loadMap: (stateId: string) => Promise<string | null>;
+	/**
+	 * Whether this robot published the delete command; absent means it cannot, not "not yet".
+	 * The button is hidden rather than greyed for that reason - see `SchedulesPanel` for the same
+	 * decision, and `history/cleaningHistory.ts` for where the answer comes from.
+	 */
+	canDelete: boolean;
+	/** Deletes the run on the robot. Only ever called with a run that has a start timestamp. */
+	onDelete: (startedAt: number) => void;
 	onClose: () => void;
 }
 
@@ -58,9 +67,21 @@ function DetailRow({ label, value }: { label: string; value: string }): React.JS
  * It is fetched when the dialog opens rather than with the list, because twenty runs of a few
  * hundred kilobytes each would be several megabytes for a list of twenty lines.
  */
-export function HistoryDialog({ run, language, mapColorScheme, loadMap, onClose }: HistoryDialogProps): React.JSX.Element {
+export function HistoryDialog({ run, language, mapColorScheme, loadMap, canDelete, onDelete, onClose }: HistoryDialogProps): React.JSX.Element {
 	const [image, setImage] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
+	/**
+	 * Whether the second, confirming press is the one that counts.
+	 *
+	 * A deleted run is gone from the robot for good - the adapter cannot write one back - so this
+	 * asks first, the same two-step the schedule list uses. Reset whenever the dialog changes runs,
+	 * because a pending confirmation belongs to the run it was armed on and to no other.
+	 */
+	const [confirming, setConfirming] = useState(false);
+
+	useEffect(() => {
+		setConfirming(false);
+	}, [run]);
 
 	useEffect(() => {
 		const stateId = run?.mapStateId ?? null;
@@ -229,6 +250,57 @@ export function HistoryDialog({ run, language, mapColorScheme, loadMap, onClose 
 					</>
 				) : null}
 			</DialogContent>
+
+			{/*
+			  * Offered only for a run that has a start timestamp, because that timestamp *is* the
+			  * argument - `del_clean_record` names the run by when it began and by nothing else.
+			  */}
+			{canDelete && run?.startedAt ? (
+				<DialogActions sx={{ px: 3, pb: 2, pt: 0, justifyContent: "flex-start" }}>
+					{confirming ? (
+						<Stack
+							direction="row"
+							spacing={1}
+							alignItems="center"
+							flexWrap="wrap"
+							useFlexGap
+						>
+							<Typography
+								variant="caption"
+								color="text.secondary"
+							>
+								{I18n.t("ui_history_delete_confirm")}
+							</Typography>
+							<Button
+								size="small"
+								color="error"
+								variant="contained"
+								onClick={() => {
+									setConfirming(false);
+									onDelete(run.startedAt as number);
+								}}
+							>
+								{I18n.t("ui_history_delete_yes")}
+							</Button>
+							<Button
+								size="small"
+								onClick={() => setConfirming(false)}
+							>
+								{I18n.t("ui_cancel")}
+							</Button>
+						</Stack>
+					) : (
+						<Button
+							size="small"
+							color="error"
+							startIcon={<DeleteOutlineIcon />}
+							onClick={() => setConfirming(true)}
+						>
+							{I18n.t("ui_history_delete")}
+						</Button>
+					)}
+				</DialogActions>
+			) : null}
 		</Dialog>
 	);
 }
