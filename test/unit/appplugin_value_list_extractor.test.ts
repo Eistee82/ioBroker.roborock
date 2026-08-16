@@ -32,7 +32,8 @@ const extractor = require(scriptPath) as {
 	nameTokens: (name: string) => string[];
 	labelFamily: (key: string) => string;
 	collectRpcNames: (bundleText: string) => Set<string>;
-	readLiteralItem: (buf: Buffer, base: number, offset: number, strings: string[]) => { kind: number; values: unknown[] } | null;
+	readLiteralItem: (buf: Buffer, base: number, offset: number, strings: string[]) => { kind: number; values: unknown[]; byteLength: number } | null;
+	readLiteralRun: (buf: Buffer, base: number, offset: number, count: number, strings: string[]) => unknown[] | null;
 	verifyEnumAgainstBytecode: (
 		entry: { members: { name: string; value: number }[] },
 		paired: { keys: string[]; values: unknown[]; keyOffset: number; valueOffset: number }[]
@@ -316,6 +317,48 @@ describe("readLiteralItem - the offset is the item header, not the first value",
 		expect(extractor.readLiteralItem(buf, 0, 0, [])?.values).toEqual([0, 1, 2, 3, 4]);
 		expect(extractor.readLiteralItem(buf, 0, 1, [])?.values).not.toEqual([0, 1, 2, 3, 4]);
 	});
+
+	it("reports how many bytes it consumed, so a run can continue after it", () => {
+		expect(extractor.readLiteralItem(item(0x70, [1, 2]), 0, 0, [])?.byteLength).toBe(1 + 2 * 4);
+		expect(extractor.readLiteralItem(item(0x50, [1]), 0, 0, ["a", "b"])?.byteLength).toBe(1 + 2);
+	});
+});
+
+describe("readLiteralRun - one item is not one object", () => {
+	/**
+	 * @param tag SLP tag.
+	 * @param count Number of values.
+	 * @param write Writes one value.
+	 * @param width Bytes per value.
+	 * @returns The encoded item.
+	 */
+	function raw(tag: number, count: number, write: (buf: Buffer, at: number, index: number) => void, width: number): Buffer {
+		const buf = Buffer.alloc(1 + count * width);
+		buf.writeUInt8(tag | count, 0);
+		for (let index = 0; index < count; index++) write(buf, 1 + index * width, index);
+		return buf;
+	}
+
+	it("collects values across several items until the count is reached", () => {
+		// Hermes packs the buffers by kind: a run of nulls, then a run of integers. An object with
+		// three values can therefore span two items, and reading only the first returns two.
+		const nulls = Buffer.from([0x00 | 2]);
+		const ints = raw(0x70, 1, (b, at) => b.writeInt32LE(7, at), 4);
+		const buf = Buffer.concat([nulls, ints]);
+
+		expect(extractor.readLiteralItem(buf, 0, 0, [])?.values).toEqual([null, null]);
+		expect(extractor.readLiteralRun(buf, 0, 0, 3, [])).toEqual([null, null, 7]);
+	});
+
+	it("refuses rather than guessing when the values do not add up", () => {
+		const buf = raw(0x70, 2, (b, at, index) => b.writeInt32LE(index, at), 4);
+		expect(extractor.readLiteralRun(buf, 0, 0, 5, [])).toBeNull();
+	});
+
+	it("returns exactly the requested count, not the whole item", () => {
+		const buf = raw(0x70, 5, (b, at, index) => b.writeInt32LE(index, at), 4);
+		expect(extractor.readLiteralRun(buf, 0, 0, 5, [])).toEqual([0, 1, 2, 3, 4]);
+	});
 });
 
 describe("verifyEnumAgainstBytecode", () => {
@@ -421,9 +464,10 @@ describe("the shipped lib/protocols/roborock_value_lists.json", () => {
 		for (const entry of shipped.enums) {
 			expect(entry.verifiedAgainstBytecode, `${entry.name} without a verdict`).toBeTruthy();
 		}
-		// 35 confirmed, 2 corrected for signedness, 2 without a matching object literal.
-		const confirmed = shipped.enums.filter((e: any) => e.verifiedAgainstBytecode === "confirmed");
-		expect(confirmed.length).toBeGreaterThanOrEqual(30);
+		// With the pure-JS scan every enum is reachable: 37 confirmed, 2 corrected for signedness.
+		// Nothing is left on "not run" or unmatched, which is what the run reader bought.
+		const unverified = shipped.enums.filter((e: any) => !String(e.verifiedAgainstBytecode).match(/confirmed|corrected/));
+		expect(unverified.map((e: any) => e.name)).toEqual([]);
 	});
 
 	it("carries no unresolved conflict between decompilate and bytecode", () => {

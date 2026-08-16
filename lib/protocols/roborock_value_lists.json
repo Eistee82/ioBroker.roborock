@@ -2009,7 +2009,8 @@
 					"value": 10
 				}
 			],
-			"verifiedAgainstBytecode": "no matching object literal in the bytecode"
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@38077 objValueBuffer@139195"
 		},
 		{
 			"name": "AvoidCollisionMode",
@@ -2506,7 +2507,8 @@
 					"value": 4
 				}
 			],
-			"verifiedAgainstBytecode": "no matching object literal in the bytecode"
+			"verifiedAgainstBytecode": "confirmed",
+			"bytecodeSource": "objKeyBuffer@29794 objValueBuffer@92979"
 		},
 		{
 			"name": "mapOpErrorCode",
@@ -4594,22 +4596,6 @@
 			],
 			"detail": "monitor_obstacle_tip_left monitor_obstacle_tip_right",
 			"reason": "fewer than 3 usable values; not published"
-		},
-		{
-			"what": "enum verification",
-			"sources": [
-				"a65_control_v5208/index.android.bundle.decompiled.js:238183"
-			],
-			"detail": "LogLevel",
-			"reason": "no object literal in the bytecode carries this key set; values come from the decompilate alone"
-		},
-		{
-			"what": "enum verification",
-			"sources": [
-				"a65_control_v5208/index.android.bundle.decompiled.js:610794"
-			],
-			"detail": "aiRobotType",
-			"reason": "no object literal in the bytecode carries this key set; values come from the decompilate alone"
 		}
 	]
 }

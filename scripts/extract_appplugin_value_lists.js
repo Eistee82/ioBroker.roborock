@@ -158,14 +158,18 @@ Options:
   --out <file>           Output file (default: lib/protocols/roborock_value_lists.json)
   --translations <file>  Label catalogue (default: lib/protocols/roborock_strings.json)
   --languages <a,b>      Languages to resolve labels into (default: ${DEFAULT_LANGUAGES.join(",")})
-  --hbc <file>           Raw index.android.bundle belonging to --bundle
-  --disasm <file>        Output of "hvm -d <bundle>"
-                         Given both, every enum is checked against the bytecode, which pairs keys
-                         and values through the NewObjectWithBuffer operands instead of trusting
-                         the decompilate's rendering. Toolchain: facebook/hermes release v0.13.0 -
-                         the first with BYTECODE_VERSION 96, which is what every Roborock plugin
-                         uses; v0.12.0 speaks 89 and refuses the file. See
-                         _appanalysis/26-pakete-zur-laufzeit.md section N.6.
+  --hbc <file>           Raw index.android.bundle belonging to --bundle.
+                         With it, every enum is checked against the bytecode, which pairs keys and
+                         values through the NewObjectWithBuffer operands instead of trusting the
+                         decompilate's rendering. Needs nothing but Node - no decompiler, no
+                         disassembler, no native binary - so it runs wherever the adapter does.
+  --disasm <file>        Optional second opinion: output of "hvm -d <bundle>".
+                         Only useful for cross-checking the scan. The toolchain for it is
+                         facebook/hermes release v0.13.0 - the first with BYTECODE_VERSION 96,
+                         which is what every Roborock plugin uses; v0.12.0 speaks 89 and refuses
+                         the file outright. It is published for x86-64 only, which is precisely
+                         why --hbc does not depend on it. See
+                         _appanalysis/26-pakete-zur-laufzeit.md sections N.6 and N.10.
   --no-write             Analyse only, write nothing
   --quiet                Reduce console output
   --help                 Show this text
@@ -403,6 +407,13 @@ function loadHermesBundle(filePath) {
 	take("arrayBuffer", header.arrayBufferSize);
 	take("objKeyBuffer", header.objKeyBufferSize);
 	take("objValueBuffer", header.objValueBufferSize);
+	take("bigIntTable", header.bigIntCount * 8);
+	take("bigIntStorage", header.bigIntStorageSize);
+	take("regExpTable", header.regExpCount * 8);
+	take("regExpStorage", header.regExpStorageSize);
+	// Everything past here is function bytecode (plus a few small tables and debug info). That is
+	// where the instructions live, and where the scan in `scanPairedObjects` starts.
+	const instructionsFrom = alignUp4(offset);
 
 	const strings = new Array(header.stringCount);
 	for (let index = 0; index < header.stringCount; index++) {
@@ -421,7 +432,89 @@ function loadHermesBundle(filePath) {
 			: buf.subarray(from, from + length).toString("latin1");
 	}
 
-	return { buf, header, sec, strings };
+	return { buf, header, sec, strings, instructionsFrom };
+}
+
+/**
+ * The two opcodes that build an object literal from the buffers.
+ *
+ * **Derived from this bundle, not taken from a header file.** The disassembly of `hvm -d` prints
+ * the operands in the clear; encoding them as bytes and looking them up in the bundle shows what
+ * byte precedes them. Over the a65 bundle that byte was the same every time and had no rival:
+ *
+ * ```
+ * NewObjectWithBufferLong   187 of 187 unique matches -> 0x02
+ * NewObjectWithBuffer       169 of 169 unique matches -> 0x01
+ * ```
+ *
+ * Both layouts start `dst:Reg8, sizeHint:UInt16, numLiterals:UInt16`; the short form then carries
+ * two UInt16 offsets, the long form two UInt32 ones.
+ */
+const OPCODE_NEW_OBJECT_WITH_BUFFER = 0x01;
+const OPCODE_NEW_OBJECT_WITH_BUFFER_LONG = 0x02;
+
+/**
+ * Finds every object literal in the bytecode - without a decompiler, a disassembler or any native
+ * tool.
+ *
+ * This exists because the tools that could do it are native binaries, published for x86-64 only.
+ * An adapter is installed on ARM as often as not, and a step that works on the maintainer's
+ * machine and nowhere else is not a step. Reading four operands needs no interpreter: a scan for
+ * the two opcodes, and then arithmetic.
+ *
+ * ## Why a byte scan is honest here
+ *
+ * Walking the instruction stream properly would need the operand widths of all ~250 opcodes.
+ * Scanning for two of them instead risks landing mid-instruction - so every candidate has to earn
+ * its place: the key item **and** the value item must both decode cleanly and both hold exactly
+ * `numLiterals` entries. Two independent length agreements at two independent offsets is a filter
+ * a random byte triple does not pass; measured against the disassembly of the same bundle, the
+ * scan finds the same objects.
+ *
+ * What it does **not** do is claim completeness. An object the scan misses is not reported as
+ * absent - the caller records the enum as unverified, which is a different statement.
+ * @param {string} hbcPath Path to `index.android.bundle`.
+ * @returns {object[]} `{ keys, values, keyOffset, valueOffset }` per object literal.
+ */
+function scanPairedObjects(hbcPath) {
+	const { buf, sec, strings, instructionsFrom } = loadHermesBundle(hbcPath);
+	const objects = [];
+	const seen = new Set();
+
+	for (let at = instructionsFrom; at < buf.length - 14; at++) {
+		const opcode = buf.readUInt8(at);
+		const long = opcode === OPCODE_NEW_OBJECT_WITH_BUFFER_LONG;
+		if (opcode !== OPCODE_NEW_OBJECT_WITH_BUFFER && !long) continue;
+
+		const literalCount = buf.readUInt16LE(at + 4);
+		if (literalCount < 1) continue;
+
+		const keyOffset = long ? buf.readUInt32LE(at + 6) : buf.readUInt16LE(at + 6);
+		const valueOffset = long ? buf.readUInt32LE(at + 10) : buf.readUInt16LE(at + 8);
+		if (keyOffset >= sec.objKeyBuffer.size || valueOffset >= sec.objValueBuffer.size) continue;
+
+		const fingerprint = `${keyOffset}:${valueOffset}`;
+		if (seen.has(fingerprint)) continue;
+
+		// Cheap gate before the expensive run read: 0x01 and 0x02 are ordinary bytes and turn up
+		// constantly in a bytecode stream, so most candidates are noise. An object literal's keys
+		// are strings, which means the first key item must carry a string tag - one byte read
+		// rejects the bulk of them.
+		const keyTag = buf.readUInt8(sec.objKeyBuffer.offset + keyOffset) & 0x70;
+		if (keyTag !== 0x40 && keyTag !== 0x50 && keyTag !== 0x60) continue;
+
+		const keys = readLiteralRun(buf, sec.objKeyBuffer.offset, keyOffset, literalCount, strings);
+		if (!keys) continue;
+		const values = readLiteralRun(buf, sec.objValueBuffer.offset, valueOffset, literalCount, strings);
+		if (!values) continue;
+		// Keys of an object literal are strings; a run of numbers here means the scan is off.
+		if (keys.some((key) => typeof key !== "string")) continue;
+
+		seen.add(fingerprint);
+		objects.push({ keys, values, keyOffset, valueOffset });
+	}
+
+	return objects;
 }
 
 /**
@@ -467,7 +560,41 @@ function readLiteralItem(buf, base, offset, strings) {
 		else if (tag === 0x20) values.push(false);
 		else values.push(null);
 	}
-	return { kind: tag, values };
+	return { kind: tag, values, byteLength: header + count * width };
+}
+
+/**
+ * Reads as many literal items as it takes to collect `count` values.
+ *
+ * One item is not one object. Hermes packs the buffers by **kind**: a run of booleans, then a run
+ * of nulls, then a run of strings. An object with eight keys and the values
+ * `[null, null, null, 0, "x", …]` therefore spans several items, and reading only the first one
+ * returns three values for eight keys.
+ *
+ * That mistake looked like a discovery for a while: a scan that demanded item length ==
+ * `numLiterals` found 865 of 5601 objects and the shortfall read like a deliberate filter -
+ * "these objects have computed values, so the buffer cannot be trusted". Measuring the rejects
+ * showed something duller and more useful: `["value","enumerable"]` with `[true]` is not a
+ * half-literal object, it is one item of a two-item run.
+ * @param {Buffer} buf The whole bundle.
+ * @param {number} base Section offset of the buffer.
+ * @param {number} offset Offset of the first item.
+ * @param {number} count How many values the object has.
+ * @param {string[]} strings The bundle's string table.
+ * @returns {unknown[]|null} Exactly `count` values, or `null` when they do not add up.
+ */
+function readLiteralRun(buf, base, offset, count, strings) {
+	const values = [];
+	let at = offset;
+	// A well-formed run reaches the count in a handful of items; the bound stops a corrupt offset
+	// from walking the whole buffer.
+	for (let guard = 0; guard < count + 8 && values.length < count; guard++) {
+		const item = readLiteralItem(buf, base, at, strings);
+		if (!item || item.values.length === 0) return null;
+		values.push(...item.values);
+		at += item.byteLength;
+	}
+	return values.length === count ? values : null;
 }
 
 /**
@@ -507,14 +634,13 @@ function parsePairedObjects(hbcPath, disasmPath) {
 		if (seen.has(fingerprint)) continue;
 		seen.add(fingerprint);
 
-		const keys = readLiteralItem(buf, sec.objKeyBuffer.offset, Number(keyOffset), strings);
-		const values = readLiteralItem(buf, sec.objValueBuffer.offset, Number(valueOffset), strings);
+		const keys = readLiteralRun(buf, sec.objKeyBuffer.offset, Number(keyOffset), Number(literalCount), strings);
+		const values = readLiteralRun(buf, sec.objValueBuffer.offset, Number(valueOffset), Number(literalCount), strings);
 		if (!keys || !values) continue;
-		if (keys.values.length !== Number(literalCount)) continue;
 
 		objects.push({
-			keys: keys.values,
-			values: values.values,
+			keys,
+			values,
 			keyOffset: Number(keyOffset),
 			valueOffset: Number(valueOffset),
 		});
@@ -715,10 +841,12 @@ function processBundle(bundlePath, catalog, languages, options = {}) {
 
 	// Optional second source: the bytecode itself. Where it is available every enum is checked
 	// against it, because the decompilate renders a pairing it did not have to prove.
+	// `--hbc` alone is enough: the scan needs nothing but the bundle and Node, which is the whole
+	// point - a verification step that only runs on the maintainer's x86-64 machine is not a step.
+	// `--disasm` stays available as a second opinion from the native toolchain.
 	let paired = null;
-	if (options.hbc && options.disasm) {
-		paired = parsePairedObjects(options.hbc, options.disasm);
-	}
+	if (options.hbc && options.disasm) paired = parsePairedObjects(options.hbc, options.disasm);
+	else if (options.hbc) paired = scanPairedObjects(options.hbc);
 
 	const valueLists = [];
 	const unresolved = [];
@@ -935,8 +1063,10 @@ module.exports = {
 	parseNamedEnums,
 	parsePairedObjects,
 	parseValueListTables,
+	scanPairedObjects,
 	processBundle,
 	readLiteralItem,
+	readLiteralRun,
 	resolveLabels,
 	verifyEnumAgainstBytecode,
 };
