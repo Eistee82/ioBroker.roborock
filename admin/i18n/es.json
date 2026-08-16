@@ -419,5 +419,17 @@
   "ui_segment_edit_sequence_is": "El orden guardado: %s",
   "ui_segment_edit_sequence_none": "No hay ningún orden de limpieza definido, así que aquí no se pierde nada.",
   "ui_split_grip_a": "Línea divisoria, un extremo",
-  "ui_split_grip_b": "Línea divisoria, otro extremo"
+  "ui_split_grip_b": "Línea divisoria, otro extremo",
+  "ui_maps": "Mapas",
+  "ui_maps_hint": "Los mapas guardados del robot. El cambio entre ellos se hace con el selector de arriba; hacer copias, restaurar y borrar no se ofrecen aquí a propósito.",
+  "ui_map_unnamed": "Mapa %s",
+  "ui_map_saved": "Guardado por última vez: %s",
+  "ui_map_backup_count": "Copias de seguridad: %s",
+  "ui_map_backup_hint": "El robot conserva esta copia de seguridad. Solo la aplicación Roborock puede restaurarla; este adaptador no lo ofrece, porque una restauración sobrescribe el mapa cargado en ese momento.",
+  "ui_map_rename": "Cambiar el nombre del mapa",
+  "ui_map_rename_unavailable": "Este robot no permite cambiar el nombre de sus mapas.",
+  "ui_map_name_bytes": "%s de %s bytes",
+  "ui_map_name_too_long": "Demasiado largo. El nombre de un mapa debe quedar por debajo de %s bytes tal y como los cuenta la aplicación: una letra sencilla cuenta uno, una letra acentuada dos, la mayoría de los demás caracteres tres.",
+  "ui_map_name_duplicate": "Otro mapa ya se llama así.",
+  "ui_map_name_unchanged": "Este mapa ya se llama así."
 }

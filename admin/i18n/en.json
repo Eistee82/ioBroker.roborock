@@ -419,5 +419,17 @@
   "ui_segment_edit_sequence_is": "The order the robot holds: %s",
   "ui_segment_edit_sequence_none": "No cleaning order is set, so nothing is lost here.",
   "ui_split_grip_a": "Dividing line, one end",
-  "ui_split_grip_b": "Dividing line, other end"
+  "ui_split_grip_b": "Dividing line, other end",
+  "ui_maps": "Maps",
+  "ui_maps_hint": "The robot's stored maps. Switching between them is the selector at the top; backing up, restoring and deleting are deliberately not offered here.",
+  "ui_map_unnamed": "Map %s",
+  "ui_map_saved": "Last saved: %s",
+  "ui_map_backup_count": "Backups: %s",
+  "ui_map_backup_hint": "The robot keeps this backup. Only the Roborock app can restore it; this adapter does not offer that, because a restore overwrites the map that is currently loaded.",
+  "ui_map_rename": "Rename map",
+  "ui_map_rename_unavailable": "This robot does not offer renaming its maps.",
+  "ui_map_name_bytes": "%s of %s bytes",
+  "ui_map_name_too_long": "Too long. A map name has to stay below %s bytes as the app counts them: a plain letter counts one, an umlaut two, most other characters three.",
+  "ui_map_name_duplicate": "Another map is already called that.",
+  "ui_map_name_unchanged": "That is already this map's name."
 }

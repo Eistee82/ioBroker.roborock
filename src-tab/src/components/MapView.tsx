@@ -45,6 +45,9 @@ import { CommandFeedbackSource } from "../feedback/commandFeedbackSource";
 import { formatFeedbackMessage } from "../feedback/commandFeedback";
 import type { CommandFeedbackSeverity } from "../feedback/commandFeedback";
 import { ActiveFloorSource } from "../map/activeFloorSource";
+import { EMPTY_MAP_LIST, MapListSource } from "../map/mapListSource";
+import type { MapListModel } from "../map/mapListSource";
+import { MapsPanel } from "./MapsPanel";
 import { Map3DSource } from "../map3d/map3dSource";
 import { Map3DView } from "../map3d/Map3DView";
 import { isWebGLAvailable } from "../map3d/webgl";
@@ -192,6 +195,8 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const [remote, setRemote] = useState<RemoteDriverModel>(EMPTY_REMOTE);
 	// Which floor the robot itself is on; null when it does not report one.
 	const [activeFloor, setActiveFloor] = useState<number | null>(null);
+	// The robot's stored maps, and whether it offers a rename. Empty keeps the panel away.
+	const [mapList, setMapList] = useState<MapListModel>(EMPTY_MAP_LIST);
 	// The 3D view: whether it is on, and what it would draw. `null` means nothing drawable yet.
 	const [show3D, setShow3D] = useState(false);
 	const [map3d, setMap3d] = useState<Map3DModel | null>(null);
@@ -204,6 +209,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	const feedbackSourceRef = useRef<CommandFeedbackSource | null>(null);
 	const remoteDriverRef = useRef<RemoteDriver | null>(null);
 	const activeFloorRef = useRef<ActiveFloorSource | null>(null);
+	const mapListRef = useRef<MapListSource | null>(null);
 	const map3dRef = useRef<Map3DSource | null>(null);
 
 	/** Everything the tab itself could not do; always an error, never an open question. */
@@ -391,6 +397,42 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 	useEffect(() => {
 		void activeFloorRef.current?.setDevice(instanceId, selectedRobot);
 	}, [connection, instanceId, selectedRobot]);
+
+	/*
+	 * The stored maps. Its own source for the same reason as the marker above, and reading a
+	 * different state than the floor selector on purpose - see `map/mapListSource.ts` for why the
+	 * selector's source cannot carry a rename.
+	 */
+	useEffect(() => {
+		const source = new MapListSource(connection, { onMapList: setMapList, onError: showError });
+		mapListRef.current = source;
+
+		return () => {
+			source.destroy();
+			mapListRef.current = null;
+		};
+	}, [connection, showError]);
+
+	useEffect(() => {
+		void mapListRef.current?.setDevice(instanceId, selectedRobot);
+	}, [connection, instanceId, selectedRobot]);
+
+	/*
+	 * The floor selector's labels, corrected from the list.
+	 *
+	 * The selector is filled from `commands.load_multi_map.common.states`, which the adapter rewrites
+	 * on its polling cycle and which this tab reads once per device. A rename made here would
+	 * therefore leave the old name in the selector for as long as the tab stays open. The list is
+	 * re-read the moment the rename is judged, so it is the fresher of the two - and only the labels
+	 * are taken from it, never which floors exist.
+	 */
+	useEffect(() => {
+		const names: Record<string, string> = {};
+		for (const entry of mapList.maps) {
+			if (entry.name !== null) names[String(entry.mapFlag)] = entry.name;
+		}
+		engineRef.current?.setMapNames(names);
+	}, [mapList]);
 
 	/*
 	 * The 3D view reads the same two map states the engine does; see `map3d/map3dSource.ts`. It runs
@@ -622,6 +664,16 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 					phase={status.phase}
 					dockActivity={status.dockActivity}
 					onCommand={(command, value) => engineRef.current?.sendDockValue(command, value)}
+				/>
+				{/*
+				 * The maps before the rooms: a room belongs to a map, and the list also says which map
+				 * the robot is on. Switching maps stays in the selector at the top - see `MapsPanel`.
+				 */}
+				<MapsPanel
+					maps={mapList}
+					activeMapFlag={activeFloor}
+					language={language}
+					onRename={(mapFlag, name) => void mapListRef.current?.rename(mapFlag, name)}
 				/>
 				<RoomsPanel
 					rooms={roomList}

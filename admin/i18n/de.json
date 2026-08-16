@@ -419,5 +419,17 @@
   "ui_segment_edit_sequence_is": "Die gespeicherte Reihenfolge: %s",
   "ui_segment_edit_sequence_none": "Es ist keine Reinigungsreihenfolge gesetzt, hier geht also nichts verloren.",
   "ui_split_grip_a": "Trennlinie, ein Ende",
-  "ui_split_grip_b": "Trennlinie, anderes Ende"
+  "ui_split_grip_b": "Trennlinie, anderes Ende",
+  "ui_maps": "Karten",
+  "ui_maps_hint": "Die gespeicherten Karten des Roboters. Umgeschaltet wird mit der Auswahl oben; Sichern, Wiederherstellen und Löschen werden hier bewusst nicht angeboten.",
+  "ui_map_unnamed": "Karte %s",
+  "ui_map_saved": "Zuletzt gespeichert: %s",
+  "ui_map_backup_count": "Sicherungen: %s",
+  "ui_map_backup_hint": "Der Roboter hält diese Sicherung vor. Wiederherstellen kann sie nur die Roborock-App; dieser Adapter bietet es nicht an, weil eine Wiederherstellung die gerade geladene Karte überschreibt.",
+  "ui_map_rename": "Karte umbenennen",
+  "ui_map_rename_unavailable": "Dieser Roboter bietet das Umbenennen seiner Karten nicht an.",
+  "ui_map_name_bytes": "%s von %s Byte",
+  "ui_map_name_too_long": "Zu lang. Ein Kartenname muss unter %s Byte bleiben, so wie die App zählt: ein einfacher Buchstabe zählt eins, ein Umlaut zwei, die meisten anderen Zeichen drei.",
+  "ui_map_name_duplicate": "Eine andere Karte heißt bereits so.",
+  "ui_map_name_unchanged": "So heißt diese Karte schon."
 }

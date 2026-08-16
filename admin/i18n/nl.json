@@ -419,5 +419,17 @@
   "ui_segment_edit_sequence_is": "De opgeslagen volgorde: %s",
   "ui_segment_edit_sequence_none": "Er is geen schoonmaakvolgorde ingesteld, dus hier gaat niets verloren.",
   "ui_split_grip_a": "Scheidingslijn, één uiteinde",
-  "ui_split_grip_b": "Scheidingslijn, ander uiteinde"
+  "ui_split_grip_b": "Scheidingslijn, ander uiteinde",
+  "ui_maps": "Kaarten",
+  "ui_maps_hint": "De opgeslagen kaarten van de robot. Wisselen doe je met de keuzelijst bovenaan; back-uppen, terugzetten en verwijderen worden hier bewust niet aangeboden.",
+  "ui_map_unnamed": "Kaart %s",
+  "ui_map_saved": "Laatst opgeslagen: %s",
+  "ui_map_backup_count": "Back-ups: %s",
+  "ui_map_backup_hint": "De robot bewaart deze back-up. Alleen de Roborock-app kan hem terugzetten; deze adapter biedt dat niet aan, omdat terugzetten de nu geladen kaart overschrijft.",
+  "ui_map_rename": "Kaart hernoemen",
+  "ui_map_rename_unavailable": "Deze robot biedt het hernoemen van zijn kaarten niet aan.",
+  "ui_map_name_bytes": "%s van %s bytes",
+  "ui_map_name_too_long": "Te lang. Een kaartnaam moet onder %s bytes blijven zoals de app ze telt: een gewone letter telt één, een letter met trema twee, de meeste andere tekens drie.",
+  "ui_map_name_duplicate": "Een andere kaart heet al zo.",
+  "ui_map_name_unchanged": "Zo heet deze kaart al."
 }

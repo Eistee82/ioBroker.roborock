@@ -250,11 +250,19 @@ adapter publishes which slot is loaded and what **backups** the robot says it ke
 the test device, listed with the date they were taken and with the floor each belongs to.
 
 The backups come with an honest caveat, and it is a state of its own: `mapInventory.restoreSupported`.
-The robot is asked whether it can restore at all, and **the test device says no** - it lists two
-backups and rejects the command the Roborock app itself uses to fetch the restore list. So those
-backups are not usable, not by this adapter and not by the app. Saying so is the difference between
-"this adapter has no button" and "this robot cannot do it". Nothing here deletes or restores a map;
-those are destructive and belong behind a confirmation, not on a button.
+It answers what the two proven halves can answer together — whether the robot lists any backups at
+all, and whether its firmware offers the restore menu (`new_feature_info` bit 49). On the test device
+both hold, so the Roborock app would show a restore entry for its two backups. **The state does not
+say that restoring works**, only that the app would offer it: `recover_multi_map` is a write that
+overwrites the map currently loaded, and asking a robot to prove a destructive call by making it is
+not a capability test. Nothing here deletes, backs up or restores a map; all three are destructive
+and belong behind a confirmation, not on a button.
+
+The whole list is published as one value as well, `mapInventory.maps`: one row per slot with
+`mapFlag`, `name`, `addTime`, `backupCount` and `lastBackupTime`. It exists beside the `floors`
+folders because it is written every time the adapter reads the robot's map list — **including the
+read that judges a rename** — so it is the freshest source of the names, and it is what the admin
+tab's map list is drawn from.
 
 **Renaming one is here**, as `commands.name_multi_map`, and it takes
 `{"mapFlag": 0, "name": "Cellar"}` — the slot number as it appears under `floors` and under map
@@ -265,6 +273,18 @@ other characters as three, and the name has to stay **under 30** of those — so
 already too long. Afterwards the map list is read back and only that decides: the command either
 reports that the robot now carries the new name, or that it still reports the old one, or that the
 list could not be read and it is unknown. The call itself has no reply worth believing.
+
+In the admin tab the same thing has a panel: **Maps**, in the column on the right. It lists every map
+the robot stores with its name, when it was last saved and whether a backup exists, marks the one the
+robot is currently on, and carries the rename. It is deliberately not part of the floor selector at
+the top. That selector is filled from `commands.load_multi_map`, an object the adapter creates only
+when the robot has room for more than one map, and it hides itself when there is only one — so a
+robot with a single map would have had no rename at all. **Switching maps stays in the selector**;
+the panel manages them and never switches. The backup line reports what the robot holds and offers
+nothing to do with it, for the reasons above. The rename **disappears** rather than greys out on a
+robot the adapter published no `name_multi_map` for, and the field stops at the same length the
+robot does — it counts the bytes described above and shows how many of the thirty are used, which is
+worth watching in a language with umlauts.
 
 Under **device info** the robot's **serial number** and its **region block** appear, both read-only
 and both only on a robot that answers for them: the voice package it runs, Roborock's `bom` string,

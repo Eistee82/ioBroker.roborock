@@ -8,8 +8,10 @@ import {
 	backupMenuOffered,
 	V1MapInventoryService,
 	allBackups,
+	mapListEntries,
 	parseMultiMapsList
 } from "../../src/lib/features/vacuum/v1MapInventory";
+import type { MapListEntry } from "../../src/common/mapList";
 
 vi.mock("../../src/lib/map/MapManager", () => ({
 	MapManager: class {
@@ -95,6 +97,38 @@ describe("reading the map list", () => {
 		expect(inventory?.maps.map((slot) => slot.mapFlag)).toEqual([2]);
 	});
 
+	it("flattens the list into the rows a reader gets", () => {
+		const entries = mapListEntries(parseMultiMapsList(MEASURED_LIST)!);
+		const expected: MapListEntry[] = [
+			{ mapFlag: 0, name: "Erdgeschoss", addTime: 1786788440, backupCount: 1, lastBackupTime: 1786781087 },
+			{ mapFlag: 1, name: "Keller", addTime: 1733229641, backupCount: 1, lastBackupTime: 1733229675 }
+		];
+
+		expect(entries).toEqual(expected);
+	});
+
+	it("leaves an unnamed slot unnamed instead of calling it 'Map 0'", () => {
+		// `V1MapService` invents that fallback for the *folder* it names, which is fair - a folder has
+		// to be called something. In a data state it would make a map the user really did call "Map 0"
+		// indistinguishable from one the robot never named.
+		const entries = mapListEntries(parseMultiMapsList([{ map_info: [{ mapFlag: 0 }] }])!);
+
+		expect(entries[0].name).toBeNull();
+		expect(entries[0].backupCount).toBe(0);
+		expect(entries[0].lastBackupTime).toBeNull();
+	});
+
+	it("reports the newest backup when a robot keeps several", () => {
+		// The test device's `max_bak_map` is 1, so this case is not measured. It is handled anyway
+		// because the field is an array and nothing in the answer promises one entry - and picking the
+		// first would report the oldest on a robot that appends.
+		const entries = mapListEntries(parseMultiMapsList([{
+			map_info: [{ mapFlag: 0, name: "EG", bak_maps: [{ mapFlag: 4, add_time: 100 }, { mapFlag: 5, add_time: 900 }, { mapFlag: 6 }] }]
+		}])!);
+
+		expect([entries[0].backupCount, entries[0].lastBackupTime]).toEqual([3, 900]);
+	});
+
 	it("says nothing when the answer carries no map list", () => {
 		expect(parseMultiMapsList("unknown_method")).toBeNull();
 		expect(parseMultiMapsList([{ max_multi_map: 4 }])).toBeNull();
@@ -137,6 +171,30 @@ describe("what the inventory publishes", () => {
 
 		expect(written.get(id(MapInventoryStates.backupCount))).toBe(2);
 		expect(JSON.parse(String(written.get(id(MapInventoryStates.backups))))).toHaveLength(2);
+	});
+
+	it("publishes the slots as one list", async () => {
+		const { service, written } = createService();
+		await service.applyMultiMapsList(MEASURED_LIST);
+
+		expect(JSON.parse(String(written.get(id(MapInventoryStates.maps))))).toEqual([
+			{ mapFlag: 0, name: "Erdgeschoss", addTime: 1786788440, backupCount: 1, lastBackupTime: 1786781087 },
+			{ mapFlag: 1, name: "Keller", addTime: 1733229641, backupCount: 1, lastBackupTime: 1733229675 }
+		]);
+	});
+
+	it("re-publishes the list when it is read again, which is what a rename is judged by", async () => {
+		// The reason this state exists beside the `floors.<mapFlag>.name` objects: those are written
+		// by `V1MapService` on the polling cycle, while this method also runs from `rereadMapList`
+		// right after a rename. Anything reading the folders shows the old name until the next poll.
+		const renamed = [{ ...MEASURED_LIST[0], map_info: [{ ...MEASURED_LIST[0].map_info[0], name: "Parterre" }, MEASURED_LIST[0].map_info[1]] }];
+		const { service, written } = createService(undefined, [renamed]);
+		await service.applyMultiMapsList(MEASURED_LIST);
+
+		await service.rereadMapList();
+
+		const entries = JSON.parse(String(written.get(id(MapInventoryStates.maps))));
+		expect(entries.map((entry: MapListEntry) => entry.name)).toEqual(["Parterre", "Keller"]);
 	});
 
 	it("names the active map out of the list it already read", async () => {
