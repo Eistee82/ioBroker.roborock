@@ -35,6 +35,8 @@ interface Recorded {
 	matrices: Instance[];
 	planes: Array<[number, number]>;
 	materials: Array<Record<string, unknown>>;
+	/** Every `MeshBasicMaterial` - the floor is one, and what it does with alpha decides the view. */
+	basicMaterials: Array<Record<string, unknown>>;
 	/** Every plain `Mesh`, in construction order, so position, rotation and scale can be read back. */
 	meshes: Array<{
 		position: { x: number; y: number; z: number };
@@ -48,7 +50,7 @@ interface Recorded {
 }
 
 function stubThree(): { three: ThreeLike; log: Recorded } {
-	const log: Recorded = { boxes: [], instanced: [], matrices: [], planes: [], materials: [], meshes: [], groups: [], lights: [], added: 0 };
+	const log: Recorded = { boxes: [], instanced: [], matrices: [], planes: [], materials: [], basicMaterials: [], meshes: [], groups: [], lights: [], added: 0 };
 
 	class Vec {
 		public x = 0;
@@ -124,7 +126,9 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 			public dispose(): void {}
 		},
 		MeshBasicMaterial: class {
-			public constructor(public parameters: Record<string, unknown>) {}
+			public constructor(public parameters: Record<string, unknown>) {
+				log.basicMaterials.push(parameters);
+			}
 			public dispose(): void {}
 		},
 		Mesh: class extends Obj {
@@ -224,6 +228,20 @@ describe("the floor", () => {
 		buildScene(three, model(), { fake: true }, PALETTE);
 
 		expect(log.planes).toEqual([[4, 3]]);
+	});
+
+	it("honours the map picture's alpha instead of painting its transparent parts black", () => {
+		// This is not a nicety. The picture is a PNG whose rooms are painted and whose surroundings
+		// are fully transparent, because a flat is not a rectangle and a picture is. Without
+		// `transparent`, three.js ignores the alpha channel and draws every transparent pixel as
+		// opaque black - a black slab the size of the whole grid with the flat in the middle of it,
+		// which is exactly what this view showed until the flag was set.
+		const { three, log } = stubThree();
+		buildScene(three, model(), { fake: true }, PALETTE);
+
+		const floor = log.basicMaterials.find((m) => "map" in m);
+		expect(floor).toBeDefined();
+		expect(floor?.transparent).toBe(true);
 	});
 });
 

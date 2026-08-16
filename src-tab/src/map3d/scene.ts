@@ -183,7 +183,23 @@ export function buildScene(
 	// darauf"). It also means the floor shows rooms, their colours and their names without this
 	// module knowing anything about rooms.
 	const floorGeometry = new three.PlaneGeometry(model.width, model.height);
-	const floorMaterial = new three.MeshBasicMaterial({ map: texture, side: three.DoubleSide });
+	// `transparent` is not optional here, and leaving it off is what produced the black slab this
+	// view showed for two rounds. The map picture is a PNG with an alpha channel: the rooms are
+	// painted and **everything around them is fully transparent**, because the flat is not a
+	// rectangle and the picture is. Without this flag three.js ignores that channel, and every
+	// transparent pixel is drawn as opaque black - a black quad the size of the whole grid, with
+	// the flat sitting in the middle of it.
+	//
+	// `alphaTest` rather than plain blending: the floor is a single flat quad with nothing under
+	// it, so there is nothing to blend with, and a tested alpha keeps it out of the transparency
+	// sort - which is what stops the walls and furniture standing on it from flickering against it
+	// as the camera turns.
+	const floorMaterial = new three.MeshBasicMaterial({
+		map: texture,
+		side: three.DoubleSide,
+		transparent: true,
+		alphaTest: 0.01
+	});
 	const floor = new three.Mesh(floorGeometry, floorMaterial);
 	// Flat on the ground, and rotated so the picture's top edge points away from the camera rather
 	// than at it - without this the map is mirrored front to back.
