@@ -820,19 +820,20 @@ export class requestsHandler {
 		this._processResult(
 			watchedPromise,
 			async (res: any) => {
-				// Command success validation for set_ commands
-				if (method.startsWith("set_")) {
-					const data = (res && typeof res === "object" && "data" in res) ? res.data : res;
-					const isOk = Array.isArray(data) && data.length === 1 && data[0] === "ok";
-
-					if (!isOk) {
-						this.adapter.rLog("System", duid, "Error", "Command", undefined, `Command ${method} returned unexpected result: ${JSON.stringify(data)} (Expected: ["ok"])`, "error");
-					}
-				}
-
 				// Reported before the handler is told, so a handler that throws cannot swallow the
 				// answer the user is waiting for.
 				const outcome = classifyRobotAnswer(method, res);
+
+				// One judgement, one log line. This used to be a second, independent `set_`-only
+				// check written out just above; it disagreed with the state as soon as
+				// `classifyRobotAnswer` learned to recognise a refusal on any other method, and two
+				// answers to the same question is how a log stops being evidence.
+				if (outcome === "rejected") {
+					const data = (res && typeof res === "object" && "data" in res) ? res.data : res;
+					const expected = method.startsWith("set_") ? ` (Expected: ["ok"])` : "";
+					this.adapter.rLog("System", duid, "Error", "Command", undefined, `Command ${method} returned unexpected result: ${JSON.stringify(data)}${expected}`, "error");
+				}
+
 				await this.reportCommandOutcome(duid, method, origin, outcome, outcome === "rejected" ? this.describeAnswer(res) : undefined);
 
 				await _handler?.onCommandResult?.(method, finalMethod, res, finalParams);

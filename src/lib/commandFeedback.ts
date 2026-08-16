@@ -267,23 +267,78 @@ export function isShutdownFailure(errorMessage: string): boolean {
 }
 
 /**
+ * The literal the robot rejects a request it does not know with.
+ *
+ * Kept for the reader's sake; the test below is not the wording but the *shape*, because a robot
+ * that refuses in different words would otherwise slip through. See {@link classifyRobotAnswer}.
+ */
+export const UNKNOWN_METHOD_ANSWER = "unknown_method";
+
+/**
+ * The answer `sendRequest` gives back when the robot asked to be retried and the retries ran out.
+ *
+ * `requestsHandler.ts:657-662` re-sends on `["retry"]` up to `MAX_REQUEST_RETRIES`; what reaches the
+ * caller afterwards is that same array. It means the request was never carried out.
+ */
+const RETRY_ANSWER = "retry";
+
+/** Unwraps the `data` envelope the transport puts around an answer, when there is one. */
+function answerData(result: unknown): unknown {
+	return result && typeof result === "object" && "data" in result
+		? (result as Record<string, unknown>).data
+		: result;
+}
+
+/**
  * Reads the robot's answer.
  *
- * This is the very check `requestsHandler.command` performs before it logs an unexpected answer
- * (`requestsHandler.ts:727-733`), pulled out so the log line and the state agree by construction.
- * Only `set_*` is judged: those are the methods with a defined answer, and a `get_*` or `app_*` that
- * answered at all has answered as much as it ever will.
+ * This is the very check `requestsHandler.command` performs before it logs an unexpected answer,
+ * pulled out so the log line and the state agree by construction.
+ *
+ * ## What used to happen, and why it was worse than it looked
+ *
+ * The first line used to be `if (!method.startsWith("set_")) return "accepted"` - so every
+ * `app_*`, `get_*`, `find_me`, `resume_*` and `stop_*` was reported as accepted **whatever came
+ * back**, an `unknown_method` included. That is most of the adapter's command surface, the whole
+ * remote control and every cleaning start among it. A refusal was not merely unreported; the user
+ * was actively told the opposite.
+ *
+ * ## The two refusals this recognises, and why only those two
+ *
+ * Both are measured, neither is guessed:
+ *
+ * | shape | evidence |
+ * | --- | --- |
+ * | a **bare string**, e.g. `"unknown_method"` | 133 real answers from the reference device (`_appanalysis/geraetefaehigkeiten-*.json`): 23 refusals, every one a bare string, and **not one of the 110 successful answers was one**. The only string that did arrive as a value came wrapped - `get_timezone` answers `["Europe/Berlin"]`. |
+ * | `["retry"]` | {@link RETRY_ANSWER}: the transport already re-sends on it and only hands it up once the retries are spent. |
+ *
+ * **Everything else stays `accepted`, deliberately.** `accepted` claims no more than its own
+ * definition says - the robot answered - and an answer this function does not recognise is exactly
+ * that and nothing more. Erring the other way would put a failure mark on working commands, and a
+ * false alarm on `app_start` is worse than today's silence: silence is a known quantity, a red
+ * cross on a robot that just started cleaning teaches the user to ignore the marks.
+ *
+ * > That asymmetry is the **opposite** of the one in `capabilityProbe.ts`, which treats a number,
+ * > a boolean and `null` as "the device cannot do this". The probe errs towards "cannot" because a
+ * > missing function is visible while a dead switch is not. Here the same reasoning points the
+ * > other way, so the rule is deliberately narrower than the probe's.
+ *
+ * `set_*` keeps its stricter test unchanged: those have one defined answer, and anything but
+ * `["ok"]` has always counted as a refusal.
  *
  * @param method Method as it was requested.
  * @param result The robot's answer.
  * @returns `accepted` or `rejected`.
  */
 export function classifyRobotAnswer(method: string, result: unknown): CommandOutcome {
-	if (!method.startsWith("set_")) return "accepted";
+	const data = answerData(result);
 
-	const data = result && typeof result === "object" && "data" in result
-		? (result as Record<string, unknown>).data
-		: result;
+	// Recognised refusals, for every method - see the table above.
+	if (typeof data === "string") return "rejected";
+	if (Array.isArray(data) && data.length === 1 && data[0] === RETRY_ANSWER) return "rejected";
+
+	// A `set_*` has one defined answer; everything else has answered as much as it ever will.
+	if (!method.startsWith("set_")) return "accepted";
 
 	const isOk = Array.isArray(data) && data.length === 1 && data[0] === "ok";
 	return isOk ? "accepted" : "rejected";
