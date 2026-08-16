@@ -19,7 +19,7 @@
 
 import type { EngineConnection } from "../engine/types";
 import type { CleaningHistoryModel, HistoryStateDefinition, HistoryStateValue } from "./historyTypes";
-import { RECORDS_FOLDER, buildCleaningHistory, historyRoot } from "./cleaningHistory";
+import { DELETE_RUN_COMMAND, RECORDS_FOLDER, buildCleaningHistory, historyRoot } from "./cleaningHistory";
 import { MAP_COLOR_SCHEME_STATE } from "../engine/mapOverlayColors";
 import type { MapColorScheme } from "../engine/mapOverlayColors";
 
@@ -151,7 +151,34 @@ export class CleaningHistorySource {
 			: {};
 		if (this.destroyed || generation !== this.generation) return;
 
-		this.host.onHistory(buildCleaningHistory({ root, definitions, values, language: this.language }));
+		const canDelete = await this.readDeleteCommand(root);
+		if (this.destroyed || generation !== this.generation) return;
+
+		this.host.onHistory(buildCleaningHistory({ root, definitions, values, language: this.language, canDelete }));
+	}
+
+	/**
+	 * Asks whether this robot published the command that deletes one run.
+	 *
+	 * One object read beside the branch read, because the button lives in `commands` and the history
+	 * lives in `cleaningInfo`. The answer is the whole capability decision on this side - the adapter
+	 * creates the object only for a robot that listed runs, and there is no probe for a deleting
+	 * method because calling it would be the deletion.
+	 *
+	 * A read that fails answers **no**: offering a control on a maybe is what the object check is
+	 * there to prevent.
+	 * @param root Root of the history branch, `<instance>.Devices.<duid>.cleaningInfo`.
+	 * @returns Whether the command exists and is writable.
+	 */
+	private async readDeleteCommand(root: string): Promise<boolean> {
+		const id = `${root.replace(/\.cleaningInfo$/, "")}.commands.${DELETE_RUN_COMMAND}`;
+		try {
+			const objects = await this.connection.getObjectViewSystem("state", id, id);
+			const common = (objects?.[id] as { common?: { type?: unknown; write?: unknown } } | undefined)?.common;
+			return common?.type === "number" && common?.write === true;
+		} catch {
+			return false;
+		}
 	}
 
 	/**

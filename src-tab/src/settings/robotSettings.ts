@@ -191,6 +191,12 @@ const KNOWN_SETTINGS: ReadonlyArray<
 	{ kind: "switch", command: "set_right_brush_stretch_status" },
 	{ kind: "switch", command: "set_stretch_tag_status" },
 	{ kind: "switch", command: "set_gap_deep_clean_status" },
+	// Two more of the same shape. The adapter refuses to send either while the robot is out cleaning,
+	// because the Roborock app does not send them then either - nothing about that is decided here:
+	// the refusal happens before anything goes on the wire and arrives as the command feedback on
+	// the switch, with its reason, exactly like the off-peak window's six-hour rule.
+	{ kind: "switch", command: "set_pet_supplies_deep_clean_status" },
+	{ kind: "switch", command: "set_dirty_object_detect_status" },
 	// The status light. Nothing to see here from this side - it differs from its six neighbours only
 	// in what goes on the wire, and the adapter owns that.
 	{ kind: "switch", command: "set_led_status" },

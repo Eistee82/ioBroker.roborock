@@ -155,6 +155,9 @@ describe("the state ids the source has to read", () => {
 			`${ROOT}.settings.set_stretch_tag_status`,
 			`${ROOT}.settings.set_gap_deep_clean_status`,
 			`${ROOT}.settings.set_led_status`,
+			// Two more of the same shape, each refused by the adapter while the robot is out cleaning.
+			`${ROOT}.settings.set_pet_supplies_deep_clean_status`,
+			`${ROOT}.settings.set_dirty_object_detect_status`,
 			`${ROOT}.settings.change_sound_volume`,
 			// Off-peak charging, same shape as the Do Not Disturb window above.
 			`${ROOT}.settings.set_valley_electricity_timer`,

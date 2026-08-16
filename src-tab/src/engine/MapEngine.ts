@@ -1820,6 +1820,27 @@ export class MapEngine {
 		void this.sendCommand("set_state", { duid: this.currentRobotDuid, folder: "commands", command, value });
 	}
 
+	/**
+	 * Deletes one recorded run on the robot.
+	 *
+	 * Goes through the same guarded writer as everything else - the adapter refuses a timestamp its
+	 * last summary did not list, and judges the result by reading the history again rather than by
+	 * the robot's answer (`src/lib/features/vacuum/v1CleanRecordDelete.ts`). Nothing is removed here
+	 * optimistically: the panel follows the states, so the row disappears when the robot's own list
+	 * no longer has it.
+	 *
+	 * @param startedAt Start of the run in unix seconds, which is what names it on the wire.
+	 */
+	public deleteCleaningRun(startedAt: number): void {
+		if (!this.currentRobotDuid) return;
+		void this.sendCommand("set_state", {
+			duid: this.currentRobotDuid,
+			folder: "commands",
+			command: "del_clean_record",
+			value: startedAt,
+		});
+	}
+
 	/** Describes one station status line; the label and value texts come from the object definition. */
 	private createDockStatusRow(stateId: string, common: Record<string, any>): DockStatusRow {
 		return {

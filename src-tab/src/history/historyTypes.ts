@@ -69,4 +69,13 @@ export interface CleaningHistoryModel {
 	summary: HistoryField[];
 	/** Recorded runs, newest first. */
 	runs: CleaningRunModel[];
+	/**
+	 * Whether this device published a writable `commands.del_clean_record`.
+	 *
+	 * Per device and not per run, because that is what the object is. The adapter only creates it
+	 * for a robot whose `get_clean_summary` listed runs - there is no probe for a deleting method,
+	 * since calling it would be the deletion - so an absent object means "this robot cannot", never
+	 * "not loaded yet".
+	 */
+	canDelete: boolean;
 }

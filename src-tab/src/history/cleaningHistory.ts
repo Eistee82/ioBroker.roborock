@@ -53,6 +53,14 @@ export const HISTORY_FOLDER = "cleaningInfo";
 export const RECORDS_FOLDER = "records";
 
 /**
+ * Command that deletes one run, in the device's `commands` folder.
+ *
+ * Named here rather than in the source, because this module owns the shape of the history and this
+ * is part of it. The adapter's side is `src/lib/features/vacuum/v1CleanRecordDelete.ts`.
+ */
+export const DELETE_RUN_COMMAND = "del_clean_record";
+
+/**
  * Fields carrying the start of a run, most trustworthy first.
  *
  * `startTime` is the V1 path's own numeric copy, `timestamp` the Q10 one, `record_start_time` and
@@ -335,6 +343,8 @@ export function buildCleaningHistory(input: {
 	values: Record<string, HistoryStateValue | null>;
 	/** Admin language, used to resolve per-language object names. */
 	language: string;
+	/** Whether the device published a writable `commands.del_clean_record`. */
+	canDelete?: boolean;
 }): CleaningHistoryModel {
 	const { root, values, language } = input;
 	const definitions = new Map<string, HistoryStateDefinition>();
@@ -426,5 +436,5 @@ export function buildCleaningHistory(input: {
 		return a.index - b.index;
 	});
 
-	return { summary, runs };
+	return { summary, runs, canDelete: input.canDelete === true };
 }

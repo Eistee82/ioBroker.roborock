@@ -862,6 +862,14 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				language={language}
 				mapColorScheme={mapColorScheme}
 				loadMap={loadHistoryMap}
+				canDelete={history?.canDelete === true}
+				onDelete={startedAt => {
+					// Closed at once: the run the dialog is showing is on its way out, and the list
+					// behind it refreshes from the states as soon as the adapter has re-read the
+					// history. Whether it really went is reported on the command state.
+					setHistoryRun(null);
+					engineRef.current?.deleteCleaningRun(startedAt);
+				}}
 				onClose={() => setHistoryRun(null)}
 			/>
 

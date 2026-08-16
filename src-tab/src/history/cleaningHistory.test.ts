@@ -246,7 +246,7 @@ describe("buildCleaningHistory - list and totals", () => {
 	});
 
 	it("yields an empty model for a device that published nothing", () => {
-		expect(build({})).toEqual({ summary: [], runs: [] });
+		expect(build({})).toEqual({ summary: [], runs: [], canDelete: false });
 	});
 });
 

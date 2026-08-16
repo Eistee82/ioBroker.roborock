@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FeatureDependencies } from "../../src/lib/features/baseDeviceFeatures";
 import { Feature } from "../../src/lib/features/features.enum";
 import { V1VacuumFeatures } from "../../src/lib/features/vacuum/v1VacuumFeatures";
-import { STATUS_FIELD_TOGGLES, V1ProbedCapabilityService, statusFieldToggleFor } from "../../src/lib/features/vacuum/v1ProbedCapabilities";
+import { STATUS_FIELD_TOGGLES, V1ProbedCapabilityService, statusFieldIsOn, statusFieldToggleFor, statusFieldToggleGroup } from "../../src/lib/features/vacuum/v1ProbedCapabilities";
 
 vi.mock("../../src/lib/map/MapManager", () => ({
 	MapManager: class {
@@ -95,6 +95,14 @@ describe("the settings the robot carries in its status packet", () => {
 		/** Every command name registered in any folder. */
 		public registeredCommands(): string[] {
 			return [...Object.keys(this.commands), ...Object.values(this.extraCommandGroups).flatMap((group) => Object.keys(group))];
+		}
+		/** The folder a command landed in, or null when it was never registered. */
+		public folderOf(name: string): string | null {
+			if (this.commands[name]) return "commands";
+			for (const [folder, group] of Object.entries(this.extraCommandGroups)) {
+				if (group[name]) return folder;
+			}
+			return null;
 		}
 		/** The spec a command was registered with, whichever folder it landed in. */
 		public specOf(name: string): any {
@@ -190,6 +198,67 @@ describe("the settings the robot carries in its status packet", () => {
 
 		expect(vacuum.registeredCommands()).toContain(CORNER.setter);
 	});
+
+	/**
+	 * Drying, which is the case the reference device really has.
+	 *
+	 * Unlike corner mopping, the a65 **does** report `dry_status` - it is in both measured status
+	 * packets. What it does not have is `app_start_mop_drying`: it answers `unknown_method`, and the
+	 * name exists nowhere in its control plugin (`_appanalysis/32-presets.md` §8). So this group
+	 * guards the swap - the field keeps unlocking a control, but a different one.
+	 */
+	describe("the drying switch", () => {
+		const DRYER = STATUS_FIELD_TOGGLES.find((toggle) => toggle.statusField === "dry_status")!;
+
+		it("appears beside the dock actions when the station reports dry_status", async () => {
+			const vacuum = createVacuum();
+			await vacuum.feedStatus({ ...A65_STATUS, dry_status: 0 });
+
+			expect(vacuum.specOf(DRYER.setter)).toMatchObject({ type: "boolean", role: "switch.enable", write: true });
+			expect(vacuum.folderOf(DRYER.setter)).toBe("commands");
+		});
+
+		it("no longer offers the two calls the robot does not know", async () => {
+			// This is the reported fault, in one assertion: the same packet used to produce
+			// `app_start_mop_drying`, and pressing it answered `unknown_method`.
+			const vacuum = createVacuum();
+			await vacuum.processStatus({ ...A65_STATUS, dry_status: 0 });
+
+			expect(vacuum.registeredCommands()).not.toContain("app_start_mop_drying");
+			expect(vacuum.registeredCommands()).not.toContain("app_stop_mop_drying");
+		});
+
+		it("mirrors the running state onto the switch, comparing against 1", async () => {
+			const vacuum = createVacuum();
+			await vacuum.feedStatus({ ...A65_STATUS, dry_status: 1 });
+
+			expect(setStateChanged).toHaveBeenCalledWith(
+				`Devices.duid-test.commands.${DRYER.setter}`,
+				{ val: true, ack: true }
+			);
+		});
+
+		it("falls back to off for a value the app would not call drying", async () => {
+			const vacuum = createVacuum();
+			await vacuum.feedStatus({ ...A65_STATUS, dry_status: 2 });
+
+			expect(setStateChanged).toHaveBeenCalledWith(
+				`Devices.duid-test.commands.${DRYER.setter}`,
+				{ val: false, ack: true }
+			);
+		});
+
+		it("leaves it to a model class that declares the command itself", async () => {
+			// `a179_features.ts` registers `app_set_dryer_status` for its own class. One command with
+			// two owners in two folders is what this guard exists for.
+			const vacuum = createVacuum();
+			vacuum.declareCommand(DRYER.setter, "commands");
+			await vacuum.feedStatus({ ...A65_STATUS, dry_status: 1 });
+
+			expect(vacuum.specOf(DRYER.setter)).not.toHaveProperty("desc");
+			expect(setStateChanged).not.toHaveBeenCalled();
+		});
+	});
 });
 
 describe("what goes on the wire for a status-carried setting", () => {
@@ -231,6 +300,38 @@ describe("what goes on the wire for a status-carried setting", () => {
 		expect(statusFieldToggleFor(CORNER.setter)).toBe(CORNER);
 		expect(statusFieldToggleFor(CORNER.statusField)).toBe(CORNER);
 		expect(statusFieldToggleFor("set_led_status")).toBeUndefined();
+	});
+
+	it("reads each status field the way the app reads that particular field", () => {
+		// Two rules, because the app really uses two: `!!value` for corner mopping (A65:223836-223839)
+		// and `1 == value` for drying (A65:222781-222783). A robot that reports a third state must not
+		// read as "drying".
+		const dryer = statusFieldToggleFor("dry_status")!;
+
+		expect(statusFieldIsOn(CORNER, 2)).toBe(true);
+		expect(statusFieldIsOn(CORNER, 0)).toBe(false);
+
+		expect(statusFieldIsOn(dryer, 1)).toBe(true);
+		expect(statusFieldIsOn(dryer, 0)).toBe(false);
+		expect(statusFieldIsOn(dryer, 2)).toBe(false);
+	});
+
+	it("keeps the drying switch beside the dock actions, not among the settings", () => {
+		// The folder decides which panel of the admin tab sees it at all: the dock panel reads
+		// `commands.<name>`, the settings panel reads `settings.<name>`. Putting the drying switch in
+		// the wrong one is how it went missing in the first place.
+		expect(statusFieldToggleGroup(statusFieldToggleFor("app_set_dryer_status")!)).toBe("commands");
+		expect(statusFieldToggleGroup(CORNER)).toBe("settings");
+	});
+
+	it("builds the same object for the drying switch, which forwards its argument unread", () => {
+		// `setDryerStatus` hands `a0` straight to the wrapper (A65:230375-230386), so the 1 or the 0
+		// has to be made here - the caller is where the app makes it too (A65:422887-422943).
+		const dryer = statusFieldToggleFor("app_set_dryer_status")!;
+		service.registerStatusFieldToggle(dryer, () => undefined);
+
+		expect(service.buildCommandParams(dryer.setter, true)).toEqual({ method: "app_set_dryer_status", params: { status: 1 } });
+		expect(service.buildCommandParams(dryer.setter, false)).toEqual({ method: "app_set_dryer_status", params: { status: 0 } });
 	});
 
 	it("labels the switch from Roborock's own catalogue, in all eleven adapter languages", async () => {
