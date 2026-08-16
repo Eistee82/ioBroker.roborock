@@ -1358,10 +1358,19 @@ describe("MapEditService", () => {
 			expect(MapEditService.COMMANDS).not.toContain("save_map");
 		});
 
-		it("leaves the carpet zone calls alone, whose payload the report could not pin down", () => {
+		it("leaves the carpet zone calls alone, because their set cannot be read back in full", () => {
 			const service = new MapEditService(deps, mockRobot.duid);
-			// `set_carpet_area` and `set_ignore_carpet_zone` are "teilweise belegt": zone_data was
-			// never traced to the single value, so whether they replace or extend is unknown.
+			// Originally held back because `zone_data` had never been traced to the single value, so
+			// whether the calls replace or extend was unknown. Both halves are answered now, and the
+			// answer is why they stay out:
+			//
+			//  - They **replace**. `getCarpetZonesParams` feeds them the complete visible set from
+			//    `getVisibleCarpetZones` and deletes by filtering one id out of it - the `save_map`
+			//    pattern, so sending one zone drops the rest.
+			//  - There is **no getter**. The a65 bundle has `get_carpet_clean_mode` and nothing for
+			//    the areas, and the only other source, map block `CUSTOM_CARPET`, carries neither
+			//    `slopeAngle` nor `carpetId` nor the per-carpet flags. The adapter therefore cannot
+			//    rebuild the set it would have to send back.
 			for (const method of ["set_carpet_area", "set_ignore_carpet_zone"]) {
 				expect(service.handles(method)).toBe(false);
 			}

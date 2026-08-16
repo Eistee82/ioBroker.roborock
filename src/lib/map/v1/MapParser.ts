@@ -185,16 +185,19 @@ export interface ParsedMapData {
 	IGNORED_OBSTACLES2?: any[];
 	SMART_ZONE_PATH_TYPE?: number;
 	SMART_ZONE?: any[];
-	CUSTOM_CARPET?: any[];
+	/** Carpet areas, four corners each. One entry per record, `[]` when the block is empty. */
+	CUSTOM_CARPET?: number[][];
 	FLOOR_MAP?: number[];
 	FURNITURES?: Furniture[];
 	DOCK_TYPE?: number;
 	ENEMIES?: any[];
 	STUCK_POINTS?: any[];
-	SMART_DS?: any[];
+	/** Four corners each, like the other zone blocks. */
+	SMART_DS?: number[][];
 	FLOOR_DIRECTION?: any[];
 	DATE?: number;
-	EXT_ZONES?: any[];
+	/** Four corners each, like the other zone blocks. */
+	EXT_ZONES?: number[][];
 	PATROL?: any[];
 	PET_PATROL?: any[];
 }
@@ -315,31 +318,23 @@ export class MapParser {
 							break;
 
 						case TYPES.CURRENTLY_CLEANED_ZONES:
-						case TYPES.VIRTUAL_WALLS: {
-							const count = this.getCount(blockBuffer);
-							const zones: number[][] = [];
-							const dataStart = dataPosition + hlength;
-							for (let i = 0; i < count; i++) {
-								zones.push(this.readUInt16LE(buf, dataStart + i * 8, 0, 4));
-							}
-							result[typeName] = zones;
+						case TYPES.VIRTUAL_WALLS:
+							result[typeName] = this.readZoneRecords(buf, blockBuffer, dataPosition + hlength, length, 4);
 							break;
-						}
 						case TYPES.FORBIDDEN_ZONES:
 						case TYPES.NO_MOP_ZONE:
 						case TYPES.CARPET_FORBIDDEN_ZONE:
 						case TYPES.DS_FORBIDDEN_ZONES:
 						case TYPES.CLF_FORBIDDEN_ZONES:
-						case TYPES.MODE_CARPET: {
-							const count = this.getCount(blockBuffer);
-							const zones: number[][] = [];
-							const dataStart = dataPosition + hlength;
-							for (let i = 0; i < count; i++) {
-								zones.push(this.getForbiddenZone(buf, dataStart + i * 16, 0));
-							}
-							result[typeName] = zones;
+						case TYPES.MODE_CARPET:
+						// These four used to be read once, without the count, which produced a zone
+						// that was not there - see {@link MapParser.readZoneRecords}.
+						case TYPES.CUSTOM_CARPET:
+						case TYPES.CL_FORBIDDEN_ZONES:
+						case TYPES.SMART_DS:
+						case TYPES.EXT_ZONES:
+							result[typeName] = this.readZoneRecords(buf, blockBuffer, dataPosition + hlength, length, 8);
 							break;
-						}
 						case TYPES.OBSTACLES2:
 							result[typeName] = this.extractObstacles(blockBuffer, hlength);
 							break;
@@ -408,12 +403,6 @@ export class MapParser {
 							break;
 						case TYPES.SMART_ZONE:
 							result[typeName] = this.getSmartZone(blockBuffer, hlength);
-							break;
-						case TYPES.CUSTOM_CARPET:
-						case TYPES.CL_FORBIDDEN_ZONES:
-						case TYPES.SMART_DS:
-						case TYPES.EXT_ZONES:
-							result[typeName] = this.getForbiddenZone(buf, dataPosition + hlength, 0); // Re-use getForbiddenZone as structure is same (16 bytes)
 							break;
 						case TYPES.FLOOR_MAP:
 							result[typeName] = this.readUInt8(buf, dataPosition, hlength, length);
@@ -1086,8 +1075,49 @@ export class MapParser {
 		return [buf.readUInt16LE(OFFSETS.TARGET_X), buf.readUInt16LE(OFFSETS.TARGET_Y)];
 	}
 
-	private getForbiddenZone(buf: Buffer, dataPosition: number, offset: number): number[] {
-		return this.readUInt16LE(buf, dataPosition, offset, 8);
+	/**
+	 * Reads a block of fixed-size zone records: `count` records of `values` little-endian uint16 each.
+	 *
+	 * ## Why this is one function and not a loop at each call site
+	 *
+	 * Four block types - `CUSTOM_CARPET`, `CL_FORBIDDEN_ZONES`, `SMART_DS` and `EXT_ZONES` - used to
+	 * be read with a single unguarded `getForbiddenZone` call and no count at all. That is wrong in
+	 * both directions, and the second one is the damaging one:
+	 *
+	 *  - With more than one record, only the first arrived.
+	 *  - **With no records at all it invented one.** An empty block is `length = 0`, but the read
+	 *    happened anyway and took its 16 bytes from whatever followed - the header of the next
+	 *    block. Measured on the reference device's own map, an empty `CUSTOM_CARPET` came back as
+	 *    `[28, 12, 1220, 0, 5, 0, 31712, 23618]`, which is `type = 28`, `hlength = 12`,
+	 *    `length = 1220`, `count = 5` of the `DS_FORBIDDEN_ZONES` block behind it, plus its first
+	 *    two coordinates.
+	 *
+	 * That mattered beyond a wrong number, because `CL_FORBIDDEN_ZONES` is one of
+	 * `UNREPRODUCIBLE_BLOCKS`: `readOverlaysFromMap` refuses to touch the zones of a map that
+	 * carries one, since `save_map` would delete it. A phantom record made that refusal fire on a
+	 * map whose block is empty, which takes the whole zone editor away - no adding, moving or
+	 * deleting of no-go zones, no-mop zones and virtual walls - and names a block the map does not
+	 * really have.
+	 *
+	 * The guard against the block length is therefore not decoration: it is what stops a record
+	 * count from reaching past its own block. `count` stays the authority where the two agree,
+	 * which is every real map measured so far.
+	 * @param buf The whole map buffer.
+	 * @param blockBuffer This block, for its header.
+	 * @param dataStart Absolute offset of the first record.
+	 * @param length Payload length of the block, in bytes.
+	 * @param values Uint16 values per record - 4 for an axis-parallel pair of corners, 8 for four corners.
+	 * @returns One array of `values` numbers per record; empty when the block carries none.
+	 */
+	private readZoneRecords(buf: Buffer, blockBuffer: Buffer, dataStart: number, length: number, values: number): number[][] {
+		const stride = values * 2;
+		const fits = Math.floor(length / stride);
+		const count = Math.min(this.getCount(blockBuffer), fits);
+		const zones: number[][] = [];
+		for (let i = 0; i < count; i++) {
+			zones.push(this.readUInt16LE(buf, dataStart + i * stride, 0, values));
+		}
+		return zones;
 	}
 
 	private getSingleByteOffset(buf: Buffer): number {

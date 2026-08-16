@@ -240,19 +240,23 @@
 			"appFunction": "saveCarpetAddedZone",
 			"module": 523,
 			"lines": "229782-229791",
-			"params": { "map_index": "<Karten-ID>", "type": 1, "zone_data": "<vom Aufrufer>" },
-			"paramsNote": "MM-Hülle Modul 1502, Zeilen 333557-333610. Der einzige Aufrufer übergibt type fest als 1 (Modul 2661, Zeile 813199). Andere type-Werte sind nicht belegt. Der Aufbau von zone_data wurde nicht bis zum Einzelwert verfolgt.",
+			"params": { "map_index": "<Karten-ID>", "type": 1, "zone_data": "[[x1,y1,x2,y2,x3,y3,x4,y4], ...]", "flags": "[<je Zone>, ...] - nur wenn der Aufrufer sie mitgibt" },
+			"paramsNote": "MM-Hülle Modul 1502, Zeilen 333557-333610: Object.assign({map_index, type}, a2.flags||a2.zone_data ? a2 : {zone_data: a2}) - flags ist ein zweites, optionales Feld neben zone_data. Der einzige Aufrufer übergibt type fest als 1 (Modul 2661, Zeile 813199). Andere type-Werte sind nicht belegt. zone_data kommt aus getCarpetZonesParams (Modul 1502, Zeilen 480273-480390): je sichtbarer Teppichzone ein Satz aus _getSingleFBZoneParams(state.rectSize, state.slopeAngle) (Zeilen 479280-479352), also vier gedrehte Eckpunkte in Slam-Millimetern.",
+			"replacesEntireSet": true,
+			"replacesNote": "Ersetzt, erweitert nicht - dasselbe Muster wie save_map. getCarpetZonesParams liest mit getVisibleCarpetZones den kompletten sichtbaren Bestand; Löschen geschieht über den optionalen Parameter excludeId, der genau eine Zone herausfiltert, bevor alles Übrige zurückgeschickt wird. Wer eine einzelne Zone sendet, löscht alle anderen.",
 			"retry": false,
-			"confidence": "teilweise belegt"
+			"confidence": "belegt",
+			"adapterEntscheidung": "Nicht gebaut. Ursprünglicher Grund (README-Changelog): zone_data nie weit genug verfolgt, um zu sagen, ob erweitert oder ersetzt wird. Abgelöst durch den jetzt belegten Grund: (1) es ersetzt, siehe replacesNote, und (2) es gibt keinen Getter - im ganzen a65-Bundle nur get_carpet_clean_mode, kein get_carpet_area. Einziger Rückleseweg wäre der Kartenblock CUSTOM_CARPET (Typ 22), und der trägt weder slopeAngle noch id, carpetId oder flags. Der Adapter kann den Bestand also nicht verlustfrei zurückschicken; ein Setzen würde gedrehte Teppiche flach schreiben und die Custom-Clean-Zuordnung verlieren."
 		},
 		"set_ignore_carpet_zone": {
 			"appFunction": "saveCarpetIgnoreZone",
 			"module": 523,
 			"lines": "229792-229801",
 			"params": { "map_index": "<Karten-ID>", "zone_data": "<vom Aufrufer>" },
-			"paramsNote": "MM-Hülle Modul 1502, Zeilen 333449-333472.",
+			"paramsNote": "MM-Hülle Modul 1502, Zeilen 333449-333472. Der Aufrufer ist derselbe startMapSave-Zweig wie bei set_carpet_area (Modul 2661, EditAction.Ignore ab Zeile 813203); der Aufbau von zone_data wurde für diesen Zweig nicht bis zum Einzelwert verfolgt.",
 			"retry": true,
-			"confidence": "teilweise belegt"
+			"confidence": "teilweise belegt",
+			"adapterEntscheidung": "Nicht gebaut, aus demselben Grund wie set_carpet_area: kein Getter, und der Bestand ist über die Karte nicht verlustfrei lesbar."
 		},
 		"set_segment_ground_material": {
 			"appFunction": "saveFloorMaterial",
@@ -1183,7 +1187,7 @@
 		"Rückgabeformate von split_segment / merge_segment / save_map - die App wertet nur response.result bzw. response.data.error.code aus und liest die Karte danach neu.",
 		"Gerätesemantik von save_map-Satztyp 3 (FBZ_TYPE_CLEANING). Interner Name, Referenzfeld, Erzeuger und Button-Handler sind belegt; der i18n-Schlüssel map_edit_add_clean_fbz_garnet hat in keinem der 23 Wörterbücher einen Wert.",
 		"type-Werte von set_carpet_area außer 1.",
-		"Aufbau von zone_data bei set_carpet_area und set_ignore_carpet_zone.",
+		"Aufbau von zone_data bei set_ignore_carpet_zone - der Zweig EditAction.Ignore wurde nicht bis zum Einzelwert verfolgt. Für set_carpet_area ist er inzwischen belegt, siehe methods.set_carpet_area.paramsNote.",
 		"Satzstruktur der data-Felder von app_set_low_space_zones, app_set_door_sill_blocks, app_set_smart_door_sill, set_ignore_identify_area und app_set_beautify_blocks.",
 		"Bedeutung von [200, 0] in save_map - kein Aufrufer im Bundle setzt isHome=true.",
 		"Ob Teppichzonen über save_map mitgeführt werden. FBZ_TYPE_CARPET existiert im Enum, wird in getFBZParams aber in keinen Satztyp übersetzt. Erschlossen: nein."
