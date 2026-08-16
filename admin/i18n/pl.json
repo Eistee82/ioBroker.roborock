@@ -399,6 +399,7 @@
   "ui_map3d": "Mapa 3D",
   "ui_map3d_loading": "Ładowanie widoku 3D…",
   "ui_map3d_failed": "Widok 3D nie uruchomił się; pokazywana jest mapa 2D.",
+  "ui_map3d_finish_zone": "Zapisz lub odrzuć umieszczaną strefę przed przełączeniem na widok 3D.",
   "ui_segment_edit_intro": "Numery pokoi się zmieniają, dotyczy to więc:",
   "ui_segment_edit_loses_modes": "Ustawienia ssania i wody przypisane do pokoi w robocie. Adapter ich nie ma i nie może ich przywrócić.",
   "ui_segment_edit_loses_sequence": "Kolejność sprzątania. Adapter ją potem czyści, bo kolejność ze starymi numerami wygląda poprawnie, a sprząta niewłaściwe pokoje.",

@@ -54,6 +54,7 @@ import { MapsPanel } from "./MapsPanel";
 import { Map3DSource } from "../map3d/map3dSource";
 import { Map3DView } from "../map3d/Map3DView";
 import { isWebGLAvailable } from "../map3d/webgl";
+import { switchMapView, ZONE_EDITING_VIEW } from "../map3d/zoneEditingView";
 import type { CellPoint, Map3DModel } from "../map3d/map3dModel";
 import type { ScenePalette } from "../map3d/scene";
 import { RemotePad } from "./RemotePad";
@@ -541,6 +542,35 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 		virtualWall: getMapOverlayColors(mapColorScheme).wallStroke
 	}), [theme, mapColorScheme]);
 
+	/**
+	 * Starts placing a wall or a zone, in the view that can actually place one.
+	 *
+	 * ## The reported fault
+	 *
+	 * "No zones are shown in the 3D view, so you cannot place them." Both halves are one bug, and it
+	 * is here rather than in the 3D renderer: `startMapZone` puts a **draft** into the 2D map's SVG
+	 * layer, centred on that map's viewport, and the 3D view is built from `map.mapData` alone. A
+	 * draft is not in `mapData` - nothing is sent until Save - so the 3D view cannot show it, and
+	 * while 3D is up the 2D map it *was* drawn on is `visibility: hidden`. The panel duly switched to
+	 * its Save/Cancel state and the user was left looking at a zone that existed in neither view.
+	 *
+	 * ## Why this switches the view instead of building handles in 3D
+	 *
+	 * Because `save_map` replaces the **entire** stored set - what is not sent is deleted
+	 * (`_appanalysis/14-editor-methoden.md` section 2.1) - and the read-modify-write that makes it
+	 * safe lives behind the 2D editor's own confirmation path. A second set of handles would be a
+	 * second chance to get that wrong for no gain the user asked for: what was asked for is to place
+	 * a zone, and after this they can, from either view.
+	 *
+	 * Rotating a body under a mouse is also not the same gesture as dragging a rectangle on a flat
+	 * map, and the corner the user grabs in 3D is a corner of a ten-cell-tall box seen in
+	 * perspective - the very thing that makes a mis-drawn no-go zone easy to produce.
+	 */
+	const startMapZone = useCallback((kind: "no_go" | "no_mop" | "wall") => {
+		setShow3D(ZONE_EDITING_VIEW === "3d");
+		engineRef.current?.startMapZone(kind);
+	}, []);
+
 	const writeSetting = useCallback((write: SettingWrite) => {
 		void settingsSourceRef.current?.apply(write);
 	}, []);
@@ -683,7 +713,14 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 							exclusive
 							value={show3D ? "3d" : "2d"}
 							onChange={(_event, next) => {
-								if (next === "2d" || next === "3d") setShow3D(next === "3d");
+								if (next !== "2d" && next !== "3d") return;
+								// The other half of the placing fix, and the rule lives in one place for both:
+								// an unsaved wall or zone exists only in the 2D map's SVG layer, so leaving for
+								// 3D would hide the very thing being dragged while the panel keeps offering
+								// Save. The panel's own two buttons are how to get out of that.
+								const decided = switchMapView(next, mapZones.drafting);
+								if (decided.refusedBecause) showError(I18n.t(decided.refusedBecause));
+								setShow3D(decided.show === "3d");
 							}}
 							sx={{ p: 0.5 }}
 						>
@@ -756,7 +793,7 @@ export function MapView({ socket, instanceId, language }: MapViewProps): React.J
 				/>
 				<MapZonesPanel
 					zones={mapZones}
-					onAdd={kind => engineRef.current?.startMapZone(kind)}
+					onAdd={startMapZone}
 					onSave={() => void engineRef.current?.saveMapZone()}
 					onCancel={() => engineRef.current?.cancelMapZone()}
 				/>

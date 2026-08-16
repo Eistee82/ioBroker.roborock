@@ -399,6 +399,7 @@
   "ui_map3d": "Mapa 3D",
   "ui_map3d_loading": "Cargando la vista 3D…",
   "ui_map3d_failed": "La vista 3D no pudo iniciarse; se muestra el mapa 2D.",
+  "ui_map3d_finish_zone": "Guarde o descarte la zona que está colocando antes de cambiar a 3D.",
   "ui_segment_edit_intro": "Los números de las habitaciones cambian, así que esto afecta a:",
   "ui_segment_edit_loses_modes": "Ajustes de succión y agua por habitación en el robot. El adaptador no los tiene y no puede restaurarlos.",
   "ui_segment_edit_loses_sequence": "El orden de limpieza. El adaptador lo borra después, porque un orden con números antiguos parece válido y limpia las habitaciones equivocadas.",
