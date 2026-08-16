@@ -3,6 +3,7 @@ import { Box, Button, Chip, Collapse, IconButton, Stack, TextField, Tooltip, Typ
 import DoorFrontIcon from "@mui/icons-material/DoorFront";
 import EditIcon from "@mui/icons-material/Edit";
 import MergeIcon from "@mui/icons-material/Merge";
+import CallSplitIcon from "@mui/icons-material/CallSplit";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { FloatingSurface } from "./FloatingSurface";
@@ -23,6 +24,28 @@ interface RoomsPanelProps {
 	onSetCleanOrder: () => void;
 	/** Clears it, so the robot picks its own order again. */
 	onClearCleanOrder: () => void;
+	/** Whether this map can be divided at all - false hides the button rather than greying it out. */
+	canSplit: boolean;
+	/** Why the picked room cannot be divided, or null when it can. Shown on the disabled button. */
+	splitRefusal: string | null;
+	/** Lays a dividing line across the picked room. Sends nothing. */
+	onSplitStart: () => void;
+	/** The division in progress, or null. */
+	split: SplitPanelState | null;
+	/** Asks to send the line - the shell puts the confirmation dialog in between. */
+	onSplitRequest: () => void;
+	/** Drops the line without sending anything. */
+	onSplitCancel: () => void;
+}
+
+/** The part of the engine's split state this panel shows. */
+export interface SplitPanelState {
+	/** Whether the line as it stands could be sent. */
+	valid: boolean;
+	/** Roborock's own wording for why it could not, or null. */
+	hint: string | null;
+	/** The two areas the line would leave behind, in square metres. */
+	halves: { a: number; b: number } | null;
 }
 
 /**
@@ -50,7 +73,19 @@ interface RoomsPanelProps {
  * either, and a row showing nothing but a number would invite renaming a room the user cannot
  * identify.
  */
-export function RoomsPanel({ rooms, onRename, onMergeRequest, onSetCleanOrder, onClearCleanOrder }: RoomsPanelProps): React.JSX.Element | null {
+export function RoomsPanel({
+	rooms,
+	onRename,
+	onMergeRequest,
+	onSetCleanOrder,
+	onClearCleanOrder,
+	canSplit,
+	splitRefusal,
+	onSplitStart,
+	split,
+	onSplitRequest,
+	onSplitCancel,
+}: RoomsPanelProps): React.JSX.Element | null {
 	const [open, setOpen] = useState(false);
 	/** Segment id whose name is being edited, or null. Only one at a time. */
 	const [editing, setEditing] = useState<number | null>(null);
@@ -131,6 +166,85 @@ export function RoomsPanel({ rooms, onRename, onMergeRequest, onSetCleanOrder, o
 							</Button>
 						</span>
 					</Tooltip>
+
+					{/*
+					 * Dividing. Hidden entirely on a map that publishes no grid - a B01/Q10 device, or
+					 * one whose grid did not compress - because there is nothing to draw a line on and
+					 * a permanently dead button explains nothing.
+					 *
+					 * While a division runs, the button turns into the two that end it. The panel does
+					 * not send: `onSplitRequest` only asks, and the shell puts the warning in between.
+					 */}
+					{canSplit && !split ? (
+						<Tooltip title={splitRefusal ?? (selectedCount === 1 ? I18n.t("ui_map_room_split") : I18n.t("ui_split_pick_one"))}>
+							<span>
+								<Button
+									fullWidth
+									size="small"
+									variant="outlined"
+									startIcon={<CallSplitIcon />}
+									disabled={selectedCount !== 1 || splitRefusal !== null}
+									onClick={onSplitStart}
+								>
+									{I18n.t("ui_map_room_split")}
+								</Button>
+							</span>
+						</Tooltip>
+					) : null}
+
+					{canSplit && split ? (
+						<Stack spacing={1}>
+							{/*
+							 * The hint is Roborock's own wording for the two states the line can be in
+							 * that cannot be sent. It appears and disappears while the line is dragged,
+							 * so it explains a state the user can already see on the map - dashed
+							 * against solid - rather than arriving after a click.
+							 */}
+							<Typography
+								variant="caption"
+								color={split.valid ? "text.secondary" : "warning.main"}
+							>
+								{split.hint ?? I18n.t("ui_split_ready")}
+							</Typography>
+
+							{/*
+							 * The two areas. The app shows nothing of the kind, and this is the question
+							 * the user actually has - "am I cutting the kitchen in the right place".
+							 * Shown, not enforced: the app has no rule about the halves, and inventing
+							 * one here would refuse divisions the robot would accept.
+							 */}
+							{split.halves ? (
+								<Typography variant="caption">
+									{I18n.t("ui_split_halves")
+										.replace("%s", split.halves.a.toFixed(1))
+										.replace("%s", split.halves.b.toFixed(1))}
+								</Typography>
+							) : null}
+
+							<Stack
+								direction="row"
+								spacing={1}
+							>
+								<Button
+									fullWidth
+									size="small"
+									variant="contained"
+									onClick={onSplitCancel}
+								>
+									{I18n.t("ui_cancel")}
+								</Button>
+								<Button
+									fullWidth
+									size="small"
+									color="warning"
+									disabled={!split.valid}
+									onClick={onSplitRequest}
+								>
+									{I18n.t("ui_map_room_split")}
+								</Button>
+							</Stack>
+						</Stack>
+					) : null}
 
 					{/*
 					 * The cleaning order, from the same selection as combining - one selection, two

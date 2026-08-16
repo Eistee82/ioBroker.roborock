@@ -9,6 +9,7 @@ import { ROBOROCK_PALETTE } from "../MapHelper";
 import { LEGACY_COLORS } from "../../../common/mapDrawing/constants";
 import { fadeHexTowards, fadeSurfaceColors, getSelectionFadeFactor } from "../../../common/mapDrawing/roomSelectionFade";
 import { floorFolderId, groupSelectedRoomsByMapFlag, normalizeMapFlag, sortRoomIds } from "../roomKey";
+import { imagePixels } from "../../../common/segmentRaster";
 // Do not use "import { X, type Y }" — ioBroker runtime (esbuild-register) does not support inline type in named imports
 import { CanvasMapRenderer } from "./CanvasMapRenderer";
 
@@ -70,9 +71,10 @@ export class MapBuilder {
 
 	private buildGetSegmentColor(mapdata: any, highlightedBlocks: number[], fade: SegmentFade | null): (segmentId: number) => string | undefined {
 		const image = mapdata.IMAGE;
-		if (!image.pixels?.segments?.length) return () => undefined;
+		const segmentPixels = imagePixels(image).segments;
+		if (!segmentPixels.length) return () => undefined;
 		const segmentsData: Record<number, { count: number }> = {};
-		image.pixels.segments.forEach((px: number) => {
+		segmentPixels.forEach((px: number) => {
 			const segnum = px >>> 21;
 			if (segnum >= MAX_BLOCK_NUM) return;
 			if (!segmentsData[segnum]) segmentsData[segnum] = { count: 0 };
@@ -81,7 +83,7 @@ export class MapBuilder {
 		const segmentNums = Object.keys(segmentsData).map(Number);
 		const maxId = segmentNums.length ? Math.max(...segmentNums) : 0;
 		const matrixSize = MAX_BLOCK_NUM;
-		const adjacencyMatrix = this.buildAdjacencyMatrix(image.pixels.segments, image.dimensions.width, image.dimensions.height, maxId);
+		const adjacencyMatrix = this.buildAdjacencyMatrix(segmentPixels, image.dimensions.width, image.dimensions.height, maxId);
 		const pointsCount = new Array(matrixSize).fill(0);
 		for (const segStr of segmentNums) {
 			if (segStr >= 0 && segStr < matrixSize) pointsCount[segStr] = segmentsData[segStr].count;

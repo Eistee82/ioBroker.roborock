@@ -10,6 +10,13 @@ interface SegmentEditDialogProps {
 	pending: SegmentEditKind | null;
 	/** Names of the rooms the edit touches, for the sentence that says what is being changed. */
 	roomNames: string[];
+	/**
+	 * The cleaning order the robot currently holds, as room names.
+	 *
+	 * Empty means there is none, and the dialog then says so instead of warning about one. A warning
+	 * that appears whether or not it applies is a warning nobody reads.
+	 */
+	cleanOrderNames: string[];
 	onConfirm: () => void;
 	onCancel: () => void;
 }
@@ -48,7 +55,7 @@ interface SegmentEditDialogProps {
  * Nothing here can be undone from the tab. The dialog opens with neither button focused and the
  * confirming one is the plain, non-primary one, so a stray Enter does not divide a room.
  */
-export function SegmentEditDialog({ pending, roomNames, onConfirm, onCancel }: SegmentEditDialogProps): React.JSX.Element {
+export function SegmentEditDialog({ pending, roomNames, cleanOrderNames, onConfirm, onCancel }: SegmentEditDialogProps): React.JSX.Element {
 	const titleKey = pending === "merge" ? "ui_map_room_merge" : "ui_map_room_split";
 
 	return (
@@ -82,8 +89,21 @@ export function SegmentEditDialog({ pending, roomNames, onConfirm, onCancel }: S
 					<ListItem disableGutters>
 						<ListItemText primary={I18n.t("ui_segment_edit_loses_modes")} />
 					</ListItem>
+					{/*
+					 * The one item the adapter can be concrete about. It reads the cleaning order back
+					 * from the robot, so it can name the rooms that are in it - and when there is none,
+					 * it says that instead of warning about something that does not exist. The app
+					 * warns blind here; this is the half where we know more than it does.
+					 */}
 					<ListItem disableGutters>
-						<ListItemText primary={I18n.t("ui_segment_edit_loses_sequence")} />
+						<ListItemText
+							primary={I18n.t("ui_segment_edit_loses_sequence")}
+							secondary={
+								cleanOrderNames.length
+									? I18n.t("ui_segment_edit_sequence_is").replace("%s", cleanOrderNames.join(" → "))
+									: I18n.t("ui_segment_edit_sequence_none")
+							}
+						/>
 					</ListItem>
 					<ListItem disableGutters>
 						<ListItemText primary={I18n.t("ui_segment_edit_loses_switches")} />

@@ -7,6 +7,41 @@
  */
 
 /**
+ * One room of the image block, as `MapParser` publishes it under `IMAGE.segments.list`.
+ *
+ * `count` and `bounds` cover the segment's **floor** cells only, which is what `center` has always
+ * been derived from. Wall cells carry a segment id as well, so a walls-included figure would be
+ * larger - about 13 % on the reference device - and would move every room label. Anything that
+ * needs the walls has the raster (`IMAGE.raster`) and can count them itself.
+ */
+export interface SegmentInfo {
+	/** Segment id as the robot uses it, i.e. the value `split_segment` and `name_segment` expect. */
+	id: number;
+	/** Room name from the cloud, or `""` when the device has no name on record for this segment. */
+	name: string;
+	/** Centre of the bounding box, in robot coordinates (millimetres). */
+	center: [number, number];
+	/**
+	 * Floor cells the segment occupies. One cell is 50 x 50 mm, so the area in m² is
+	 * `count * 0.0025` - the figure the Roborock app tests against its 2 m² floor before it will
+	 * divide a room (`_appanalysis/28-raeume-teilen.md` §3.2).
+	 *
+	 * Optional because a `mapData` state written by an older adapter version does not carry it.
+	 */
+	count?: number;
+	/**
+	 * Bounding box of the floor cells, in raster cells of the image block, both ends inclusive.
+	 *
+	 * Column/row indices, not millimetres: `x_mm = 50 * (IMAGE.position.left + column)` and
+	 * `y_mm = 50 * (IMAGE.position.top + row)`. There is **no** flip between the two - see
+	 * `_appanalysis/28-raeume-teilen.md` §4.2, where a report that claimed one is corrected.
+	 *
+	 * Optional for the same reason as {@link count}.
+	 */
+	bounds?: { minX: number; maxX: number; minY: number; maxY: number };
+}
+
+/**
  * One entry of block type 25 (`furnitures`), 23 bytes wide.
  *
  * The field order is the one the Roborock app's own map parser uses

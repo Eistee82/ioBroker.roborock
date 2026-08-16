@@ -8,6 +8,8 @@ import type { PathResult } from "../pathProcessor";
 import { getPixelFromScaledDimensions } from "./coordHelpers";
 import { hexToRgbaString, LEGACY_COLORS, VISUAL_BLOCK_SIZE } from "./constants";
 import type { MapSurfaceColors } from "./constants";
+import { imagePixels } from "../segmentRaster";
+import type { SegmentRaster } from "../segmentRaster";
 import type {
 	DrawMapV1Options,
 	DrawObstacleInput,
@@ -25,11 +27,19 @@ export interface V1MapDataForDrawing {
 	IMAGE: {
 		position: { left: number; top: number };
 		dimensions: { width: number; height: number };
+		/**
+		 * The cell lists as an older adapter version published them.
+		 *
+		 * Still read, and still preferred over {@link V1MapDataForDrawing.IMAGE.raster} when both are
+		 * there, because `MapManager.repaintStoredMap` draws `mapData` states that predate the raster.
+		 */
 		pixels?: {
 			floor?: number[];
 			obstacle?: number[];
 			segments?: number[];
 		};
+		/** The grid the three lists above are derived from, run-length coded. */
+		raster?: SegmentRaster;
 	};
 	CARPET_MAP?: number[];
 	PATH?: { points: [number, number][] };
@@ -103,35 +113,34 @@ export async function drawMapV1(
 
 	const pixel = (px: number) => getPixelFromScaledDimensions(scaledWidth, scaledHeight, px);
 
+	// Derived once for all three layers below: the map carries the raster, not the lists.
+	const pixels = imagePixels(image);
+
 	// --- Floor + obstacle rects ---
 	const floorRects: DrawRect[] = [];
 	let bounds: DrawMapV1Result["bounds"] | undefined;
 	const floorColor = hexToRgbaString(colors.floor);
 	const obstacleColor = hexToRgbaString(colors.obstacle);
-	if (image.pixels?.floor) {
-		for (const px of image.pixels.floor) {
-			const { x, y } = pixel(px);
-			floorRects.push({ x, y, w: VISUAL_BLOCK_SIZE, h: VISUAL_BLOCK_SIZE, fill: floorColor });
-			if (!bounds) bounds = { minX: x, minY: y, maxX: x + VISUAL_BLOCK_SIZE, maxY: y + VISUAL_BLOCK_SIZE };
-			else {
-				bounds.minX = Math.min(bounds.minX, x);
-				bounds.minY = Math.min(bounds.minY, y);
-				bounds.maxX = Math.max(bounds.maxX, x + VISUAL_BLOCK_SIZE);
-				bounds.maxY = Math.max(bounds.maxY, y + VISUAL_BLOCK_SIZE);
-			}
+	for (const px of pixels.floor) {
+		const { x, y } = pixel(px);
+		floorRects.push({ x, y, w: VISUAL_BLOCK_SIZE, h: VISUAL_BLOCK_SIZE, fill: floorColor });
+		if (!bounds) bounds = { minX: x, minY: y, maxX: x + VISUAL_BLOCK_SIZE, maxY: y + VISUAL_BLOCK_SIZE };
+		else {
+			bounds.minX = Math.min(bounds.minX, x);
+			bounds.minY = Math.min(bounds.minY, y);
+			bounds.maxX = Math.max(bounds.maxX, x + VISUAL_BLOCK_SIZE);
+			bounds.maxY = Math.max(bounds.maxY, y + VISUAL_BLOCK_SIZE);
 		}
 	}
-	if (image.pixels?.obstacle) {
-		for (const px of image.pixels.obstacle) {
-			const { x, y } = pixel(px);
-			floorRects.push({ x, y, w: VISUAL_BLOCK_SIZE, h: VISUAL_BLOCK_SIZE, fill: obstacleColor });
-			if (!bounds) bounds = { minX: x, minY: y, maxX: x + VISUAL_BLOCK_SIZE, maxY: y + VISUAL_BLOCK_SIZE };
-			else {
-				bounds.minX = Math.min(bounds.minX, x);
-				bounds.minY = Math.min(bounds.minY, y);
-				bounds.maxX = Math.max(bounds.maxX, x + VISUAL_BLOCK_SIZE);
-				bounds.maxY = Math.max(bounds.maxY, y + VISUAL_BLOCK_SIZE);
-			}
+	for (const px of pixels.obstacle) {
+		const { x, y } = pixel(px);
+		floorRects.push({ x, y, w: VISUAL_BLOCK_SIZE, h: VISUAL_BLOCK_SIZE, fill: obstacleColor });
+		if (!bounds) bounds = { minX: x, minY: y, maxX: x + VISUAL_BLOCK_SIZE, maxY: y + VISUAL_BLOCK_SIZE };
+		else {
+			bounds.minX = Math.min(bounds.minX, x);
+			bounds.minY = Math.min(bounds.minY, y);
+			bounds.maxX = Math.max(bounds.maxX, x + VISUAL_BLOCK_SIZE);
+			bounds.maxY = Math.max(bounds.maxY, y + VISUAL_BLOCK_SIZE);
 		}
 	}
 	renderer.drawFloor(floorRects);
@@ -139,22 +148,20 @@ export async function drawMapV1(
 	// --- Segment rects (with optional color from options.getSegmentColor) ---
 	const segmentRects: DrawRect[] = [];
 	const segmentsData: Record<number, { minX: number; maxX: number; minY: number; maxY: number }> = {};
-	if (image.pixels?.segments) {
-		for (const px of image.pixels.segments) {
-			const segnum = px >>> 21;
-			const pixelIndex = px & 0x1fffff;
-			const { x, y } = pixel(pixelIndex);
-			if (!segmentsData[segnum]) segmentsData[segnum] = { minX: x, maxX: x, minY: y, maxY: y };
-			else {
-				const s = segmentsData[segnum];
-				s.minX = Math.min(s.minX, x);
-				s.maxX = Math.max(s.maxX, x);
-				s.minY = Math.min(s.minY, y);
-				s.maxY = Math.max(s.maxY, y);
-			}
-			const fill = options.getSegmentColor ? options.getSegmentColor(segnum) : hexToRgbaString("#CCCCCC");
-			if (fill) segmentRects.push({ x, y, w: VISUAL_BLOCK_SIZE, h: VISUAL_BLOCK_SIZE, fill });
+	for (const px of pixels.segments) {
+		const segnum = px >>> 21;
+		const pixelIndex = px & 0x1fffff;
+		const { x, y } = pixel(pixelIndex);
+		if (!segmentsData[segnum]) segmentsData[segnum] = { minX: x, maxX: x, minY: y, maxY: y };
+		else {
+			const s = segmentsData[segnum];
+			s.minX = Math.min(s.minX, x);
+			s.maxX = Math.max(s.maxX, x);
+			s.minY = Math.min(s.minY, y);
+			s.maxY = Math.max(s.maxY, y);
 		}
+		const fill = options.getSegmentColor ? options.getSegmentColor(segnum) : hexToRgbaString("#CCCCCC");
+		if (fill) segmentRects.push({ x, y, w: VISUAL_BLOCK_SIZE, h: VISUAL_BLOCK_SIZE, fill });
 	}
 	renderer.drawSegmentRects(segmentRects);
 

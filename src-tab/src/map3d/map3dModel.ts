@@ -11,12 +11,12 @@
  *
  * That report concluded the cell occupancy "hat sie, veröffentlicht sie aber nicht", and therefore
  * that a new `sendTo` handler would be needed before any wall could be drawn. **That is wrong, and
- * the walls in this view are the proof.** `MapParser.parseImageBlock` fills
- * `IMAGE.pixels.{floor, obstacle, segments}` with one entry per cell
- * (`src/lib/map/v1/MapParser.ts:516-546`), and `MapManager` writes the whole parse result into the
- * state unchanged - `JSON.stringify(res.mapData)` at `src/lib/map/MapManager.ts:638`, with nothing
- * in between that strips the field. Checked against the test device's own map: 3 468 obstacle
- * cells and 30 490 floor cells are in there (`_appanalysis/backups/backup-20260814-185206`).
+ * the walls in this view are the proof.** `MapParser.parseImageBlock` publishes the whole grid as
+ * `IMAGE.raster`, one byte per cell, run-length coded, and `MapManager` writes the parse result
+ * into the state unchanged - `JSON.stringify(res.mapData)` at `src/lib/map/MapManager.ts:638`, with
+ * nothing in between that strips the field. `imagePixels` turns it back into cell lists. Checked
+ * against the test device's own map: 3 468 obstacle cells and 30 490 floor cells come out of it
+ * (`_appanalysis/backups/backup-20260814-185206`).
  *
  * So the walls are built from real occupancy, not from re-reading the rendered PNG - which the same
  * report rightly advised against, because the obstacle pixels there carry the theme colour and
@@ -35,6 +35,8 @@
  */
 
 import { robotToPixel } from "@adapter/common/coordTransformation";
+import { imagePixels } from "@adapter/common/segmentRaster";
+import type { SegmentRaster } from "@adapter/common/segmentRaster";
 import { clearedCells, extractWalls } from "./walls";
 import type { WallSegment } from "./walls";
 import { buildFurnitureBoxes } from "./furniture3d";
@@ -91,7 +93,10 @@ interface RawMapData {
 	IMAGE?: {
 		position?: { left?: unknown; top?: unknown };
 		dimensions?: { width?: unknown; height?: unknown };
+		/** Only on `mapData` written before the raster replaced these lists. */
 		pixels?: { obstacle?: unknown; floor?: unknown };
+		/** The grid the cell lists are derived from; the form every current map carries. */
+		raster?: SegmentRaster;
 	};
 	ROBOT_POSITION?: { position?: unknown; angle?: unknown };
 	CHARGER_LOCATION?: { position?: unknown; angle?: unknown };
@@ -190,9 +195,12 @@ export function buildMap3DModel(rawMapData: unknown, imageSrc: unknown): Map3DMo
 	const top = finite(parsed.IMAGE.position?.top) ?? 0;
 
 	// Only indices that can name a cell of this grid. A stray value would place a box outside the
-	// floor, where it would look like a wall in mid-air rather than like the bad datum it is.
-	const obstacles = cellIndices(parsed.IMAGE.pixels?.obstacle, width * height);
-	const floor = cellIndices(parsed.IMAGE.pixels?.floor, width * height);
+	// floor, where it would look like a wall in mid-air rather than like the bad datum it is. Kept
+	// even though `imagePixels` derives its own lists from the raster: the other branch of that
+	// function hands back whatever an older `mapData` state happens to contain.
+	const lists = imagePixels(parsed.IMAGE);
+	const obstacles = cellIndices(lists.obstacle, width * height);
+	const floor = cellIndices(lists.floor, width * height);
 	const cleared = clearedCells(width, height, left, top, {
 		furniture: readFurnitureCorners(parsed.FURNITURES),
 		dock: readPointMm(parsed.CHARGER_LOCATION?.position),

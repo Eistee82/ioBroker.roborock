@@ -407,5 +407,16 @@
   "ui_clean_order_none": "Ninguno definido: decide el robot.",
   "ui_clean_order_set": "Usar la selección",
   "ui_clean_order_clear": "Borrar",
-  "ui_clean_order_needs_rooms": "Selecciona las habitaciones en el mapa en el orden en que deben limpiarse."
+  "ui_clean_order_needs_rooms": "Selecciona las habitaciones en el mapa en el orden en que deben limpiarse.",
+  "ui_split_adjust": "Ajuste la línea divisoria hasta que aparezca una línea sólida",
+  "ui_split_outside": "Coloque una línea dentro de la habitación que desea dividir.",
+  "ui_split_pick_one": "Selecciona una habitación en el mapa para dividirla.",
+  "ui_split_ready": "La línea está lista. Dividir renumera todas las habitaciones.",
+  "ui_split_halves": "Resultaría en %s m² y %s m².",
+  "ui_split_room_too_small": "Esta habitación tiene solo %s m². La aplicación no divide nada por debajo de %s m².",
+  "ui_split_too_many_rooms": "El mapa ya tiene %s habitaciones y el límite es %s. Combina dos habitaciones primero.",
+  "ui_segment_edit_sequence_is": "El orden guardado: %s",
+  "ui_segment_edit_sequence_none": "No hay ningún orden de limpieza definido, así que aquí no se pierde nada.",
+  "ui_split_grip_a": "Línea divisoria, un extremo",
+  "ui_split_grip_b": "Línea divisoria, otro extremo"
 }

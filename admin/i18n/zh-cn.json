@@ -407,5 +407,16 @@
   "ui_clean_order_none": "未设置——由扫地机决定。",
   "ui_clean_order_set": "使用所选顺序",
   "ui_clean_order_clear": "清空",
-  "ui_clean_order_needs_rooms": "在地图上按希望的清扫顺序依次选择房间。"
+  "ui_clean_order_needs_rooms": "在地图上按希望的清扫顺序依次选择房间。",
+  "ui_split_adjust": "调整分割线直到出现实线部分",
+  "ui_split_outside": "请在所选区域内设置分割线",
+  "ui_split_pick_one": "在地图上选择一个房间以进行分割。",
+  "ui_split_ready": "分割线已就绪。分割会重新编号所有房间。",
+  "ui_split_halves": "将分为 %s m² 和 %s m²。",
+  "ui_split_room_too_small": "该房间只有 %s m²。App 不会分割小于 %s m² 的房间。",
+  "ui_split_too_many_rooms": "地图上已有 %s 个房间，上限为 %s。请先合并两个房间。",
+  "ui_segment_edit_sequence_is": "当前顺序：%s",
+  "ui_segment_edit_sequence_none": "未设置清扫顺序，此处不会丢失任何内容。",
+  "ui_split_grip_a": "分割线，一端",
+  "ui_split_grip_b": "分割线，另一端"
 }

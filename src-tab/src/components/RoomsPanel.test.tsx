@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { I18n } from "@iobroker/adapter-react-v5";
 import { RoomsPanel } from "./RoomsPanel";
+import type { SplitPanelState } from "./RoomsPanel";
 import type { RoomListModel } from "../engine/types";
 
 /**
@@ -25,11 +26,14 @@ function model(overrides: Partial<RoomListModel> = {}): RoomListModel {
 	};
 }
 
-function renderPanel(rooms: RoomListModel) {
+function renderPanel(rooms: RoomListModel, split: Partial<SplitProps> = {}) {
 	const onRename = vi.fn();
 	const onMergeRequest = vi.fn();
 	const onSetCleanOrder = vi.fn();
 	const onClearCleanOrder = vi.fn();
+	const onSplitStart = vi.fn();
+	const onSplitRequest = vi.fn();
+	const onSplitCancel = vi.fn();
 	const view = render(
 		<RoomsPanel
 			rooms={rooms}
@@ -37,11 +41,24 @@ function renderPanel(rooms: RoomListModel) {
 			onMergeRequest={onMergeRequest}
 			onSetCleanOrder={onSetCleanOrder}
 			onClearCleanOrder={onClearCleanOrder}
+			canSplit={split.canSplit ?? false}
+			splitRefusal={split.splitRefusal ?? null}
+			onSplitStart={onSplitStart}
+			split={split.split ?? null}
+			onSplitRequest={onSplitRequest}
+			onSplitCancel={onSplitCancel}
 		/>,
 	);
 	const header = screen.queryByText(I18n.t("ui_rooms"));
 	if (header) fireEvent.click(header);
-	return { onRename, onMergeRequest, onSetCleanOrder, onClearCleanOrder, view };
+	return { onRename, onMergeRequest, onSetCleanOrder, onClearCleanOrder, onSplitStart, onSplitRequest, onSplitCancel, view };
+}
+
+/** The dividing props a test cares about; the rest of the panel does not change with them. */
+interface SplitProps {
+	canSplit: boolean;
+	splitRefusal: string | null;
+	split: SplitPanelState | null;
 }
 
 /** Opens the field of one room and returns it. */
@@ -72,9 +89,87 @@ describe("RoomsPanel", () => {
 				onMergeRequest={vi.fn()}
 				onSetCleanOrder={vi.fn()}
 				onClearCleanOrder={vi.fn()}
+				canSplit={false}
+				splitRefusal={null}
+				onSplitStart={vi.fn()}
+				split={null}
+				onSplitRequest={vi.fn()}
+				onSplitCancel={vi.fn()}
 			/>,
 		);
 		expect(screen.getByText("1")).toBeTruthy();
+	});
+
+	describe("dividing a room", () => {
+		/** A model with exactly one room picked - the only selection a division applies to. */
+		const onePicked = (): RoomListModel => model();
+
+		it("offers nothing at all on a map that publishes no grid", () => {
+			// B01/Q10 devices, and any map whose grid did not compress. A permanently dead button
+			// explains nothing, so the whole control stays away.
+			renderPanel(onePicked(), { canSplit: false });
+			expect(screen.queryByText(I18n.t("ui_map_room_split"))).toBeNull();
+		});
+
+		it("offers the button once the map can be divided", () => {
+			renderPanel(onePicked(), { canSplit: true });
+			expect(screen.getByText(I18n.t("ui_map_room_split"))).toBeTruthy();
+		});
+
+		it("greys the button out with the adapter's own reason", () => {
+			const refusal = "This room is only 1.5 m².";
+			renderPanel(onePicked(), { canSplit: true, splitRefusal: refusal });
+
+			const button = screen.getByText(I18n.t("ui_map_room_split")).closest("button");
+			expect(button?.disabled).toBe(true);
+			expect(screen.getByLabelText(refusal)).toBeTruthy();
+		});
+
+		it("starts a division rather than sending one", () => {
+			// The panel never sends: the shell puts the warning dialog in between.
+			const { onSplitStart, onSplitRequest } = renderPanel(onePicked(), { canSplit: true });
+			fireEvent.click(screen.getByText(I18n.t("ui_map_room_split")));
+			expect(onSplitStart).toHaveBeenCalledTimes(1);
+			expect(onSplitRequest).not.toHaveBeenCalled();
+		});
+
+		it("shows Roborock's own hint while the line cannot be sent, and keeps the button dead", () => {
+			const hint = I18n.t("ui_split_adjust");
+			renderPanel(onePicked(), { canSplit: true, split: { valid: false, hint, halves: null } });
+
+			expect(screen.getByText(hint)).toBeTruthy();
+			const confirm = screen.getAllByText(I18n.t("ui_map_room_split")).map(node => node.closest("button"));
+			expect(confirm.some(button => button?.disabled)).toBe(true);
+		});
+
+		it("shows the two areas the line would leave behind", () => {
+			renderPanel(onePicked(), { canSplit: true, split: { valid: true, hint: null, halves: { a: 12.34, b: 5.6 } } });
+			expect(screen.getByText(I18n.t("ui_split_halves").replace("%s", "12.3").replace("%s", "5.6"))).toBeTruthy();
+		});
+
+		it("asks before it divides, and cancels without asking", () => {
+			const { onSplitRequest, onSplitCancel } = renderPanel(onePicked(), {
+				canSplit: true,
+				split: { valid: true, hint: null, halves: null },
+			});
+
+			fireEvent.click(screen.getByText(I18n.t("ui_map_room_split")));
+			expect(onSplitRequest).toHaveBeenCalledTimes(1);
+
+			fireEvent.click(screen.getByText(I18n.t("ui_cancel")));
+			expect(onSplitCancel).toHaveBeenCalledTimes(1);
+		});
+
+		it("hides the starting button while a division is running", () => {
+			// Otherwise the panel would offer to start a second one on top of the first.
+			const { onSplitStart } = renderPanel(onePicked(), {
+				canSplit: true,
+				split: { valid: true, hint: null, halves: null },
+			});
+
+			fireEvent.click(screen.getByText(I18n.t("ui_map_room_split")));
+			expect(onSplitStart).not.toHaveBeenCalled();
+		});
 	});
 
 	it("sends nothing while the name is being typed", () => {

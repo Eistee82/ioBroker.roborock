@@ -407,5 +407,16 @@
   "ui_clean_order_none": "None set - the robot decides.",
   "ui_clean_order_set": "Use the selection",
   "ui_clean_order_clear": "Clear",
-  "ui_clean_order_needs_rooms": "Pick the rooms on the map, in the order they should be cleaned."
+  "ui_clean_order_needs_rooms": "Pick the rooms on the map, in the order they should be cleaned.",
+  "ui_split_adjust": "Adjust the dividing line until a solid line appears",
+  "ui_split_outside": "Draw a line in the selected room.",
+  "ui_split_pick_one": "Pick one room on the map to divide it.",
+  "ui_split_ready": "The line is ready. Dividing renumbers every room.",
+  "ui_split_halves": "Would leave %s m² and %s m².",
+  "ui_split_room_too_small": "This room is only %s m². The app does not divide anything under %s m².",
+  "ui_split_too_many_rooms": "The map already holds %s rooms, and %s is the limit. Combine two rooms first.",
+  "ui_segment_edit_sequence_is": "The order the robot holds: %s",
+  "ui_segment_edit_sequence_none": "No cleaning order is set, so nothing is lost here.",
+  "ui_split_grip_a": "Dividing line, one end",
+  "ui_split_grip_b": "Dividing line, other end"
 }

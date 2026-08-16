@@ -1238,12 +1238,85 @@ describe("MapEditService", () => {
 			await expect(runCommand("merge_segment", [2, 3])).rejects.toThrow(/returned none/);
 		});
 
-		it("refuses a split once the map holds as many rooms as the app allows", async () => {
-			// The app stops offering a split from 31 rooms on; MAX_BLOCK_NO itself is 32.
-			mockRobot.roomMapping = Array.from({ length: MAX_BLOCK_NO - 1 }, (_, i) => [i + 1, String(i + 1), 12]);
-			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).rejects.toThrow(/already holds 31 rooms/);
+		/**
+		 * Publishes a `map.mapData` state holding just the image block the split checks read.
+		 * @param rooms Segment ids with the floor-cell count each of them covers.
+		 * @param blockNum Segment count of the image block header; defaults to the number of rooms.
+		 */
+		async function publishMap(rooms: Array<{ id: number; count: number }>, blockNum?: number): Promise<void> {
+			const mapData = {
+				IMAGE: {
+					segments: {
+						count: blockNum ?? rooms.length,
+						list: rooms.map((room) => ({ id: room.id, name: "", center: [0, 0], count: room.count, bounds: { minX: 0, maxX: 1, minY: 0, maxY: 1 } })),
+					},
+				},
+			};
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.map.mapData`, { val: JSON.stringify(mapData), ack: true });
+		}
 
-			mockRobot.roomMapping = Array.from({ length: MAX_BLOCK_NO - 2 }, (_, i) => [i + 1, String(i + 1), 12]);
+		/** A room comfortably above the 2 m² floor: 4000 cells is 10 m². */
+		const BIG_ENOUGH = 4000;
+
+		it("refuses a room under the 2 m² the app insists on, and allows one just over it", async () => {
+			// 799 cells is 1.9975 m², 801 is 2.0025 - the threshold sits between them. The message
+			// has to say "1.998" and not "2.00", or it reads as a broken check rather than a small room.
+			await publishMap([{ id: 1, count: 799 }]);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).rejects.toThrow(/covers 1\.998 m² \(799 cells\), and the app refuses to divide anything under 2 m²/);
+
+			await publishMap([{ id: 1, count: 801 }]);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).resolves.toBeDefined();
+		});
+
+		it("takes the room count from the image block header rather than from the naming", async () => {
+			// A room the user never named is on the map but missing from `get_room_mapping`, so the
+			// mapping undercounts. `blockNum` is what the app itself tests.
+			mockRobot.roomMapping = [[1, "1", 12]];
+			await publishMap([{ id: 1, count: BIG_ENOUGH }], MAX_BLOCK_NO);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).rejects.toThrow(/already holds 32 rooms/);
+		});
+
+		it("halves the room limit on a robot that says it has no MaxZoneOpened", async () => {
+			// Bit 77 clear, and the robot did say so - a hex string with only bit 0 set.
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info_str`, { val: "1", ack: true });
+
+			mockRobot.roomMapping = Array.from({ length: 16 }, (_, i) => [i + 1, String(i + 1), 12]);
+			await publishMap([{ id: 1, count: BIG_ENOUGH }], 16);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).rejects.toThrow(/already holds 16 rooms.*MaxZoneOpened/s);
+
+			await publishMap([{ id: 1, count: BIG_ENOUGH }], 15);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).resolves.toBeDefined();
+		});
+
+		it("allows the full 32 on a robot that announces MaxZoneOpened", async () => {
+			// Bit 77 set: 1 << 77 in hex.
+			await mockAdapter.setStateAsync(`Devices.${mockRobot.duid}.deviceStatus.new_feature_info_str`, { val: (1n << 77n).toString(16), ack: true });
+			expect(hasFeatureStrBit((1n << 77n).toString(16), 77n)).toBe(true);
+
+			mockRobot.roomMapping = Array.from({ length: 20 }, (_, i) => [i + 1, String(i + 1), 12]);
+			await publishMap([{ id: 1, count: BIG_ENOUGH }], 31);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).resolves.toBeDefined();
+
+			await publishMap([{ id: 1, count: BIG_ENOUGH }], MAX_BLOCK_NO);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).rejects.toThrow(/already holds 32 rooms/);
+		});
+
+		it("uses the permissive limit when the robot has not reported its feature string at all", async () => {
+			// The lesson from the water level that was labelled unsupported because nobody had read
+			// the string yet: no state is not the same answer as a clear bit. 20 rooms would be over
+			// the strict limit and is allowed here, because nothing says the strict limit applies.
+			mockRobot.roomMapping = Array.from({ length: 20 }, (_, i) => [i + 1, String(i + 1), 12]);
+			await publishMap([{ id: 1, count: BIG_ENOUGH }], 20);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).resolves.toBeDefined();
+		});
+
+		it("falls back to the naming, and skips the area check, when no map has been parsed yet", async () => {
+			// B01/Q10 devices have no V1 image block, and a `mapData` from an older adapter version
+			// has no `count`. Neither may cost the user the function.
+			mockRobot.roomMapping = Array.from({ length: MAX_BLOCK_NO }, (_, i) => [i + 1, String(i + 1), 12]);
+			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).rejects.toThrow(/already holds 32 rooms/);
+
+			mockRobot.roomMapping = Array.from({ length: MAX_BLOCK_NO - 1 }, (_, i) => [i + 1, String(i + 1), 12]);
 			await expect(runCommand("split_segment", [1, 0, 0, 0, 1000])).resolves.toBeDefined();
 		});
 
@@ -1285,10 +1358,19 @@ describe("MapEditService", () => {
 			expect(MapEditService.COMMANDS).not.toContain("save_map");
 		});
 
-		it("leaves the carpet zone calls alone, whose payload the report could not pin down", () => {
+		it("leaves the carpet zone calls alone, because their set cannot be read back in full", () => {
 			const service = new MapEditService(deps, mockRobot.duid);
-			// `set_carpet_area` and `set_ignore_carpet_zone` are "teilweise belegt": zone_data was
-			// never traced to the single value, so whether they replace or extend is unknown.
+			// Originally held back because `zone_data` had never been traced to the single value, so
+			// whether the calls replace or extend was unknown. Both halves are answered now, and the
+			// answer is why they stay out:
+			//
+			//  - They **replace**. `getCarpetZonesParams` feeds them the complete visible set from
+			//    `getVisibleCarpetZones` and deletes by filtering one id out of it - the `save_map`
+			//    pattern, so sending one zone drops the rest.
+			//  - There is **no getter**. The a65 bundle has `get_carpet_clean_mode` and nothing for
+			//    the areas, and the only other source, map block `CUSTOM_CARPET`, carries neither
+			//    `slopeAngle` nor `carpetId` nor the per-carpet flags. The adapter therefore cannot
+			//    rebuild the set it would have to send back.
 			for (const method of ["set_carpet_area", "set_ignore_carpet_zone"]) {
 				expect(service.handles(method)).toBe(false);
 			}

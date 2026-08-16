@@ -1,7 +1,9 @@
 // src/lib/map/v1/MapParser.ts
 import * as crypto from "node:crypto";
 import type { Roborock } from "../../../main";
-import type { Furniture } from "./types";
+import type { Furniture, SegmentInfo } from "./types";
+import type { SegmentRaster } from "../../../common/segmentRaster";
+import { encodeRasterRuns, imagePixelsFromCells, MAX_RASTER_RUN_VALUES } from "../../../common/segmentRaster";
 
 export type { Furniture };
 
@@ -102,11 +104,6 @@ interface PositionBlock {
 	position: [number, number];
 	angle: number;
 }
-interface SegmentInfo {
-	id: number; // The segment ID (e.g., 16)
-	name: string; // The room name (e.g., "Kitchen")
-	center: [number, number]; // The calculated center coordinates in MM
-}
 interface ImageBlock {
 	segments: {
 		count: number;
@@ -114,7 +111,26 @@ interface ImageBlock {
 	};
 	position: { top: number; left: number };
 	dimensions: { height: number; width: number };
-	pixels: { floor: number[]; obstacle: number[]; segments: number[] };
+	/**
+	 * Floor, obstacle and segment cells, the way this block was published until the raster replaced
+	 * them.
+	 *
+	 * **Present only when {@link ImageBlock.raster} is not.** They are derived views of the raster -
+	 * one filter each, see `imagePixels` - and sending both cost 472 KiB of every map cycle on the
+	 * reference device against the raster's 23 KiB. Readers go through `imagePixels`, which prefers
+	 * these lists when a `mapData` state written by an older adapter version still carries them.
+	 */
+	pixels?: { floor: number[]; obstacle: number[]; segments: number[] };
+	/**
+	 * The grid as the robot sends it, one byte per cell, run-length coded.
+	 *
+	 * Richer than the `pixels` lists above, not just smaller: `pixels.obstacle` keeps only the cell
+	 * index and throws the segment id away, which is exactly what dividing a room needs. See
+	 * {@link SegmentRaster} for the coding and for why it is not gzipped.
+	 *
+	 * Absent when the raster does not compress - see {@link MapParser.buildSegmentRaster}.
+	 */
+	raster?: SegmentRaster;
 }
 interface PathBlock {
 	current_angle: number;
@@ -169,16 +185,19 @@ export interface ParsedMapData {
 	IGNORED_OBSTACLES2?: any[];
 	SMART_ZONE_PATH_TYPE?: number;
 	SMART_ZONE?: any[];
-	CUSTOM_CARPET?: any[];
+	/** Carpet areas, four corners each. One entry per record, `[]` when the block is empty. */
+	CUSTOM_CARPET?: number[][];
 	FLOOR_MAP?: number[];
 	FURNITURES?: Furniture[];
 	DOCK_TYPE?: number;
 	ENEMIES?: any[];
 	STUCK_POINTS?: any[];
-	SMART_DS?: any[];
+	/** Four corners each, like the other zone blocks. */
+	SMART_DS?: number[][];
 	FLOOR_DIRECTION?: any[];
 	DATE?: number;
-	EXT_ZONES?: any[];
+	/** Four corners each, like the other zone blocks. */
+	EXT_ZONES?: number[][];
 	PATROL?: any[];
 	PET_PATROL?: any[];
 }
@@ -299,31 +318,46 @@ export class MapParser {
 							break;
 
 						case TYPES.CURRENTLY_CLEANED_ZONES:
-						case TYPES.VIRTUAL_WALLS: {
-							const count = this.getCount(blockBuffer);
-							const zones: number[][] = [];
-							const dataStart = dataPosition + hlength;
-							for (let i = 0; i < count; i++) {
-								zones.push(this.readUInt16LE(buf, dataStart + i * 8, 0, 4));
-							}
-							result[typeName] = zones;
+						case TYPES.VIRTUAL_WALLS:
+							result[typeName] = this.readZoneRecords(buf, blockBuffer, dataPosition + hlength, length, 4);
 							break;
-						}
 						case TYPES.FORBIDDEN_ZONES:
 						case TYPES.NO_MOP_ZONE:
 						case TYPES.CARPET_FORBIDDEN_ZONE:
+						// `DS_FORBIDDEN_ZONES` looks like it should not be here, and it is: its payload
+						// divides by its record count to a clean 244 bytes, not 16, on both stored maps
+						// (`count=5, length=1220` and `count=3, length=732`). That is not a record size.
+						// Measured on the bytes: the zones sit **contiguously at the front**, `count`
+						// times 16 bytes, and the remainder is padding with a handful of fields at
+						// offsets that stay put as the count changes - `count` again at +240, 5000 at
+						// +420, two -1 at +572 and +672, two small negative floats at +688. So this
+						// reader is right, and the space beyond the zones belongs to something else.
+						// The proof that the front really is coordinates is a counter-check, not the
+						// eyeball test: rectangles that *look* plausible prove nothing if any 16 bytes
+						// in this value range would. So the same shape test was run on **shifted**
+						// offsets. Across both stored maps, 8 of 8 records at the reader's offsets are
+						// rectangles - four right angles, opposite edges equal, same corner order as
+						// the `FORBIDDEN_ZONES` beside them, edges of 100 to 2837 mm - against 0 of 42
+						// at every window shifted by 2 to 14 bytes, and only those same 8 of 169
+						// non-zero windows across the whole block. Two bytes of shift destroy the
+						// shape completely.
+						//
+						// Mind the tolerance if you repeat this: a **turned** zone misses equality of
+						// opposite edges by up to 1 mm, because the coordinates are whole millimetres.
+						// One zone failed a stricter test by 0.002 mm and is perfectly good.
+						//
+						// What the padding carries is **not** established; do not write this block back.
 						case TYPES.DS_FORBIDDEN_ZONES:
 						case TYPES.CLF_FORBIDDEN_ZONES:
-						case TYPES.MODE_CARPET: {
-							const count = this.getCount(blockBuffer);
-							const zones: number[][] = [];
-							const dataStart = dataPosition + hlength;
-							for (let i = 0; i < count; i++) {
-								zones.push(this.getForbiddenZone(buf, dataStart + i * 16, 0));
-							}
-							result[typeName] = zones;
+						case TYPES.MODE_CARPET:
+						// These four used to be read once, without the count, which produced a zone
+						// that was not there - see {@link MapParser.readZoneRecords}.
+						case TYPES.CUSTOM_CARPET:
+						case TYPES.CL_FORBIDDEN_ZONES:
+						case TYPES.SMART_DS:
+						case TYPES.EXT_ZONES:
+							result[typeName] = this.readZoneRecords(buf, blockBuffer, dataPosition + hlength, length, 8);
 							break;
-						}
 						case TYPES.OBSTACLES2:
 							result[typeName] = this.extractObstacles(blockBuffer, hlength);
 							break;
@@ -392,12 +426,6 @@ export class MapParser {
 							break;
 						case TYPES.SMART_ZONE:
 							result[typeName] = this.getSmartZone(blockBuffer, hlength);
-							break;
-						case TYPES.CUSTOM_CARPET:
-						case TYPES.CL_FORBIDDEN_ZONES:
-						case TYPES.SMART_DS:
-						case TYPES.EXT_ZONES:
-							result[typeName] = this.getForbiddenZone(buf, dataPosition + hlength, 0); // Re-use getForbiddenZone as structure is same (16 bytes)
 							break;
 						case TYPES.FLOOR_MAP:
 							result[typeName] = this.readUInt8(buf, dataPosition, hlength, length);
@@ -503,7 +531,6 @@ export class MapParser {
 			},
 			position: { top, left },
 			dimensions: { height: height_px, width: width_px },
-			pixels: { floor: [], obstacle: [], segments: [] },
 		};
 
 		if (height_px <= 0 || width_px <= 0) return parameters;
@@ -514,38 +541,46 @@ export class MapParser {
 
 		const dataStart = dataPosition + offset;
 
+		// The grid as it arrives, kept verbatim so that the segment id of a *wall* cell survives -
+		// the `pixels.obstacle` view drops it, and dividing a room needs it. Copied in this loop
+		// rather than sliced afterwards so the block is walked exactly once.
+		const rasterCells = new Uint8Array(length);
+
 		for (let i = 0; i < length; i++) {
-			const pixelBytePosition = dataStart + i;
-			const pixelType = this.getPixelType(buf, pixelBytePosition);
+			const pixelByte = buf.readUInt8(dataStart + i);
+			rasterCells[i] = pixelByte;
 
-			if (pixelType === 1) {
-				// Obstacle
-				parameters.pixels.obstacle.push(i);
-			} else if (pixelType !== 0) {
-				// Floor
-				parameters.pixels.floor.push(i);
+			const pixelType = pixelByte & 0x07;
 
-				const segmentID = (buf.readUInt8(pixelBytePosition) & 248) >> 3;
-				segmentIDsInImage.add(segmentID);
+			// Walls take no further part here: their segment id lives in the raster, and the room
+			// metrics below are counted over floor cells only.
+			if (pixelType === 0 || pixelType === 1) continue;
 
-				parameters.pixels.segments.push(i | (segmentID << 21));
+			const segmentID = (pixelByte & 248) >> 3;
+			segmentIDsInImage.add(segmentID);
 
-				// Calculate UN-SCALED pixel coordinates relative to the data block (0, 0)
-				const x = i % width_px;
-				const y = Math.floor(i / width_px);
+			// Calculate UN-SCALED pixel coordinates relative to the data block (0, 0)
+			const x = i % width_px;
+			const y = Math.floor(i / width_px);
 
-				const bb = segBB[segmentID];
-				if (!bb) {
-					segBB[segmentID] = { minX: x, maxX: x, minY: y, maxY: y, count: 1 };
-				} else {
-					if (x < bb.minX) bb.minX = x;
-					if (x > bb.maxX) bb.maxX = x;
-					if (y < bb.minY) bb.minY = y;
-					if (y > bb.maxY) bb.maxY = y;
-					bb.count++;
-				}
+			const bb = segBB[segmentID];
+			if (!bb) {
+				segBB[segmentID] = { minX: x, maxX: x, minY: y, maxY: y, count: 1 };
+			} else {
+				if (x < bb.minX) bb.minX = x;
+				if (x > bb.maxX) bb.maxX = x;
+				if (y < bb.minY) bb.minY = y;
+				if (y > bb.maxY) bb.maxY = y;
+				bb.count++;
 			}
 		}
+
+		// The raster is what gets published; the three cell lists are derived from it at every
+		// reader. Only when it has to be dropped do the lists go on the wire in its place, because a
+		// map with neither draws as an empty picture - see `imagePixels`.
+		const raster = this.buildSegmentRaster(rasterCells, width_px, height_px);
+		if (raster) parameters.raster = raster;
+		else parameters.pixels = imagePixelsFromCells(rasterCells);
 
 		// --- Process all found segments ---
 
@@ -580,10 +615,33 @@ export class MapParser {
 				id: segId,
 				name: roomName,
 				center: [centerX_robot, centerY_robot], // Store correct MM coordinates
+				count: bb.count,
+				bounds: { minX: bb.minX, maxX: bb.maxX, minY: bb.minY, maxY: bb.maxY },
 			});
 		}
 
 		return parameters;
+	}
+
+	/**
+	 * Run-length codes the grid, unless the result would be too big to put in a state.
+	 *
+	 * A floor plan is made of long runs of the same value, so the coding is normally two orders of
+	 * magnitude smaller than the cells it replaces. A grid without that structure is not a floor
+	 * plan, but a state this adapter writes should not be able to balloon on unexpected input
+	 * either - hence {@link MAX_RASTER_RUN_VALUES}, which no real map comes near.
+	 * @param cells One byte per grid cell, row-major.
+	 * @param width Cells per row.
+	 * @param height Rows.
+	 * @returns The coded raster, or `undefined` when it would exceed the ceiling.
+	 */
+	private buildSegmentRaster(cells: Uint8Array, width: number, height: number): SegmentRaster | undefined {
+		if (cells.length !== width * height || cells.length === 0) return undefined;
+
+		const runs = encodeRasterRuns(cells);
+		if (runs.length > MAX_RASTER_RUN_VALUES) return undefined;
+
+		return { encoding: "rle", width, height, runs };
 	}
 
 	private parsePathBlock(blockBuffer: Buffer, buf: Buffer, dataPosition: number, length: number): PathBlock {
@@ -1040,8 +1098,49 @@ export class MapParser {
 		return [buf.readUInt16LE(OFFSETS.TARGET_X), buf.readUInt16LE(OFFSETS.TARGET_Y)];
 	}
 
-	private getForbiddenZone(buf: Buffer, dataPosition: number, offset: number): number[] {
-		return this.readUInt16LE(buf, dataPosition, offset, 8);
+	/**
+	 * Reads a block of fixed-size zone records: `count` records of `values` little-endian uint16 each.
+	 *
+	 * ## Why this is one function and not a loop at each call site
+	 *
+	 * Four block types - `CUSTOM_CARPET`, `CL_FORBIDDEN_ZONES`, `SMART_DS` and `EXT_ZONES` - used to
+	 * be read with a single unguarded `getForbiddenZone` call and no count at all. That is wrong in
+	 * both directions, and the second one is the damaging one:
+	 *
+	 *  - With more than one record, only the first arrived.
+	 *  - **With no records at all it invented one.** An empty block is `length = 0`, but the read
+	 *    happened anyway and took its 16 bytes from whatever followed - the header of the next
+	 *    block. Measured on the reference device's own map, an empty `CUSTOM_CARPET` came back as
+	 *    `[28, 12, 1220, 0, 5, 0, 31712, 23618]`, which is `type = 28`, `hlength = 12`,
+	 *    `length = 1220`, `count = 5` of the `DS_FORBIDDEN_ZONES` block behind it, plus its first
+	 *    two coordinates.
+	 *
+	 * That mattered beyond a wrong number, because `CL_FORBIDDEN_ZONES` is one of
+	 * `UNREPRODUCIBLE_BLOCKS`: `readOverlaysFromMap` refuses to touch the zones of a map that
+	 * carries one, since `save_map` would delete it. A phantom record made that refusal fire on a
+	 * map whose block is empty, which takes the whole zone editor away - no adding, moving or
+	 * deleting of no-go zones, no-mop zones and virtual walls - and names a block the map does not
+	 * really have.
+	 *
+	 * The guard against the block length is therefore not decoration: it is what stops a record
+	 * count from reaching past its own block. `count` stays the authority where the two agree,
+	 * which is every real map measured so far.
+	 * @param buf The whole map buffer.
+	 * @param blockBuffer This block, for its header.
+	 * @param dataStart Absolute offset of the first record.
+	 * @param length Payload length of the block, in bytes.
+	 * @param values Uint16 values per record - 4 for an axis-parallel pair of corners, 8 for four corners.
+	 * @returns One array of `values` numbers per record; empty when the block carries none.
+	 */
+	private readZoneRecords(buf: Buffer, blockBuffer: Buffer, dataStart: number, length: number, values: number): number[][] {
+		const stride = values * 2;
+		const fits = Math.floor(length / stride);
+		const count = Math.min(this.getCount(blockBuffer), fits);
+		const zones: number[][] = [];
+		for (let i = 0; i < count; i++) {
+			zones.push(this.readUInt16LE(buf, dataStart + i * stride, 0, values));
+		}
+		return zones;
 	}
 
 	private getSingleByteOffset(buf: Buffer): number {

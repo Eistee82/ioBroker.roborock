@@ -13,13 +13,14 @@ import type { SegmentEditKind } from "./SegmentEditDialog";
  * uncomfortable parts, and that it cannot be confirmed by accident.
  */
 
-function renderDialog(pending: SegmentEditKind | null, roomNames: string[] = []) {
+function renderDialog(pending: SegmentEditKind | null, roomNames: string[] = [], cleanOrderNames: string[] = []) {
 	const onConfirm = vi.fn();
 	const onCancel = vi.fn();
 	render(
 		<SegmentEditDialog
 			pending={pending}
 			roomNames={roomNames}
+			cleanOrderNames={cleanOrderNames}
 			onConfirm={onConfirm}
 			onCancel={onCancel}
 		/>,

@@ -47,7 +47,12 @@ import type { MapZone, MapZoneKind, MapZonePoint, MapZoneRefusal, ZoneBox } from
 import { MAX_ROOM_NAME_LENGTH } from "@adapter/common/mapZoneKinds";
 import { layoutMapZoneHandles, renderMapZoneLayer } from "./mapZoneLayer";
 import type { MapZoneShape } from "./mapZoneLayer";
-import type { Furniture } from "@adapter/lib/map/v1/types";
+import type { Furniture, SegmentInfo } from "@adapter/lib/map/v1/types";
+import type { SegmentRaster } from "@adapter/common/segmentRaster";
+import { decodeRasterRuns, SQUARE_METRES_PER_CELL } from "@adapter/common/segmentRaster";
+import type { RasterPoint, RasterView, SplitLineResult } from "@adapter/common/splitLine";
+import { MIN_SPLIT_AREA_SQM, nudgeSplitPoint, previewSplitHalves, snapSplitLine, splitPayload, splitPreconditions, startingSplitLine } from "@adapter/common/splitLine";
+import { drawSplitLine } from "./splitLineLayer";
 
 /**
  * Base path for the device artwork the AppPluginManager stores in the adapter's file storage
@@ -96,6 +101,23 @@ export const ROOM_NAME_COMMAND = "name_segment";
 
 /** Command state that combines rooms; it renumbers the segments, so the shell asks first. */
 export const ROOM_MERGE_COMMAND = "merge_segment";
+
+/** Command state that divides a room along a line; it renumbers the segments just as a merge does. */
+export const ROOM_SPLIT_COMMAND = "split_segment";
+
+/** What the shell needs in order to draw the dividing panel. */
+export interface SplitState {
+	/** Whether a room is being divided right now. */
+	active: boolean;
+	/** The room, or null when nothing is being divided. */
+	roomId: number | null;
+	/** Whether the line could be sent as it stands. */
+	valid: boolean;
+	/** Roborock's own wording for why it could not, or null when it can. */
+	hint: string | null;
+	/** The two areas the line would leave behind, in square metres, or null while it is not valid. */
+	halves: { a: number; b: number } | null;
+}
 
 /** Command state that sets the cleaning order; an empty array lets the robot decide again. */
 export const CLEAN_SEQUENCE_COMMAND = "set_clean_sequence";
@@ -161,8 +183,15 @@ interface MapData {
 		position: { left: number; top: number };
 		dimensions: { height: number; width: number };
 		segments: {
+			/**
+			 * Segments on this map - `blockNum` of the image block header, which is the number the
+			 * app itself tests its room limit against.
+			 */
+			count?: number;
 			list: SegmentInfo[];
 		};
+		/** The grid as the robot sends it, run-length coded. Absent on maps that carry no raster. */
+		raster?: SegmentRaster;
 	};
 	ROBOT_POSITION?: PositionBlock;
 	CHARGER_LOCATION?: PositionBlock;
@@ -187,12 +216,6 @@ interface PositionBlock {
 interface PathBlock {
 	current_angle: number;
 	points: [number, number][];
-}
-
-interface SegmentInfo {
-	id: number;
-	name: string;
-	center: [number, number]; // Robot coordinates
 }
 
 interface Point {
@@ -514,6 +537,24 @@ export class MapEngine {
 	// Map Data
 	private map: FrontendMapData | undefined;
 	private mapImage: MapData["IMAGE"] | undefined;
+
+	/** Room being divided, or null when no division is in progress. */
+	private splitRoomId: number | null = null;
+
+	/** The dividing line as dragged, in raster cells. */
+	private splitDragged: { a: RasterPoint; b: RasterPoint } | null = null;
+
+	/** The same line after both ends were pulled onto the room boundary, or why they could not be. */
+	private splitSnapped: SplitLineResult | null = null;
+
+	/**
+	 * The decoded grid, kept beside the coded one it came from.
+	 *
+	 * Decoding runs over every cell of the map - 155 855 of them on the reference device - and a
+	 * pointer move must not pay for that. The coded object is replaced whenever a new map arrives,
+	 * so comparing identities is enough to know when to decode again.
+	 */
+	private splitRasterCache: { source: SegmentRaster; view: RasterView } | null = null;
 	private mapMinX: number = 0;
 	private mapMinY: number = 0;
 	private mapSizeX: number = 0;
@@ -550,6 +591,7 @@ export class MapEngine {
 	private chargerGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private robotGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private roomNameGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
+	private splitGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	private zoneGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
 	/** The robot's own walls and zones; see {@link MapEngine.drawMapZones}. */
 	private mapZoneGroup: d3.Selection<SVGGElement, unknown, HTMLElement, any>;
@@ -743,6 +785,7 @@ export class MapEngine {
 		this.chargerGroup = d3.select(null) as any;
 		this.robotGroup = d3.select(null) as any;
 		this.roomNameGroup = d3.select(null) as any;
+		this.splitGroup = d3.select(null) as any;
 		this.zoneGroup = d3.select(null) as any;
 		this.mapZoneGroup = d3.select(null) as any;
 		this.zonesOverlayGroup = d3.select(null) as any;
@@ -922,6 +965,9 @@ export class MapEngine {
 		this.liveRobotGroup = this.mainGroup.append("g").attr("class", "live-robot-marker");
 		this.pinGroup = this.mainGroup.append("g").attr("class", "pins");
 		this.roomNameGroup = this.mainGroup.append("g").attr("class", "room-names");
+		// Topmost on purpose: its grips have to be grabbable over a room label, and while a room is
+		// being divided the line is the only thing on the map the pointer is meant to reach.
+		this.splitGroup = this.mainGroup.append("g").attr("class", "split-line");
 
 		// The robot's own walls and zones sit directly below the cleaning zones: they are operated
 		// too - selected, turned, deleted - so everything that is merely drawn has to stay under
@@ -1224,6 +1270,12 @@ export class MapEngine {
 
 		this.map = undefined;
 		this.mapImage = undefined;
+		// A dividing line points at a segment id of the robot being left behind.
+		this.splitRoomId = null;
+		this.splitDragged = null;
+		this.splitSnapped = null;
+		this.splitRasterCache = null;
+		if (!this.splitGroup.empty()) this.splitGroup.selectAll("*").remove();
 		this.mapImageElement.attr("href", null);
 		this.carpetGroup.selectAll("*").remove();
 		this.furnitureGroup.selectAll("*").remove();
@@ -2044,6 +2096,30 @@ export class MapEngine {
 		this.drawLiveOverlay();
 		this.applyRoomLabelZoomBehavior();
 		this.syncRoomSelectionWithLabels(roomLabels?.map((label) => ({ segmentId: label.segmentId, text: label.text })) ?? []);
+		this.keepSplitLineOnRedraw();
+	}
+
+	/**
+	 * Carries a division in progress across a redraw, or drops it when the room stopped existing.
+	 *
+	 * A new map arrives every few seconds while the robot works, and each one rebuilds every layer.
+	 * The line is held in raster cells rather than in pixels precisely so that it survives that -
+	 * but the *grid* it was measured against is new, so the ends are snapped again. If the room is
+	 * gone - it was divided, combined, or the user switched floors - there is nothing left to divide
+	 * and the line goes with it.
+	 */
+	private keepSplitLineOnRedraw(): void {
+		if (this.splitRoomId === null) return;
+
+		const stillThere = this.mapImage?.segments?.list?.some((room) => room.id === this.splitRoomId) ?? false;
+		if (!stillThere) {
+			this.cancelSplit();
+			this.notifySplitChanged();
+			return;
+		}
+
+		this.resnapSplitLine();
+		this.renderSplitLine();
 	}
 
 	/**
@@ -2932,6 +3008,295 @@ export class MapEngine {
 			command: ROOM_MERGE_COMMAND,
 			value: JSON.stringify(ids),
 		});
+	}
+
+	// -------------------------------------------------------------------------
+	// Dividing a room (report `_appanalysis/28-raeume-teilen.md`)
+	// -------------------------------------------------------------------------
+
+	/**
+	 * What the shell needs to know about a division in progress.
+	 * @returns The current state, with `active` false when no room is being divided.
+	 */
+	public getSplitState(): SplitState {
+		if (this.splitRoomId === null) return { active: false, roomId: null, valid: false, hint: null, halves: null };
+
+		const hint = this.splitSnapped?.status === "adjust"
+			? this.t("ui_split_adjust", "Adjust the dividing line until a solid line appears.")
+			: this.splitSnapped?.status === "ok"
+				? null
+				: this.t("ui_split_outside", "Draw a line across the selected room.");
+
+		return {
+			active: true,
+			roomId: this.splitRoomId,
+			valid: this.splitSnapped?.status === "ok",
+			hint,
+			halves: this.splitHalves(),
+		};
+	}
+
+	/**
+	 * Starts dividing a room, with a line already laid across it.
+	 *
+	 * The app puts the line through the point the user tapped inside the room (report §1.4). This
+	 * tab selects a room by its label rather than by tapping into it, so there is no such point and
+	 * the room's own centre is used - which is the app's own fallback for the same situation.
+	 * @param segmentId Room to divide.
+	 * @returns True when a line could be placed; false leaves the map untouched.
+	 */
+	public beginSplit(segmentId: number): boolean {
+		const view = this.splitRasterView();
+		const room = this.mapImage?.segments?.list?.find((entry) => entry.id === segmentId);
+		if (!view || !room?.bounds) return false;
+
+		const centre = {
+			x: (room.bounds.minX + room.bounds.maxX) / 2,
+			y: (room.bounds.minY + room.bounds.maxY) / 2,
+		};
+		const start = startingSplitLine(view, segmentId, centre);
+		if (!start) return false;
+
+		this.splitRoomId = segmentId;
+		this.splitDragged = { a: start.left, b: start.right };
+		this.resnapSplitLine();
+		this.renderSplitLine();
+		return true;
+	}
+
+	/** Ends the division without sending anything and clears the line off the map. */
+	public cancelSplit(): void {
+		this.splitRoomId = null;
+		this.splitDragged = null;
+		this.splitSnapped = null;
+		this.renderSplitLine();
+	}
+
+	/**
+	 * Sends the dividing line.
+	 *
+	 * **Stays in dividing mode afterwards**, which the app does not - it drops back to no tool at
+	 * all after every division (report §1.7). That is right on a phone, where the map is small and
+	 * the map reloads under you; in a tab, somebody re-planning a flat divides several rooms in a
+	 * row, and dropping the tool after each one makes them pick it up again every time. Nothing
+	 * about the robot depends on it: the line is cleared and the room deselected either way, because
+	 * both point at segment ids that are about to be renumbered.
+	 */
+	public async splitCurrentRoom(): Promise<void> {
+		if (!this.currentRobotDuid || this.splitRoomId === null) return;
+		if (this.splitSnapped?.status !== "ok") return;
+		if (!this.mapImage?.position) return;
+
+		const payload = splitPayload(this.splitRoomId, this.splitSnapped.left, this.splitSnapped.right, this.mapImage.position);
+
+		// Both point at ids the robot is about to renumber; keeping either would highlight a room
+		// that the next map no longer has.
+		this.splitDragged = null;
+		this.splitSnapped = null;
+		this.splitRoomId = null;
+		this.clearRoomSelection();
+		this.renderSplitLine();
+
+		await this.sendCommand("set_state", {
+			duid: this.currentRobotDuid,
+			folder: MAP_ZONE_COMMAND_FOLDER,
+			command: ROOM_SPLIT_COMMAND,
+			value: JSON.stringify(payload),
+		});
+	}
+
+	/**
+	 * Why this room cannot be divided, or null when it can.
+	 *
+	 * The same two rules the adapter applies before it sends - {@link splitPreconditions} - so that
+	 * the button is greyed out for the reason the adapter would otherwise give after the click.
+	 * @param segmentId Room the user is pointing at.
+	 */
+	public splitRefusalFor(segmentId: number): string | null {
+		const room = this.mapImage?.segments?.list?.find((entry) => entry.id === segmentId);
+		const refusal = splitPreconditions({
+			cells: room?.count,
+			rooms: this.mapImage?.segments?.count,
+			// The tab does not subscribe to `new_feature_info_str`, so it cannot tell a cleared bit 77
+			// from an unread one - and answering `false` would grey the button out on robots that do
+			// have the feature. It therefore asks with the permissive limit and lets the **adapter**
+			// apply the strict one; it runs the same check with the real bit before it sends, and its
+			// refusal reaches the user through the command outcome. The only cost is that a robot
+			// between 16 and 31 rooms *without* the feature is refused after the dialog rather than
+			// before it. Subscribing here would close that, and is worth doing when something else
+			// needs the feature string too.
+			maxZoneOpened: null,
+		});
+		if (!refusal) return null;
+
+		if (refusal.reason === "tooSmall") {
+			return this.t(
+				"ui_split_room_too_small",
+				"This room is only %s m². The app does not divide anything under %s m².",
+				refusal.squareMetres.toFixed(1),
+				MIN_SPLIT_AREA_SQM
+			);
+		}
+		return this.t("ui_split_too_many_rooms", "The map already holds %s rooms, and %s is the limit. Combine two rooms first.", refusal.rooms, refusal.limit);
+	}
+
+	/** Whether this map can be divided at all - a V1 map that published its grid. */
+	public canSplitRooms(): boolean {
+		return this.splitRasterView() !== null;
+	}
+
+	/** Decodes the grid, at most once per map. */
+	private splitRasterView(): RasterView | null {
+		const raster = this.mapImage?.raster;
+		if (!raster) return null;
+		if (this.splitRasterCache?.source === raster) return this.splitRasterCache.view;
+
+		const cells = decodeRasterRuns(raster, raster.width * raster.height);
+		if (!cells) return null;
+
+		const view = { cells, width: raster.width, height: raster.height };
+		this.splitRasterCache = { source: raster, view };
+		return view;
+	}
+
+	/** Recomputes where the ends belong. Cheap enough to run on every pointer move. */
+	private resnapSplitLine(): void {
+		const view = this.splitRasterView();
+		if (!view || this.splitRoomId === null || !this.splitDragged) {
+			this.splitSnapped = null;
+			return;
+		}
+		this.splitSnapped = snapSplitLine(view, this.splitRoomId, this.splitDragged.a, this.splitDragged.b);
+	}
+
+	/** The two areas the line would leave behind, in square metres, or null while it is not valid. */
+	private splitHalves(): { a: number; b: number } | null {
+		const view = this.splitRasterView();
+		if (!view || this.splitRoomId === null || this.splitSnapped?.status !== "ok") return null;
+
+		const halves = previewSplitHalves(view, this.splitRoomId, this.splitSnapped.left, this.splitSnapped.right);
+		return { a: halves.negative * SQUARE_METRES_PER_CELL, b: halves.positive * SQUARE_METRES_PER_CELL };
+	}
+
+	/** Raster cell to the map's own SVG pixels, through the conversion every other overlay uses. */
+	private cellToLocal(point: RasterPoint, params: MapParams): { x: number; y: number } {
+		const position = this.mapImage?.position ?? { left: 0, top: 0 };
+		return robotCoordsToLocalCoords({ x: (position.left + point.x) * 50, y: (position.top + point.y) * 50 }, params);
+	}
+
+	/** The way back, for turning a drag in SVG pixels into a movement over cells. */
+	private localToCell(point: { x: number; y: number }, params: MapParams): RasterPoint {
+		const position = this.mapImage?.position ?? { left: 0, top: 0 };
+		const robot = localCoordsToRobotCoords(point, params);
+		return { x: robot.x / 50 - position.left, y: robot.y / 50 - position.top };
+	}
+
+	/** Redraws the line, its grips and the band that slides it. */
+	private renderSplitLine(): void {
+		if (!this.splitGroup || this.splitGroup.empty()) return;
+
+		const params = this.getMapParams();
+		if (!params || !this.splitDragged) {
+			drawSplitLine({ group: this.splitGroup, dragged: null, snapped: null, scale: 1, colour: "#000" });
+			return;
+		}
+
+		const snapped = this.splitSnapped?.status === "ok"
+			? { a: this.cellToLocal(this.splitSnapped.left, params), b: this.cellToLocal(this.splitSnapped.right, params) }
+			: null;
+
+		drawSplitLine({
+			group: this.splitGroup,
+			dragged: { a: this.cellToLocal(this.splitDragged.a, params), b: this.cellToLocal(this.splitDragged.b, params) },
+			snapped,
+			scale: this.rescaler.scale(),
+			colour: getMapOverlayColors(this.mapColorScheme).zoneStroke,
+			endDrag: this.splitEndDrag(params),
+			lineDrag: this.splitLineDrag(params),
+			onEndKey: (end, event) => this.nudgeSplitEnd(end, event),
+			endLabels: {
+				a: this.t("ui_split_grip_a", "Dividing line, one end"),
+				b: this.t("ui_split_grip_b", "Dividing line, other end"),
+			},
+		});
+	}
+
+	/**
+	 * Moves one end of the line with the keyboard.
+	 *
+	 * One cell per press, ten with Shift - a doorway is one or two cells wide, and that is where a
+	 * dividing line belongs. The redraw rebuilds the grips, so the focus is put back on the one that
+	 * was being moved; without that, the second press would go nowhere.
+	 * @param end Which grip has the focus.
+	 * @param event The key press.
+	 */
+	private nudgeSplitEnd(end: "a" | "b", event: KeyboardEvent): void {
+		if (!this.splitDragged) return;
+
+		const moved = nudgeSplitPoint(this.splitDragged[end], event.key, event.shiftKey);
+		if (!moved) return;
+
+		// Arrow keys scroll the panel behind the map otherwise, which moves the thing the user is
+		// looking at while they are trying to place a line on it.
+		event.preventDefault();
+
+		this.splitDragged = { ...this.splitDragged, [end]: moved };
+		this.resnapSplitLine();
+		this.renderSplitLine();
+		this.notifySplitChanged();
+
+		const refocused = this.splitGroup.select<SVGGElement>(`g.split-line-grip[data-end="${end}"]`).node();
+		refocused?.focus();
+	}
+
+	/**
+	 * Moves one end of the line.
+	 *
+	 * Snapped again on every move rather than on release, which is where this parts company with the
+	 * app: it waits 20 ms after the finger lifts (report §1.5), because the scan is expensive on a
+	 * phone. Here it is a few thousand array reads, so the solid line can appear and disappear under
+	 * the pointer - and then the two refusal messages explain a state the user can already see
+	 * instead of arriving after the fact.
+	 */
+	private splitEndDrag(params: MapParams): d3.DragBehavior<SVGGElement, "a" | "b", unknown> {
+		return d3
+			.drag<SVGGElement, "a" | "b">()
+			.on("start", (event: any) => event.sourceEvent?.stopPropagation?.())
+			.on("drag", (event: any, end: "a" | "b") => {
+				if (!this.splitDragged) return;
+				const moved = this.localToCell({ x: event.x, y: event.y }, params);
+				this.splitDragged = { ...this.splitDragged, [end]: moved };
+				this.resnapSplitLine();
+				this.renderSplitLine();
+				this.notifySplitChanged();
+			});
+	}
+
+	/** Slides the whole line, keeping its direction and length. */
+	private splitLineDrag(params: MapParams): d3.DragBehavior<SVGGElement, unknown, unknown> {
+		return d3
+			.drag<SVGGElement, unknown>()
+			.on("start", (event: any) => event.sourceEvent?.stopPropagation?.())
+			.on("drag", (event: any) => {
+				if (!this.splitDragged) return;
+				const origin = this.localToCell({ x: event.x - event.dx, y: event.y - event.dy }, params);
+				const moved = this.localToCell({ x: event.x, y: event.y }, params);
+				const dx = moved.x - origin.x;
+				const dy = moved.y - origin.y;
+
+				this.splitDragged = {
+					a: { x: this.splitDragged.a.x + dx, y: this.splitDragged.a.y + dy },
+					b: { x: this.splitDragged.b.x + dx, y: this.splitDragged.b.y + dy },
+				};
+				this.resnapSplitLine();
+				this.renderSplitLine();
+				this.notifySplitChanged();
+			});
+	}
+
+	/** Lets the shell repaint its panel while the line is being dragged. */
+	private notifySplitChanged(): void {
+		this.host.onSplitChanged?.();
 	}
 
 	public async renameRoom(segmentId: number, name: string): Promise<void> {
