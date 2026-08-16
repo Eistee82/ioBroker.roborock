@@ -121,6 +121,88 @@ describe("command outcomes", () => {
 			expect(classifyRobotAnswer("app_start", ["anything"])).toBe("accepted");
 			expect(classifyRobotAnswer("get_status", { battery: 100 })).toBe("accepted");
 		});
+
+		/**
+		 * The refusals below are the two the adapter can recognise, and both are measured rather
+		 * than assumed. Everything else has to stay `accepted`: a false failure mark on a working
+		 * command is worse than the silence it replaces.
+		 */
+		describe("refusals of a method without a defined answer", () => {
+			// Every command that is not a setter used to be reported as accepted whatever came
+			// back - most of the command surface, the remote control and every cleaning start
+			// among it.
+			const NOT_A_SETTER = ["app_start", "app_zoned_clean", "app_goto_target", "find_me", "get_multi_maps_list", "resume_segment_clean", "app_rc_move"];
+
+			it("reads a bare string as a refusal, for every method", () => {
+				// 23 of 133 real answers from the reference device, every one a bare string.
+				for (const method of NOT_A_SETTER) {
+					expect(classifyRobotAnswer(method, "unknown_method"), method).toBe("rejected");
+					expect(classifyRobotAnswer(method, { data: "unknown_method" }), method).toBe("rejected");
+				}
+			});
+
+			it("does not depend on the wording, only on the shape", () => {
+				// A robot that refuses in different words would otherwise slip through, and the
+				// measurement covers one device with one firmware.
+				expect(classifyRobotAnswer("app_start", "not_supported")).toBe("rejected");
+				expect(classifyRobotAnswer("app_start", "")).toBe("rejected");
+			});
+
+			it("reads an exhausted ['retry'] as a refusal", () => {
+				// The transport re-sends on this and only hands it up once the retries are spent,
+				// so what arrives here means the request was never carried out.
+				expect(classifyRobotAnswer("app_start", ["retry"])).toBe("rejected");
+				expect(classifyRobotAnswer("set_custom_mode", ["retry"])).toBe("rejected");
+			});
+		});
+
+		/**
+		 * The counter-test, and the one that matters most: these five run every day. If the check
+		 * ever calls one of them rejected, the check is wrong, not the command.
+		 */
+		describe("the commands that are known to work must never be called rejected", () => {
+			const DAILY = ["app_start", "app_stop", "app_pause", "app_charge", "find_me"];
+
+			it("accepts every answer shape the reference device produced", () => {
+				// The eight shapes measured across 133 answers, minus the bare string.
+				const MEASURED_SUCCESS: unknown[] = [
+					["ok"],
+					[],
+					[{ status: 0 }],
+					[101],
+					["Europe/Berlin"],
+					[111, 112, 125],
+					[{ a: 1 }, { b: 2 }, { c: 3 }, { d: 4 }],
+					{ status: 0 },
+				];
+
+				for (const method of DAILY) {
+					for (const answer of MEASURED_SUCCESS) {
+						expect(classifyRobotAnswer(method, answer), `${method} <- ${JSON.stringify(answer)}`).toBe("accepted");
+					}
+				}
+			});
+
+			it("accepts an answer shape nobody has measured, rather than guessing", () => {
+				// An unrecognised answer is exactly what `accepted` already claims: the robot
+				// answered, no more. Turning it into a refusal would be the false alarm.
+				for (const method of DAILY) {
+					expect(classifyRobotAnswer(method, 0), method).toBe("accepted");
+					expect(classifyRobotAnswer(method, true), method).toBe("accepted");
+					expect(classifyRobotAnswer(method, null), method).toBe("accepted");
+					expect(classifyRobotAnswer(method, undefined), method).toBe("accepted");
+					expect(classifyRobotAnswer(method, [["nested"]]), method).toBe("accepted");
+				}
+			});
+		});
+
+		it("leaves the stricter set_ test exactly as it was", () => {
+			// Not loosened by the new branches: a setter still has to answer ["ok"].
+			expect(classifyRobotAnswer("set_custom_mode", ["ok"])).toBe("accepted");
+			expect(classifyRobotAnswer("set_custom_mode", [])).toBe("rejected");
+			expect(classifyRobotAnswer("set_custom_mode", { status: 0 })).toBe("rejected");
+			expect(classifyRobotAnswer("set_custom_mode", 0)).toBe("rejected");
+		});
 	});
 
 	describe("the shutdown", () => {
