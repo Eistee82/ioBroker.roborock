@@ -62,6 +62,11 @@ export const METHOD_TIMEOUTS_MS: Readonly<Record<string, number>> = Object.freez
 	// Counterpart of get_timer: enables/disables an existing timer. It is a small config
 	// write, so it gets the same budget as the set_* commands rather than the read tier.
 	upd_timer: 15_000,
+	// Removing a schedule. Same tier as the switch above: one small write each, and the adapter reads
+	// the list again afterwards to see whether it took - a budget that is too short would report a
+	// deletion as unknown that in fact happened.
+	del_timer: 15_000,
+	del_server_timer: 15_000,
 
 	// --- list / history reads --------------------------------------------------------
 	get_clean_summary: 15_000,

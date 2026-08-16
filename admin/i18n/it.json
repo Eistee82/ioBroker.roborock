@@ -407,5 +407,8 @@
   "ui_clean_order_none": "Nessuno impostato: decide il robot.",
   "ui_clean_order_set": "Usa la selezione",
   "ui_clean_order_clear": "Cancella",
-  "ui_clean_order_needs_rooms": "Seleziona le stanze sulla mappa nell'ordine in cui devono essere pulite."
+  "ui_clean_order_needs_rooms": "Seleziona le stanze sulla mappa nell'ordine in cui devono essere pulite.",
+  "schedule_delete": "Elimina questa pianificazione",
+  "schedule_delete_hint": "Rimuove definitivamente questa pianificazione. Da qui non è possibile annullare l'operazione: il robot non ne conserva una copia e l'adattatore sa solo attivare o disattivare una pianificazione, non riscriverla.",
+  "schedule_delete_server_hint": "Questa pianificazione risiede sul server Roborock. L'adattatore elimina la metà che sta nel robot; la copia nell'account Roborock rimane, perciò l'app sul telefono continuerà a mostrarla, e come attiva."
 }

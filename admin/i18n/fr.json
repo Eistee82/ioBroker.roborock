@@ -407,5 +407,8 @@
   "ui_clean_order_none": "Aucun défini — le robot décide.",
   "ui_clean_order_set": "Utiliser la sélection",
   "ui_clean_order_clear": "Effacer",
-  "ui_clean_order_needs_rooms": "Sélectionnez les pièces sur la carte dans l’ordre où elles doivent être nettoyées."
+  "ui_clean_order_needs_rooms": "Sélectionnez les pièces sur la carte dans l’ordre où elles doivent être nettoyées.",
+  "schedule_delete": "Supprimer cette programmation",
+  "schedule_delete_hint": "Supprime définitivement cette programmation. C'est irréversible depuis ici : le robot n'en garde aucune copie et l'adaptateur ne sait qu'activer ou désactiver une programmation, pas la réécrire.",
+  "schedule_delete_server_hint": "Cette programmation réside sur le serveur Roborock. L'adaptateur supprime la moitié qui se trouve dans le robot ; la copie du compte Roborock demeure, si bien que l'application mobile continuera de l'afficher, et comme activée."
 }

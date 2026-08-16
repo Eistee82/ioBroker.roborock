@@ -407,5 +407,8 @@
   "ui_clean_order_none": "Niet ingesteld — de robot beslist.",
   "ui_clean_order_set": "Selectie gebruiken",
   "ui_clean_order_clear": "Wissen",
-  "ui_clean_order_needs_rooms": "Selecteer de kamers op de kaart in de volgorde waarin ze moeten worden schoongemaakt."
+  "ui_clean_order_needs_rooms": "Selecteer de kamers op de kaart in de volgorde waarin ze moeten worden schoongemaakt.",
+  "schedule_delete": "Dit schema verwijderen",
+  "schedule_delete_hint": "Verwijdert dit schema definitief. Vanaf hier is dat niet ongedaan te maken - de robot bewaart geen kopie en de adapter kan een schema alleen aan- of uitzetten, niet terugschrijven.",
+  "schedule_delete_server_hint": "Dit schema staat op de server van Roborock. De adapter verwijdert de helft die in de robot staat; de kopie in het Roborock-account blijft, dus de telefoon-app blijft dit schema tonen, en wel als ingeschakeld."
 }

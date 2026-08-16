@@ -323,6 +323,19 @@ Aus demselben Grund ist der Schalter eines solchen Zeitplans hier nur lesbar: Ih
 auszuschalten bräuchte einen Befehl, dessen Form nicht belegt ist — und ein Schalter am falschen
 Befehl sähe aus, als arbeite er, und täte nichts.
 
+**Löschen geht dagegen.** Jeder Zeitplan hat einen Knopf `delete` und daneben ein `source`, das
+sagt, welche der beiden Arten er ist; der Adapter schickt den passenden Befehl und fragt danach die
+Liste des Roboters erneut ab. Erst wenn die Kennung darin nicht mehr auftaucht, gilt der Zeitplan
+als gelöscht und sein Ordner verschwindet — meldet der Roboter ihn weiterhin, bleibt der Ordner
+stehen, und der Knopf sagt, dass die Löschung nicht angekommen ist. **Zurück geht es nicht:** Der
+Adapter kann einen Zeitplan schalten, aber keinen schreiben; ein gelöschter Zeitplan muss in der
+Roborock-App neu angelegt werden.
+
+Bei einem Zeitplan vom Server ist eine Grenze vor dem Drücken wichtig. Die App löscht einen solchen
+Zeitplan an zwei Stellen — im Roboter und im Roborock-Konto —, und von hier aus ist nur der Roboter
+erreichbar. Die Kopie im Konto bleibt, deshalb führt die Handy-App den Zeitplan weiterhin auf und
+zeigt ihn als eingeschaltet, obwohl der Roboter ihn nicht mehr kennt. Der Knopf sagt das ebenfalls.
+
 Die Ladestation zeichnet die Karte mit der Grafik, die auch die Roborock-App dafür
 verwendet, und dreht sie so, wie der Roboter die Ausrichtung der Station meldet. Welche
 Grafik es wird, hängt vom gemeldeten Stationstyp ab: eine einfache Ladeschale bekommt eine
@@ -435,7 +448,7 @@ Alle Geräteobjekte liegen unter `roborock.<instanz>.Devices.<duid>`:
 | `cleaningInfo` | Gesamtwerte über die Lebensdauer (Fläche, Zeit, Anzahl der Läufe). |
 | `cleaningInfo.records.<index>` | Die einzelnen Reinigungsläufe der Historie, neueste zuerst; die gerenderte Karte je Lauf liegt unter `map`. |
 | `floors` | Ein Eintrag je gespeicherter Karte, inklusive Knopf zum Laden. |
-| `schedules` | Die Zeitpläne des Roboters. Ein Zeitplan, den der Roboter selbst führt, hat `cron` und einen schreibbaren Schalter `enabled`. Ein Roboter, der seine Zeitpläne stattdessen auf dem Roborock-Server führt, bekommt je Zeitplan einen Eintrag mit `source: "server"`, einem **nur lesbaren** `enabled` und `raw` — dem Eintrag genau so, wie der Roboter ihn gemeldet hat. Siehe unten. |
+| `schedules` | Die Zeitpläne des Roboters. Jeder Eintrag hat ein `source` (`device` oder `server`) und einen Knopf `delete`. Ein Zeitplan, den der Roboter selbst führt, hat `cron` und einen schreibbaren Schalter `enabled`. Ein Roboter, der seine Zeitpläne stattdessen auf dem Roborock-Server führt, bekommt je Zeitplan einen Eintrag mit `source: "server"`, einem **nur lesbaren** `enabled` und `raw` — dem Eintrag genau so, wie der Roboter ihn gemeldet hat. Siehe unten. |
 | `programs` | Die in der Roborock-App gespeicherten Szenen. |
 | `map` | Die gerenderte Karte und die Raumnamen. `map.liveTrackLearnedPause` meldet nur lesbar die Pause, die der Adapter für die Live-Position dieses Roboters ermittelt hat — siehe **Live-Position: am Roboter ausrichten** in den Einstellungen. Der State bleibt leer, solange noch nicht genug Positionswechsel gesehen wurden und solange die Option ausgeschaltet ist. |
 | `deviceInfo`, `networkInfo`, `connection` | Modell- und Firmware-Informationen, Netzwerkdaten und der Zustand der lokalen bzw. Cloud-Kanäle. |

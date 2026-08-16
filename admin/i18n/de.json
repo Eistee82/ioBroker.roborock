@@ -407,5 +407,8 @@
   "ui_clean_order_none": "Keine festgelegt — der Roboter entscheidet.",
   "ui_clean_order_set": "Auswahl übernehmen",
   "ui_clean_order_clear": "Löschen",
-  "ui_clean_order_needs_rooms": "Die Räume auf der Karte in der Reihenfolge auswählen, in der sie gereinigt werden sollen."
+  "ui_clean_order_needs_rooms": "Die Räume auf der Karte in der Reihenfolge auswählen, in der sie gereinigt werden sollen.",
+  "schedule_delete": "Diesen Zeitplan löschen",
+  "schedule_delete_hint": "Entfernt diesen Zeitplan endgültig. Von hier aus lässt sich das nicht rückgängig machen – der Roboter behält keine Kopie, und der Adapter kann einen Zeitplan nur schalten, nicht zurückschreiben.",
+  "schedule_delete_server_hint": "Dieser Zeitplan liegt auf Roborocks Server. Der Adapter löscht die Hälfte, die im Roboter steht; die Kopie im Roborock-Konto bleibt, deshalb zeigt die Handy-App diesen Zeitplan weiterhin an, und zwar als eingeschaltet."
 }

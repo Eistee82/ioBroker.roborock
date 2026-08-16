@@ -407,5 +407,8 @@
   "ui_clean_order_none": "None set - the robot decides.",
   "ui_clean_order_set": "Use the selection",
   "ui_clean_order_clear": "Clear",
-  "ui_clean_order_needs_rooms": "Pick the rooms on the map, in the order they should be cleaned."
+  "ui_clean_order_needs_rooms": "Pick the rooms on the map, in the order they should be cleaned.",
+  "schedule_delete": "Delete this schedule",
+  "schedule_delete_hint": "Removes this schedule for good. It cannot be undone from here - the robot keeps no copy, and the adapter can only set a schedule's switch, not write one back.",
+  "schedule_delete_server_hint": "This schedule lives on Roborock's server. The adapter deletes the robot's half of it; the copy in the Roborock account stays, so the phone app will keep listing this schedule and will show it as switched on."
 }

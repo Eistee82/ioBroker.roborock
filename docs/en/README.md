@@ -301,6 +301,18 @@ the same reason the switch of such a schedule is read-only here: turning a serve
 or off needs a command whose form has not been established, and a switch wired to the wrong command
 would look like it works and do nothing.
 
+**A schedule can be deleted, though.** Every schedule carries a `delete` button and a `source`
+saying which of the two kinds it is; the adapter sends the command that matches, and afterwards asks
+the robot for its list again. Only when the identifier is gone from that list is the schedule
+treated as deleted and its folder removed - a robot that still reports it keeps its folder, and the
+button says that the deletion did not take. **There is no way back:** the adapter can switch a
+schedule but not write one, so a deleted schedule has to be created again in the Roborock app.
+
+For a server-side schedule one limit is worth knowing before you press it. The app deletes such a
+schedule in two places - on the robot and in your Roborock account - and only the robot is reachable
+from here. The copy in the account stays, so the phone app will keep listing the schedule and will
+show it as switched on, even though the robot no longer knows it. The button says so as well.
+
 The dock is drawn with the Roborock app's own picture of it, turned the way the robot
 reports the dock to stand. Which picture depends on the reported dock type: a plain
 charging dock gets a different graphic from a station that empties, washes or dries. Those
@@ -409,7 +421,7 @@ All device objects live below `roborock.<instance>.Devices.<duid>`:
 | `cleaningInfo` | Lifetime totals (area, time, number of runs). |
 | `cleaningInfo.records.<index>` | The individual cleaning runs of the history, newest first, with the rendered map of each run below `map`. |
 | `floors` | One entry per stored map, including the button that loads it. |
-| `schedules` | The robot's timers. A timer the robot keeps itself has `cron` and a writable `enabled` switch. A robot that keeps its schedules on Roborock's server instead gets one entry per schedule with `source: "server"`, a **read-only** `enabled` and `raw`, the entry exactly as the robot reported it - see below. |
+| `schedules` | The robot's timers. Every entry has a `source` (`device` or `server`) and a `delete` button. A timer the robot keeps itself has `cron` and a writable `enabled` switch. A robot that keeps its schedules on Roborock's server instead gets one entry per schedule with `source: "server"`, a **read-only** `enabled` and `raw`, the entry exactly as the robot reported it - see below. |
 | `programs` | The scenes saved in the Roborock app. |
 | `map` | The rendered map and the room names. `map.liveTrackLearnedPause` reports, read only, the pause the adapter worked out for this robot's live position - see **Live position: match the robot** in the settings. It stays empty until enough position changes have been seen, and while the option is switched off. |
 | `deviceInfo`, `networkInfo`, `connection` | Model and firmware information, network data and the state of the local/cloud channels. |

@@ -407,5 +407,8 @@
   "ui_clean_order_none": "Nie ustawiono — decyduje robot.",
   "ui_clean_order_set": "Użyj zaznaczenia",
   "ui_clean_order_clear": "Wyczyść",
-  "ui_clean_order_needs_rooms": "Wybierz pokoje na mapie w kolejności, w jakiej mają być sprzątane."
+  "ui_clean_order_needs_rooms": "Wybierz pokoje na mapie w kolejności, w jakiej mają być sprzątane.",
+  "schedule_delete": "Usuń ten harmonogram",
+  "schedule_delete_hint": "Usuwa ten harmonogram na stałe. Stąd nie da się tego cofnąć – robot nie przechowuje kopii, a adapter potrafi jedynie włączyć lub wyłączyć harmonogram, a nie zapisać go z powrotem.",
+  "schedule_delete_server_hint": "Ten harmonogram znajduje się na serwerze Roborock. Adapter usuwa tę połowę, która jest w robocie; kopia na koncie Roborock pozostaje, więc aplikacja w telefonie nadal będzie pokazywać ten harmonogram, i to jako włączony."
 }

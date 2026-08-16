@@ -407,5 +407,8 @@
   "ui_clean_order_none": "未设置——由扫地机决定。",
   "ui_clean_order_set": "使用所选顺序",
   "ui_clean_order_clear": "清空",
-  "ui_clean_order_needs_rooms": "在地图上按希望的清扫顺序依次选择房间。"
+  "ui_clean_order_needs_rooms": "在地图上按希望的清扫顺序依次选择房间。",
+  "schedule_delete": "删除此定时任务",
+  "schedule_delete_hint": "永久删除此定时任务。此处无法撤销——机器人不保留副本，适配器只能开关定时任务，无法重新写入。",
+  "schedule_delete_server_hint": "此定时任务保存在 Roborock 服务器上。适配器只删除机器人中的那一半；Roborock 账户中的副本仍然存在，因此手机 App 仍会列出此定时任务，并显示为已开启。"
 }

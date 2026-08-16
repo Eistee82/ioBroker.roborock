@@ -12,6 +12,7 @@ import { AppPluginManager } from "./lib/AppPluginManager";
 import { B01Variant, getB01VariantFromModel } from "./lib/b01Variant";
 import { OUTCOME_QUALITY, buildCommandComment, classifyRequestFailure, isProblemOutcome, isShutdownFailure, outcomeArgs } from "./lib/commandFeedback";
 import type { CommandOrigin, CommandOutcome, CommandOutcomeReport } from "./lib/commandFeedback";
+import { canDeleteSchedules, parseTimerSource } from "./lib/features/vacuum/timerDeletion";
 import { ConnectionStatusManager } from "./lib/connectionStatus";
 import { DeviceManager } from "./lib/deviceManager";
 import { LOCAL_ONLY_LIMITATIONS, isLocalOnlyMode, parseManualDevices } from "./lib/manualDevices";
@@ -1700,9 +1701,13 @@ export class Roborock extends utils.Adapter {
 			return;
 		}
 
-		// Special handling for schedules (deeply nested: Devices.duid.schedules.<timerId>.enabled)
+		// Special handling for schedules (deeply nested: Devices.duid.schedules.<timerId>.<target>)
 		if (folder === "schedules" && idParts.length >= 7 && idParts[6] === "enabled") {
 			await this.handleScheduleToggle(duid, idParts[5], state, id);
+			return;
+		}
+		if (folder === "schedules" && idParts.length >= 7 && idParts[6] === "delete") {
+			if (this.isTruthy(state.val)) await this.handleScheduleDelete(duid, idParts[5], id);
 			return;
 		}
 
@@ -2729,6 +2734,60 @@ export class Roborock extends utils.Adapter {
 			// Re-read so the switch falls back to the timer state the robot really has.
 			await handler.updateTimers().catch((refreshError: unknown) => this.catchError(refreshError, "scheduleToggle(refresh)", duid));
 		}
+	}
+
+	/**
+	 * Deletes one schedule for good.
+	 *
+	 * Which command that takes is not decided here and not guessed: it is read off
+	 * `schedules.<timerId>.source`, which the feature class wrote from the list the entry came out of.
+	 * A schedule whose source is missing or unknown is **not** deleted - `schedules.<id>` is written by
+	 * two unrelated code paths, and the B01 one comes from Tuya data points that neither `del_timer`
+	 * nor `del_server_timer` reaches. Guessing there would send a command about a schedule that has
+	 * nothing to do with it.
+	 *
+	 * The outcome goes onto the button that was pressed, which is also the only place it could go:
+	 * `schedules.<id>.delete` sits deeper than a command object, so no folder rule would find it.
+	 * On success there is nothing left to mark - the object is gone, and that is the confirmation.
+	 *
+	 * @param duid    Device unique id.
+	 * @param timerId Identifier of the schedule, i.e. the folder it sits in.
+	 * @param stateId Full object id of the button that was pressed.
+	 */
+	async handleScheduleDelete(duid: string, timerId: string, stateId: string): Promise<void> {
+		const report = (outcome: CommandOutcome, detail?: string, extraArgs?: string[]): Promise<void> =>
+			this.markCommandOutcome(duid, { command: "del_timer", outcome, stateId, folder: "schedules", detail, extraArgs });
+
+		const handler = this.deviceFeatureHandlers.get(duid);
+		if (!handler || !canDeleteSchedules(handler)) {
+			this.rLog("Requests", duid, "Warn", undefined, undefined, `[scheduleDelete] ${duid} cannot delete schedules; ignoring the write to ${stateId}`, "warn");
+			await report("not_sent", "this robot's schedules are not the kind the adapter can delete");
+			this.setResetTimeout(stateId);
+			return;
+		}
+
+		const sourceState = await this.getStateAsync(`Devices.${duid}.schedules.${timerId}.source`);
+		const source = parseTimerSource(sourceState?.val);
+		if (!source) {
+			this.rLog("Requests", duid, "Warn", undefined, undefined, `[scheduleDelete] No usable 'source' beside schedule ${timerId}; not deleting it`, "warn");
+			await report("not_sent", "it is not recorded whether this schedule lives on the robot or on the server");
+			this.setResetTimeout(stateId);
+			return;
+		}
+
+		try {
+			const result = await handler.deleteSchedule(timerId, source);
+			if (result.outcome === "confirmed") {
+				// The folder, the button included, has been removed. Nothing may be written to it now.
+				return;
+			}
+			await report(result.outcome, result.detail, result.extraArgs);
+		} catch (e: unknown) {
+			const message = this.errorMessage(e);
+			if (!isShutdownFailure(message)) await report("error", message);
+			this.catchError(e, "scheduleDelete", duid);
+		}
+		this.setResetTimeout(stateId);
 	}
 
 	// Helper to handle floor switching logic (extracted to reduce nesting)

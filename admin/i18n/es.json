@@ -407,5 +407,8 @@
   "ui_clean_order_none": "Ninguno definido: decide el robot.",
   "ui_clean_order_set": "Usar la selección",
   "ui_clean_order_clear": "Borrar",
-  "ui_clean_order_needs_rooms": "Selecciona las habitaciones en el mapa en el orden en que deben limpiarse."
+  "ui_clean_order_needs_rooms": "Selecciona las habitaciones en el mapa en el orden en que deben limpiarse.",
+  "schedule_delete": "Eliminar esta programación",
+  "schedule_delete_hint": "Elimina esta programación de forma definitiva. Desde aquí no se puede deshacer: el robot no guarda ninguna copia y el adaptador solo sabe activar o desactivar una programación, no volver a escribirla.",
+  "schedule_delete_server_hint": "Esta programación reside en el servidor de Roborock. El adaptador elimina la mitad que está en el robot; la copia de la cuenta de Roborock permanece, de modo que la aplicación del móvil seguirá mostrando esta programación, y como activada."
 }
