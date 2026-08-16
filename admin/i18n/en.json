@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "After combining or dividing rooms, all related settings and schedules become invalid.",
   "map_flag": "ID of used map",
   "map_present": "Map Present",
+  "map_rename_hint": "Renames one of the robot's stored maps: {\"mapFlag\": 0, \"name\": \"Cellar\"}. The name has to be shorter than %s bytes as the app counts them - a plain letter counts one, an umlaut two, most other characters three - and no other map may already carry it; both are refused before anything is sent. The call has no reply of its own, so the map list is read back afterwards and only that decides whether the rename took.",
   "map_status": "Currently selected map",
   "map_zone_write_hint": "The robot stores walls and zones as one set without ids, so every change rewrites all of them. The adapter reads the current set off the robot's map first and writes it back complete; if the map cannot be read, nothing is written. The current set is listed under mapEdit.zones, and the index used for removal is the position within its own list.",
   "map_zones": "Walls and zones on the current map",
@@ -435,5 +436,17 @@
   "ui_segment_edit_sequence_is": "The order the robot holds: %s",
   "ui_segment_edit_sequence_none": "No cleaning order is set, so nothing is lost here.",
   "ui_split_grip_a": "Dividing line, one end",
-  "ui_split_grip_b": "Dividing line, other end"
+  "ui_split_grip_b": "Dividing line, other end",
+  "ui_maps": "Maps",
+  "ui_maps_hint": "The robot's stored maps. Switching between them is the selector at the top; backing up, restoring and deleting are deliberately not offered here.",
+  "ui_map_unnamed": "Map %s",
+  "ui_map_saved": "Last saved: %s",
+  "ui_map_backup_count": "Backups: %s",
+  "ui_map_backup_hint": "The robot keeps this backup. Only the Roborock app can restore it; this adapter does not offer that, because a restore overwrites the map that is currently loaded.",
+  "ui_map_rename": "Rename map",
+  "ui_map_rename_unavailable": "This robot does not offer renaming its maps.",
+  "ui_map_name_bytes": "%s of %s bytes",
+  "ui_map_name_too_long": "Too long. A map name has to stay below %s bytes as the app counts them: a plain letter counts one, an umlaut two, most other characters three.",
+  "ui_map_name_duplicate": "Another map is already called that.",
+  "ui_map_name_unchanged": "That is already this map's name."
 }

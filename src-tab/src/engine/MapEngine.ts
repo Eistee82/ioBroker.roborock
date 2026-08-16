@@ -527,6 +527,16 @@ export class MapEngine {
 	private robots: RobotEntry[] = [];
 	private floors: SelectOption[] = [];
 	private selectedFloor: string | null = null;
+	/**
+	 * Map names as the map list last reported them, keyed by slot.
+	 *
+	 * The selector's own source, `commands.load_multi_map.common.states`, is read once per device and
+	 * is written by the adapter's polling cycle - so after a rename it carries the old name until the
+	 * next poll, and the label in this tab would stay wrong for as long as it is left open. The map
+	 * list is re-read the moment a rename is judged, so its names are the fresher ones and they win.
+	 * See `map/mapListSource.ts`.
+	 */
+	private mapNamesByFlag: Record<string, string> = {};
 	/** Repeat count of a zoned run; the shell owns the input, the engine only stores it. */
 	private cleanCount = 1;
 	private connectionChannel = "";
@@ -1267,6 +1277,10 @@ export class MapEngine {
 
 		this.roomNamesRequestedForFloor = null;
 		this.roomNamesFromStates = {};
+		// Dropped here rather than left to the next `setMapNames`: slot numbers start at 0 on every
+		// robot, so the previous machine's "Keller" would sit on the new one's slot 1 until its own
+		// list arrived. That window is short and the label it shows is wrong with full confidence.
+		this.mapNamesByFlag = {};
 
 		this.map = undefined;
 		this.mapImage = undefined;
@@ -1945,7 +1959,39 @@ export class MapEngine {
 		// A single floor is not a choice, so the selector stays away entirely.
 		this.floors = !states || Object.keys(states).length < 2 ? [] : Object.entries(states).map(([mapFlag, name]) => ({ value: mapFlag, label: name }));
 		this.selectedFloor = null;
+		this.applyMapNames();
 		this.syncFloorSelection();
+	}
+
+	/**
+	 * Takes the map names from the map list, which is the fresher source after a rename.
+	 *
+	 * Only the **labels** are touched. Which floors exist and whether a selector is shown at all
+	 * stays with `commands.load_multi_map`: that object is what `selectFloor` writes to, and offering
+	 * a switch to a slot the adapter never registered a command for would be a control that cannot
+	 * work. The list is allowed to correct a name, not to invent a destination.
+	 *
+	 * @param names Map names by slot, as the map list reported them.
+	 */
+	public setMapNames(names: Record<string, string>): void {
+		this.mapNamesByFlag = names;
+		if (!this.applyMapNames()) return;
+		this.host.onFloors?.(this.floors, this.selectedFloor);
+	}
+
+	/**
+	 * Writes the remembered names onto the floor entries.
+	 * @returns Whether any label changed.
+	 */
+	private applyMapNames(): boolean {
+		let changed = false;
+		this.floors = this.floors.map((floor) => {
+			const name = this.mapNamesByFlag[floor.value];
+			if (name === undefined || name === floor.label) return floor;
+			changed = true;
+			return { value: floor.value, label: name };
+		});
+		return changed;
 	}
 
 	/** Marks the floor the currently displayed map belongs to. */

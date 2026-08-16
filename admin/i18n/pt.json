@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "Depois de combinar ou dividir divisões, todas as definições e agendamentos relacionados deixam de ser válidos.",
   "map_flag": "ID of used map",
   "map_present": "Mapa presente",
+  "map_rename_hint": "Renomeia um dos mapas guardados do robô: {\"mapFlag\": 0, \"name\": \"Cave\"}. O nome tem de ser mais curto do que %s bytes tal como a aplicação os conta — uma letra simples conta um, um trema dois, a maioria dos outros caracteres três — e nenhum outro mapa pode já usá-lo; ambos os casos são recusados antes de algo ser enviado. A chamada não tem resposta própria, por isso a lista de mapas é lida de novo a seguir e só ela decide se a mudança de nome pegou.",
   "map_status": "Mapa atualmente selecionado",
   "map_zone_write_hint": "O robô guarda paredes e zonas como um único conjunto sem identificadores, por isso cada alteração reescreve todas. O adaptador lê primeiro o conjunto atual do mapa do robô e volta a escrevê-lo por completo; se o mapa não puder ser lido, nada é escrito. O conjunto atual está listado em mapEdit.zones, e o índice usado para remover é a posição dentro da respetiva lista.",
   "map_zones": "Paredes e zonas do mapa atual",
@@ -435,5 +436,17 @@
   "ui_segment_edit_sequence_is": "A ordem guardada: %s",
   "ui_segment_edit_sequence_none": "Não há ordem de limpeza definida, portanto nada se perde aqui.",
   "ui_split_grip_a": "Linha divisória, uma extremidade",
-  "ui_split_grip_b": "Linha divisória, outra extremidade"
+  "ui_split_grip_b": "Linha divisória, outra extremidade",
+  "ui_maps": "Mapas",
+  "ui_maps_hint": "Os mapas guardados do robô. A troca entre eles é feita no seletor no topo; criar cópias, restaurar e apagar não são oferecidos aqui, deliberadamente.",
+  "ui_map_unnamed": "Mapa %s",
+  "ui_map_saved": "Guardado pela última vez: %s",
+  "ui_map_backup_count": "Cópias de segurança: %s",
+  "ui_map_backup_hint": "O robô guarda esta cópia de segurança. Só a aplicação Roborock a pode restaurar; este adaptador não o oferece, porque restaurar substitui o mapa atualmente carregado.",
+  "ui_map_rename": "Mudar o nome do mapa",
+  "ui_map_rename_unavailable": "Este robô não oferece a mudança de nome dos seus mapas.",
+  "ui_map_name_bytes": "%s de %s bytes",
+  "ui_map_name_too_long": "Demasiado longo. Um nome de mapa tem de ficar abaixo de %s bytes, tal como a aplicação os conta: uma letra simples conta um, um acento dois, a maioria dos outros caracteres três.",
+  "ui_map_name_duplicate": "Outro mapa já se chama assim.",
+  "ui_map_name_unchanged": "Este mapa já se chama assim."
 }

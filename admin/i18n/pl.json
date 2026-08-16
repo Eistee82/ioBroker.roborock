@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "Po połączeniu lub podzieleniu pokoi wszystkie powiązane ustawienia i harmonogramy tracą ważność.",
   "map_flag": "ID of used map",
   "map_present": "Mapa obecna",
+  "map_rename_hint": "Zmienia nazwę jednej z zapisanych map robota: {\"mapFlag\": 0, \"name\": \"Piwnica\"}. Nazwa musi być krótsza niż %s bajtów według liczenia aplikacji — zwykła litera liczy się za jeden, umlaut za dwa, większość pozostałych znaków za trzy — i żadna inna mapa nie może już jej nosić; oba przypadki są odrzucane, zanim cokolwiek zostanie wysłane. Wywołanie nie ma własnej odpowiedzi, więc lista map jest potem odczytywana ponownie i tylko ona rozstrzyga, czy zmiana nazwy się przyjęła.",
   "map_status": "Aktualnie wybrana mapa",
   "map_zone_write_hint": "Robot przechowuje ściany i strefy jako jeden zbiór bez identyfikatorów, więc każda zmiana zapisuje je wszystkie od nowa. Adapter najpierw odczytuje bieżący zbiór z mapy robota i zapisuje go z powrotem w całości; jeśli mapy nie da się odczytać, nic nie zostanie zapisane. Bieżący zbiór jest wypisany w mapEdit.zones, a indeks używany przy usuwaniu to pozycja na własnej liście.",
   "map_zones": "Ściany i strefy na bieżącej mapie",
@@ -435,5 +436,17 @@
   "ui_segment_edit_sequence_is": "Zapisana kolejność: %s",
   "ui_segment_edit_sequence_none": "Nie ustawiono kolejności sprzątania, więc nic tu nie przepada.",
   "ui_split_grip_a": "Linia podziału, jeden koniec",
-  "ui_split_grip_b": "Linia podziału, drugi koniec"
+  "ui_split_grip_b": "Linia podziału, drugi koniec",
+  "ui_maps": "Mapy",
+  "ui_maps_hint": "Zapisane mapy robota. Przełącza się je listą u góry; tworzenie kopii, przywracanie i usuwanie celowo nie są tu oferowane.",
+  "ui_map_unnamed": "Mapa %s",
+  "ui_map_saved": "Ostatnio zapisano: %s",
+  "ui_map_backup_count": "Kopie zapasowe: %s",
+  "ui_map_backup_hint": "Robot przechowuje tę kopię zapasową. Przywrócić ją może tylko aplikacja Roborock; ten adapter tego nie oferuje, ponieważ przywrócenie nadpisuje aktualnie wczytaną mapę.",
+  "ui_map_rename": "Zmień nazwę mapy",
+  "ui_map_rename_unavailable": "Ten robot nie pozwala zmieniać nazw swoich map.",
+  "ui_map_name_bytes": "%s z %s bajtów",
+  "ui_map_name_too_long": "Za długa. Nazwa mapy musi być krótsza niż %s bajtów w liczeniu aplikacji: zwykła litera to jeden, litera z ogonkiem dwa, większość pozostałych znaków trzy.",
+  "ui_map_name_duplicate": "Inna mapa już tak się nazywa.",
+  "ui_map_name_unchanged": "Ta mapa już tak się nazywa."
 }

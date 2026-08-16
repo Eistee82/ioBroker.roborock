@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "Na het samenvoegen of opdelen van kamers zijn alle bijbehorende instellingen en schema's ongeldig.",
   "map_flag": "ID of used map",
   "map_present": "Kaart aanwezig",
+  "map_rename_hint": "Hernoemt een van de opgeslagen kaarten van de robot: {\"mapFlag\": 0, \"name\": \"Kelder\"}. De naam moet korter zijn dan %s bytes zoals de app ze telt — een gewone letter telt één, een umlaut twee, de meeste andere tekens drie — en geen andere kaart mag hem al dragen; beide worden geweigerd voordat er iets verstuurd wordt. De aanroep heeft geen eigen antwoord, dus de kaartenlijst wordt daarna opnieuw gelezen en alleen die bepaalt of de hernoeming is aangekomen.",
   "map_status": "Momenteel geselecteerde kaart",
   "map_zone_write_hint": "De robot bewaart muren en zones als één geheel zonder id's, dus elke wijziging schrijft ze allemaal opnieuw. De adapter leest eerst de huidige verzameling van de kaart van de robot en schrijft die volledig terug; kan de kaart niet gelezen worden, dan wordt er niets geschreven. De huidige verzameling staat onder mapEdit.zones, en de index bij het verwijderen is de positie binnen de eigen lijst.",
   "map_zones": "Muren en zones op de huidige kaart",
@@ -435,5 +436,17 @@
   "ui_segment_edit_sequence_is": "De opgeslagen volgorde: %s",
   "ui_segment_edit_sequence_none": "Er is geen schoonmaakvolgorde ingesteld, dus hier gaat niets verloren.",
   "ui_split_grip_a": "Scheidingslijn, één uiteinde",
-  "ui_split_grip_b": "Scheidingslijn, ander uiteinde"
+  "ui_split_grip_b": "Scheidingslijn, ander uiteinde",
+  "ui_maps": "Kaarten",
+  "ui_maps_hint": "De opgeslagen kaarten van de robot. Wisselen doe je met de keuzelijst bovenaan; back-uppen, terugzetten en verwijderen worden hier bewust niet aangeboden.",
+  "ui_map_unnamed": "Kaart %s",
+  "ui_map_saved": "Laatst opgeslagen: %s",
+  "ui_map_backup_count": "Back-ups: %s",
+  "ui_map_backup_hint": "De robot bewaart deze back-up. Alleen de Roborock-app kan hem terugzetten; deze adapter biedt dat niet aan, omdat terugzetten de nu geladen kaart overschrijft.",
+  "ui_map_rename": "Kaart hernoemen",
+  "ui_map_rename_unavailable": "Deze robot biedt het hernoemen van zijn kaarten niet aan.",
+  "ui_map_name_bytes": "%s van %s bytes",
+  "ui_map_name_too_long": "Te lang. Een kaartnaam moet onder %s bytes blijven zoals de app ze telt: een gewone letter telt één, een letter met trema twee, de meeste andere tekens drie.",
+  "ui_map_name_duplicate": "Een andere kaart heet al zo.",
+  "ui_map_name_unchanged": "Zo heet deze kaart al."
 }

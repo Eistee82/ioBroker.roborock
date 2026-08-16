@@ -1,11 +1,16 @@
+import type { MapListEntry } from "../../../common/mapList";
 import type { FeatureDependencies } from "../baseDeviceFeatures";
 import { DeviceStateWriter } from "../deviceStateWriter";
 
 /**
  * Which map the robot currently has loaded, and what backups it says exist.
  *
- * Read-only. Nothing here deletes, restores or renames a map; see "What is deliberately absent"
- * below for the payloads that were established anyway, so that nobody has to read them again.
+ * Nothing here deletes or restores a map; see "What is deliberately absent" below for the payloads
+ * that were established anyway, so that nobody has to read them again. **Renaming is no longer on
+ * that list** - it lives in `v1MapRename.ts`, and the reason it could be built where the offline
+ * map could not is the list this file already reads: a rename is judged by what
+ * `get_multi_maps_list` reports afterwards, not by what was written. This file therefore also
+ * serves that service as its source of truth; see {@link V1MapInventoryService.lastInventory}.
  *
  * ## What was already there, and what this adds
  *
@@ -20,6 +25,13 @@ import { DeviceStateWriter } from "../deviceStateWriter";
  * 2. **The backups.** Every entry of `map_info` carries a `bak_maps` array, and it is discarded.
  *    On the test device both floors have one:
  *    `{"mapFlag":0,"name":"Erdgeschoss","bak_maps":[{"mapFlag":4,"add_time":1786781087}]}`.
+ * 3. **The list as one value**, {@link MapInventoryStates.maps}. The folders hold the same names,
+ *    and they are not the same thing: they are written by `V1MapService.updateMultiMapsList` on the
+ *    polling cycle, while this method also runs straight after a rename. So this state is the one
+ *    that is right the moment the robot accepted a new name, and it is what the admin tab's map list
+ *    reads. It is also the only place the slots can be read **at once** - a reader of the folders
+ *    has to enumerate objects and tell `floors.0` apart from `floors.max_multi_map`, which is a
+ *    state sitting in the same folder.
  *
  * ## `get_map_status` is deliberately not used
  *
@@ -263,10 +275,39 @@ export function allBackups(inventory: MapInventory): MapBackup[] {
 	return inventory.maps.flatMap((slot) => slot.backups);
 }
 
+/**
+ * The map list, in the shape a reader needs rather than the shape the robot sends.
+ *
+ * Deliberately **not** {@link MapSlot} serialised as it stands. A slot carries its whole backup
+ * records, and those are already published in full under {@link MapInventoryStates.backups} - two
+ * copies of the same records in two states is how the two end up disagreeing after a re-read. What
+ * a reader of the list needs about a backup is whether there is one and how old it is, and both
+ * survive the flattening.
+ *
+ * The row type and its reader live in `src/common/mapList.ts`, because the admin tab reads this
+ * state and cannot import this file; see the comment there.
+ *
+ * @param inventory The list as it was read.
+ * @returns One entry per slot, in the order the robot listed them.
+ */
+export function mapListEntries(inventory: MapInventory): MapListEntry[] {
+	return inventory.maps.map((slot) => {
+		const times = slot.backups.map((backup) => backup.addTime).filter((time): time is number => time !== null);
+		return {
+			mapFlag: slot.mapFlag,
+			name: slot.name,
+			addTime: slot.addTime,
+			backupCount: slot.backups.length,
+			lastBackupTime: times.length ? Math.max(...times) : null
+		};
+	});
+}
+
 /** State names this module owns, so a test names them once. */
 export const MapInventoryStates = {
 	activeMapFlag: `${MAP_INVENTORY_FOLDER}.activeMapFlag`,
 	activeMapName: `${MAP_INVENTORY_FOLDER}.activeMapName`,
+	maps: `${MAP_INVENTORY_FOLDER}.maps`,
 	backups: `${MAP_INVENTORY_FOLDER}.backups`,
 	backupCount: `${MAP_INVENTORY_FOLDER}.backupCount`,
 	restoreSupported: `${MAP_INVENTORY_FOLDER}.restoreSupported`
@@ -311,6 +352,25 @@ export class V1MapInventoryService {
 		const backups = allBackups(inventory);
 
 		await this.stateWriter.ensureFolder(MAP_INVENTORY_FOLDER);
+
+		// The list itself, and the reason it is published from **here** rather than left to the
+		// `floors.<mapFlag>.*` folders `V1MapService` maintains: those are written only by
+		// `updateMultiMapsList`, which runs on the polling cycle. This method also runs after a
+		// rename - `rereadMapList` is what the rename is judged by - so this state is the one that is
+		// current the moment the robot has accepted a new name. A reader that took the names from the
+		// folders would show the old one until the next poll came round.
+		await this.stateWriter.ensureAndSetState(MapInventoryStates.maps, {
+			name: "Stored maps",
+			desc:
+				"Read-only list of the robot's map slots: mapFlag, name, addTime, backupCount and "
+				+ "lastBackupTime. Re-read after a rename, so it is the freshest source of the names. "
+				+ "Renaming goes through commands.name_multi_map.",
+			type: "string",
+			role: "json",
+			read: true,
+			write: false
+		}, JSON.stringify(mapListEntries(inventory)));
+
 		await this.stateWriter.ensureAndSetState(MapInventoryStates.backupCount, {
 			name: "Stored map backups",
 			type: "number",
@@ -340,6 +400,45 @@ export class V1MapInventoryService {
 		// the removed probe did - meant the answer could be computed before the list had arrived.
 		await this.publishRestoreSupport();
 		return true;
+	}
+
+	/**
+	 * The list as it was last read, or null before the first read.
+	 *
+	 * Handed to `V1MapRenameService`, which needs it twice: to refuse a rename of a slot the robot
+	 * never listed, and to refuse a name another map already carries. Sharing the list rather than
+	 * reading it a second time is what keeps the two from disagreeing about what the robot holds.
+	 *
+	 * @returns The inventory, or null.
+	 */
+	public lastInventory(): MapInventory | null {
+		return this.inventory;
+	}
+
+	/**
+	 * Asks the robot for its map list again and publishes what comes back.
+	 *
+	 * Used to confirm a rename. Failure is logged and swallowed: the caller reads a null as "the
+	 * list could not be read", which is a weaker statement than "the rename failed" and is the
+	 * honest one.
+	 *
+	 * @returns The fresh inventory, or null when the robot did not answer or answered unreadably.
+	 */
+	public async rereadMapList(): Promise<MapInventory | null> {
+		try {
+			const response = await this.deps.adapter.requestsHandler.sendRequest(this.duid, GET_MULTI_MAPS_LIST, [], { priority: -5 });
+
+			// The returned list is the freshly parsed one or nothing at all. On an unreadable answer
+			// `applyMultiMapsList` leaves the previous inventory standing, and handing that back
+			// would let a caller read yesterday's names as today's - a rename would then be judged
+			// against the very list it was meant to change.
+			if (!await this.applyMultiMapsList(response)) return null;
+			return this.inventory;
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
+				`Failed to re-read ${GET_MULTI_MAPS_LIST}: ${this.deps.adapter.errorMessage(e)}`, "warn");
+			return null;
+		}
 	}
 
 	/**

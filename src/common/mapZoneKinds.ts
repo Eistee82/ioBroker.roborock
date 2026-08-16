@@ -92,6 +92,12 @@ export const ZONE_REMOVE_COMMAND = "remove_map_zone";
  * Here rather than beside the room commands for the same reason as everything else in this file:
  * the admin tab has to stop the input at the same place the adapter refuses, and it cannot import
  * `MapEditService`.
+ *
+ * **Not the rule for a map name, although that number is 30 too.** A map name is limited to *fewer
+ * than* 30 **bytes** as the app counts them - `MAX_MAP_NAME_LENGTH` and `mapNameLength` in
+ * `mapNameLength.ts`. Characters against bytes, inclusive against exclusive; with ASCII the two are
+ * indistinguishable, which is exactly why reusing this constant there would pass every test and
+ * still be wrong.
  */
 export const MAX_ROOM_NAME_LENGTH = 30;
 

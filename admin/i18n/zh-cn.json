@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "合并或拆分房间后，所有相关的设置和定时任务都会失效。",
   "map_flag": "ID of used map",
   "map_present": "地图呈现",
+  "map_rename_hint": "重命名机器人保存的某张地图：{\"mapFlag\": 0, \"name\": \"地下室\"}。名称必须短于 %s 个字节（按 App 的计法：一个普通字母算一个，变音字母算两个，大多数其他字符算三个），并且不能与其他地图重名；这两种情况都会在发送之前被拒绝。该调用没有自己的应答，因此之后会重新读取地图列表，只有它才能说明重命名是否生效。",
   "map_status": "当前选择的地图",
   "map_zone_write_hint": "机器人把墙和区域作为一个整体保存，没有单独的编号，因此每次修改都会重写全部内容。适配器会先从机器人的地图上读取当前的全部内容，再完整写回；如果读不到地图，就什么都不写。当前内容列在 mapEdit.zones 中，删除时使用的索引是它在所属列表中的位置。",
   "map_zones": "当前地图上的墙和区域",
@@ -435,5 +436,17 @@
   "ui_segment_edit_sequence_is": "当前顺序：%s",
   "ui_segment_edit_sequence_none": "未设置清扫顺序，此处不会丢失任何内容。",
   "ui_split_grip_a": "分割线，一端",
-  "ui_split_grip_b": "分割线，另一端"
+  "ui_split_grip_b": "分割线，另一端",
+  "ui_maps": "地图",
+  "ui_maps_hint": "机器人已保存的地图。切换地图请使用顶部的选择框；备份、恢复和删除在此有意不提供。",
+  "ui_map_unnamed": "地图 %s",
+  "ui_map_saved": "最后保存：%s",
+  "ui_map_backup_count": "备份：%s",
+  "ui_map_backup_hint": "机器人保存着这份备份。只有 Roborock 应用可以恢复它；本适配器不提供该功能，因为恢复会覆盖当前载入的地图。",
+  "ui_map_rename": "重命名地图",
+  "ui_map_rename_unavailable": "此机器人不支持重命名它的地图。",
+  "ui_map_name_bytes": "%s / %s 字节",
+  "ui_map_name_too_long": "太长了。按应用的计数方式，地图名称必须少于 %s 字节：普通字母算一个，变音字母算两个，大多数其他字符算三个。",
+  "ui_map_name_duplicate": "已有另一张地图使用该名称。",
+  "ui_map_name_unchanged": "这张地图已经叫这个名字了。"
 }

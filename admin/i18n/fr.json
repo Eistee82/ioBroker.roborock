@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "Après avoir combiné ou divisé des pièces, tous les réglages et programmations associés deviennent invalides.",
   "map_flag": "ID of used map",
   "map_present": "Carte présente",
+  "map_rename_hint": "Renomme l'une des cartes enregistrées du robot : {\"mapFlag\": 0, \"name\": \"Cave\"}. Le nom doit faire moins de %s octets au sens du comptage de l'application — une lettre simple compte pour un, un tréma pour deux, la plupart des autres caractères pour trois — et aucune autre carte ne doit déjà le porter ; les deux cas sont refusés avant tout envoi. L'appel n'a pas de réponse propre : la liste des cartes est donc relue ensuite, et elle seule décide si le renommage a pris.",
   "map_status": "Carte actuellement sélectionnée",
   "map_zone_write_hint": "Le robot enregistre les murs et les zones comme un seul ensemble sans identifiants : chaque modification les réécrit tous. L'adaptateur lit d'abord l'ensemble actuel sur la carte du robot et le réécrit en entier ; si la carte ne peut pas être lue, rien n'est écrit. L'ensemble actuel est listé sous mapEdit.zones, et l'index utilisé pour la suppression est la position dans sa propre liste.",
   "map_zones": "Murs et zones de la carte actuelle",
@@ -435,5 +436,17 @@
   "ui_segment_edit_sequence_is": "L'ordre enregistré : %s",
   "ui_segment_edit_sequence_none": "Aucun ordre de nettoyage n'est défini, rien n'est perdu ici.",
   "ui_split_grip_a": "Ligne de séparation, une extrémité",
-  "ui_split_grip_b": "Ligne de séparation, autre extrémité"
+  "ui_split_grip_b": "Ligne de séparation, autre extrémité",
+  "ui_maps": "Cartes",
+  "ui_maps_hint": "Les cartes enregistrées du robot. Le changement de carte se fait avec le sélecteur en haut ; la sauvegarde, la restauration et la suppression ne sont volontairement pas proposées ici.",
+  "ui_map_unnamed": "Carte %s",
+  "ui_map_saved": "Dernier enregistrement : %s",
+  "ui_map_backup_count": "Sauvegardes : %s",
+  "ui_map_backup_hint": "Le robot conserve cette sauvegarde. Seule l'application Roborock peut la restaurer ; cet adaptateur ne le propose pas, car une restauration écrase la carte actuellement chargée.",
+  "ui_map_rename": "Renommer la carte",
+  "ui_map_rename_unavailable": "Ce robot ne permet pas de renommer ses cartes.",
+  "ui_map_name_bytes": "%s sur %s octets",
+  "ui_map_name_too_long": "Trop long. Un nom de carte doit rester en dessous de %s octets tels que l'application les compte : une lettre simple compte un, une lettre accentuée deux, la plupart des autres caractères trois.",
+  "ui_map_name_duplicate": "Une autre carte porte déjà ce nom.",
+  "ui_map_name_unchanged": "C'est déjà le nom de cette carte."
 }

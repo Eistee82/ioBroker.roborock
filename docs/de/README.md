@@ -266,12 +266,45 @@ Adapter unter **Karteninventar**, welche Karte geladen ist und welche **Sicherun
 meldet: beim Testgerät eine je Karte, mit dem Datum der Sicherung und der Etage, zu der sie gehört.
 
 Zu den Sicherungen gehört ein ehrlicher Vorbehalt, und der ist ein eigener Datenpunkt:
-`mapInventory.restoreSupported`. Der Roboter wird gefragt, ob er überhaupt wiederherstellen kann —
-und **das Testgerät sagt nein**: Es listet zwei Sicherungen und lehnt genau den Befehl ab, mit dem
-die Roborock-App ihre Wiederherstellungsliste holt. Diese Sicherungen sind also nicht nutzbar, weder
-über diesen Adapter noch über die App. Das auszusprechen ist der Unterschied zwischen „dieser
-Adapter hat keinen Knopf" und „dieser Roboter kann das nicht". Nichts hiervon löscht, stellt wieder
-her oder benennt eine Karte um; das ist zerstörerisch und gehört hinter eine Rückfrage.
+`mapInventory.restoreSupported`. Er beantwortet, was die beiden belegten Hälften gemeinsam
+beantworten können — ob der Roboter überhaupt Sicherungen führt und ob seine Firmware das
+Wiederherstellungsmenü anbietet (`new_feature_info`, Bit 49). Beim Testgerät trifft beides zu, die
+Roborock-App würde für seine zwei Sicherungen also einen Eintrag zeigen. **Der Datenpunkt sagt
+nicht, dass Wiederherstellen funktioniert**, sondern nur, dass die App es anbieten würde:
+`recover_multi_map` ist ein Schreibbefehl, der die gerade geladene Karte überschreibt, und einen
+Roboter einen zerstörerischen Aufruf beweisen zu lassen, indem man ihn ausführt, ist keine
+Fähigkeitsprüfung. Nichts hiervon löscht, sichert oder stellt eine Karte wieder her; alle drei sind
+zerstörerisch und gehören hinter eine Rückfrage.
+
+Die ganze Liste erscheint zusätzlich als ein einziger Wert, `mapInventory.maps`: eine Zeile je Karte
+mit `mapFlag`, `name`, `addTime`, `backupCount` und `lastBackupTime`. Sie steht neben den
+`floors`-Ordnern, weil sie bei jedem Lesen der Kartenliste neu geschrieben wird — **auch bei dem
+Lesen, das eine Umbenennung beurteilt**. Damit ist sie die frischeste Quelle der Namen, und aus ihr
+wird die Kartenliste im Admin-Tab gezeichnet.
+
+**Umbenennen gibt es dagegen**, als `commands.name_multi_map`, und es nimmt
+`{"mapFlag": 0, "name": "Keller"}` — die Kartennummer, wie sie unter `floors` und in der
+Karteninventur steht, und den neuen Namen. Zwei Dinge lehnt der Adapter ab, bevor überhaupt etwas
+gesendet wird, weil die Roborock-App sie ebenfalls ablehnt: einen Namen, den eine andere Karte schon
+trägt, und einen zu langen. Die Längengrenze ist nicht die Zeichenzahl. Der Roboter zählt einen
+einfachen Buchstaben als eins, einen Umlaut als zwei und die meisten anderen Zeichen als drei, und
+der Name muss **unter 30** davon bleiben — fünfzehn Umlaute sind also bereits zu lang. Danach wird
+die Kartenliste neu gelesen, und nur sie entscheidet: Das Kommando meldet entweder, dass der Roboter
+den neuen Namen trägt, oder dass er weiterhin den alten meldet, oder dass sich die Liste nicht lesen
+ließ und es damit unbekannt ist. Der Aufruf selbst hat keine Antwort, der man glauben könnte.
+
+Im Admin-Tab hat dasselbe eine eigene Tafel: **Karten**, in der Spalte rechts. Sie listet jede
+gespeicherte Karte mit Namen, dem Zeitpunkt der letzten Speicherung und einem Hinweis, ob eine
+Sicherung vorliegt, markiert die Karte, auf der der Roboter gerade steht, und trägt das Umbenennen.
+Sie hängt bewusst nicht an der Etagenauswahl oben. Die wird aus `commands.load_multi_map` gefüllt,
+einem Objekt, das der Adapter nur bei Platz für mehr als eine Karte anlegt, und sie blendet sich bei
+nur einer Karte ganz aus — ein Roboter mit einer einzigen Karte hätte also gar kein Umbenennen
+bekommen. **Umgeschaltet wird weiterhin mit der Auswahl oben**; die Tafel verwaltet und schaltet
+nie. Die Sicherungszeile berichtet, was der Roboter vorhält, und bietet dazu nichts an — aus den
+Gründen oben. Das Umbenennen **verschwindet**, statt grau zu werden, wenn der Adapter für diesen
+Roboter kein `name_multi_map` veröffentlicht hat, und das Eingabefeld endet dort, wo auch der
+Roboter endet: Es zählt die oben beschriebenen Byte und zeigt an, wie viele der dreißig verbraucht
+sind — in einer Sprache mit Umlauten lohnt sich der Blick.
 
 Unter **Geräteinformationen** erscheinen die **Seriennummer** des Roboters und sein **Regionsblock**,
 beides rein lesend und beides nur bei einem Roboter, der darauf antwortet: das verwendete

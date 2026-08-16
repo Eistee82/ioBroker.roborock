@@ -8,8 +8,10 @@ import {
 	backupMenuOffered,
 	V1MapInventoryService,
 	allBackups,
+	mapListEntries,
 	parseMultiMapsList
 } from "../../src/lib/features/vacuum/v1MapInventory";
+import type { MapListEntry } from "../../src/common/mapList";
 
 vi.mock("../../src/lib/map/MapManager", () => ({
 	MapManager: class {
@@ -95,6 +97,38 @@ describe("reading the map list", () => {
 		expect(inventory?.maps.map((slot) => slot.mapFlag)).toEqual([2]);
 	});
 
+	it("flattens the list into the rows a reader gets", () => {
+		const entries = mapListEntries(parseMultiMapsList(MEASURED_LIST)!);
+		const expected: MapListEntry[] = [
+			{ mapFlag: 0, name: "Erdgeschoss", addTime: 1786788440, backupCount: 1, lastBackupTime: 1786781087 },
+			{ mapFlag: 1, name: "Keller", addTime: 1733229641, backupCount: 1, lastBackupTime: 1733229675 }
+		];
+
+		expect(entries).toEqual(expected);
+	});
+
+	it("leaves an unnamed slot unnamed instead of calling it 'Map 0'", () => {
+		// `V1MapService` invents that fallback for the *folder* it names, which is fair - a folder has
+		// to be called something. In a data state it would make a map the user really did call "Map 0"
+		// indistinguishable from one the robot never named.
+		const entries = mapListEntries(parseMultiMapsList([{ map_info: [{ mapFlag: 0 }] }])!);
+
+		expect(entries[0].name).toBeNull();
+		expect(entries[0].backupCount).toBe(0);
+		expect(entries[0].lastBackupTime).toBeNull();
+	});
+
+	it("reports the newest backup when a robot keeps several", () => {
+		// The test device's `max_bak_map` is 1, so this case is not measured. It is handled anyway
+		// because the field is an array and nothing in the answer promises one entry - and picking the
+		// first would report the oldest on a robot that appends.
+		const entries = mapListEntries(parseMultiMapsList([{
+			map_info: [{ mapFlag: 0, name: "EG", bak_maps: [{ mapFlag: 4, add_time: 100 }, { mapFlag: 5, add_time: 900 }, { mapFlag: 6 }] }]
+		}])!);
+
+		expect([entries[0].backupCount, entries[0].lastBackupTime]).toEqual([3, 900]);
+	});
+
 	it("says nothing when the answer carries no map list", () => {
 		expect(parseMultiMapsList("unknown_method")).toBeNull();
 		expect(parseMultiMapsList([{ max_multi_map: 4 }])).toBeNull();
@@ -103,7 +137,7 @@ describe("reading the map list", () => {
 });
 
 describe("what the inventory publishes", () => {
-	function createService(featureInfo?: unknown): { service: V1MapInventoryService; written: Map<string, unknown> } {
+	function createService(featureInfo?: unknown, answers: unknown[] = []): { service: V1MapInventoryService; written: Map<string, unknown> } {
 		const written = new Map<string, unknown>();
 		const deps = {
 			adapter: {
@@ -113,7 +147,14 @@ describe("what the inventory publishes", () => {
 				}),
 				rLog: vi.fn(),
 				errorMessage: (e) => String(e),
-				getStateAsync: vi.fn(async () => (featureInfo === undefined ? null : { val: featureInfo }))
+				getStateAsync: vi.fn(async () => (featureInfo === undefined ? null : { val: featureInfo })),
+				requestsHandler: {
+					sendRequest: vi.fn(async () => {
+						const next = answers.shift();
+						if (next instanceof Error) throw next;
+						return next;
+					})
+				}
 			},
 			ensureState: vi.fn().mockResolvedValue(undefined),
 			ensureFolder: vi.fn().mockResolvedValue(undefined)
@@ -130,6 +171,30 @@ describe("what the inventory publishes", () => {
 
 		expect(written.get(id(MapInventoryStates.backupCount))).toBe(2);
 		expect(JSON.parse(String(written.get(id(MapInventoryStates.backups))))).toHaveLength(2);
+	});
+
+	it("publishes the slots as one list", async () => {
+		const { service, written } = createService();
+		await service.applyMultiMapsList(MEASURED_LIST);
+
+		expect(JSON.parse(String(written.get(id(MapInventoryStates.maps))))).toEqual([
+			{ mapFlag: 0, name: "Erdgeschoss", addTime: 1786788440, backupCount: 1, lastBackupTime: 1786781087 },
+			{ mapFlag: 1, name: "Keller", addTime: 1733229641, backupCount: 1, lastBackupTime: 1733229675 }
+		]);
+	});
+
+	it("re-publishes the list when it is read again, which is what a rename is judged by", async () => {
+		// The reason this state exists beside the `floors.<mapFlag>.name` objects: those are written
+		// by `V1MapService` on the polling cycle, while this method also runs from `rereadMapList`
+		// right after a rename. Anything reading the folders shows the old name until the next poll.
+		const renamed = [{ ...MEASURED_LIST[0], map_info: [{ ...MEASURED_LIST[0].map_info[0], name: "Parterre" }, MEASURED_LIST[0].map_info[1]] }];
+		const { service, written } = createService(undefined, [renamed]);
+		await service.applyMultiMapsList(MEASURED_LIST);
+
+		await service.rereadMapList();
+
+		const entries = JSON.parse(String(written.get(id(MapInventoryStates.maps))));
+		expect(entries.map((entry: MapListEntry) => entry.name)).toEqual(["Parterre", "Keller"]);
 	});
 
 	it("names the active map out of the list it already read", async () => {
@@ -217,6 +282,20 @@ describe("what the inventory publishes", () => {
 		expect(backupMenuOffered(2247395306799103)).toBe(true);
 	});
 
+	it("hands back the freshly read list, or nothing at all", async () => {
+		// `rereadMapList` is what a rename is judged by. On an unreadable answer
+		// `applyMultiMapsList` leaves the previous inventory standing, and returning that would let
+		// the caller read yesterday's names as today's - a rename would then be measured against
+		// the very list it was meant to change, and reported as having failed.
+		const { service } = createService(undefined, [MEASURED_LIST, "unknown_method", new Error("Timeout")]);
+
+		expect((await service.rereadMapList())?.maps.map((slot) => slot.name)).toEqual(["Erdgeschoss", "Keller"]);
+		expect(await service.rereadMapList()).toBeNull();
+		expect(await service.rereadMapList()).toBeNull();
+		// The list read first is still what the states show; only the *return value* withholds it.
+		expect(service.lastInventory()?.maps).toHaveLength(2);
+	});
+
 	it("tells a denial and a silence apart", async () => {
 		expect(backupMenuOffered(null)).toBeNull();
 		expect(backupMenuOffered(undefined)).toBeNull();
@@ -253,6 +332,11 @@ describe("who is offered the map inventory", () => {
 			requestsHandler: { sendRequest },
 			rLog: vi.fn(),
 			errorMessage: (e: unknown) => String(e),
+			// The adapter's own strings. Declared as `{}` on the real adapter, so a mock without it
+			// is a mock that differs from production - and `initMapInventory` registers a command
+			// whose description reads from it, which threw here and quietly took the whole feature
+			// with it. A missing field in a double, not a missing guard in the code.
+			translations: {},
 			translationManager: { get: (_key: string, fallback: string) => fallback },
 			http_api: {
 				getRobotModel: vi.fn().mockReturnValue("roborock.vacuum.a65"),
