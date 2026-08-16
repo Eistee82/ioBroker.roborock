@@ -4,8 +4,12 @@ import { DeviceStateWriter } from "../deviceStateWriter";
 /**
  * Which map the robot currently has loaded, and what backups it says exist.
  *
- * Read-only. Nothing here deletes, restores or renames a map; see "What is deliberately absent"
- * below for the payloads that were established anyway, so that nobody has to read them again.
+ * Nothing here deletes or restores a map; see "What is deliberately absent" below for the payloads
+ * that were established anyway, so that nobody has to read them again. **Renaming is no longer on
+ * that list** - it lives in `v1MapRename.ts`, and the reason it could be built where the offline
+ * map could not is the list this file already reads: a rename is judged by what
+ * `get_multi_maps_list` reports afterwards, not by what was written. This file therefore also
+ * serves that service as its source of truth; see {@link V1MapInventoryService.lastInventory}.
  *
  * ## What was already there, and what this adds
  *
@@ -322,6 +326,45 @@ export class V1MapInventoryService {
 		// the removed probe did - meant the answer could be computed before the list had arrived.
 		await this.publishRestoreSupport();
 		return true;
+	}
+
+	/**
+	 * The list as it was last read, or null before the first read.
+	 *
+	 * Handed to `V1MapRenameService`, which needs it twice: to refuse a rename of a slot the robot
+	 * never listed, and to refuse a name another map already carries. Sharing the list rather than
+	 * reading it a second time is what keeps the two from disagreeing about what the robot holds.
+	 *
+	 * @returns The inventory, or null.
+	 */
+	public lastInventory(): MapInventory | null {
+		return this.inventory;
+	}
+
+	/**
+	 * Asks the robot for its map list again and publishes what comes back.
+	 *
+	 * Used to confirm a rename. Failure is logged and swallowed: the caller reads a null as "the
+	 * list could not be read", which is a weaker statement than "the rename failed" and is the
+	 * honest one.
+	 *
+	 * @returns The fresh inventory, or null when the robot did not answer or answered unreadably.
+	 */
+	public async rereadMapList(): Promise<MapInventory | null> {
+		try {
+			const response = await this.deps.adapter.requestsHandler.sendRequest(this.duid, GET_MULTI_MAPS_LIST, [], { priority: -5 });
+
+			// The returned list is the freshly parsed one or nothing at all. On an unreadable answer
+			// `applyMultiMapsList` leaves the previous inventory standing, and handing that back
+			// would let a caller read yesterday's names as today's - a rename would then be judged
+			// against the very list it was meant to change.
+			if (!await this.applyMultiMapsList(response)) return null;
+			return this.inventory;
+		} catch (e: unknown) {
+			this.deps.adapter.rLog("System", this.duid, "Warn", "1.0", undefined,
+				`Failed to re-read ${GET_MULTI_MAPS_LIST}: ${this.deps.adapter.errorMessage(e)}`, "warn");
+			return null;
+		}
 	}
 
 	/**

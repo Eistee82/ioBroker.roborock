@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "Tras combinar o dividir habitaciones, todos los ajustes y programaciones relacionados dejan de ser válidos.",
   "map_flag": "ID of used map",
   "map_present": "Mapa presente",
+  "map_rename_hint": "Renombra uno de los mapas guardados del robot: {\"mapFlag\": 0, \"name\": \"Sótano\"}. El nombre tiene que ser más corto que %s bytes según los cuenta la aplicación — una letra simple cuenta uno, una diéresis dos, la mayoría de los demás caracteres tres — y ningún otro mapa puede llevarlo ya; ambos casos se rechazan antes de enviar nada. La llamada no tiene respuesta propia, así que la lista de mapas se vuelve a leer después y solo ella decide si el cambio de nombre se aplicó.",
   "map_status": "Mapa seleccionado actualmente",
   "map_zone_write_hint": "El robot guarda los muros y las zonas como un único conjunto sin identificadores, por lo que cada cambio los reescribe todos. El adaptador lee primero el conjunto actual del mapa del robot y lo vuelve a escribir completo; si el mapa no se puede leer, no se escribe nada. El conjunto actual aparece en mapEdit.zones, y el índice que se usa para eliminar es la posición dentro de su propia lista.",
   "map_zones": "Muros y zonas del mapa actual",

@@ -253,8 +253,18 @@ The backups come with an honest caveat, and it is a state of its own: `mapInvent
 The robot is asked whether it can restore at all, and **the test device says no** - it lists two
 backups and rejects the command the Roborock app itself uses to fetch the restore list. So those
 backups are not usable, not by this adapter and not by the app. Saying so is the difference between
-"this adapter has no button" and "this robot cannot do it". Nothing here deletes, restores or renames
-a map; those are destructive and belong behind a confirmation, not on a button.
+"this adapter has no button" and "this robot cannot do it". Nothing here deletes or restores a map;
+those are destructive and belong behind a confirmation, not on a button.
+
+**Renaming one is here**, as `commands.name_multi_map`, and it takes
+`{"mapFlag": 0, "name": "Cellar"}` — the slot number as it appears under `floors` and under map
+inventory, and the new name. Two things it refuses before anything is sent, because the Roborock app
+refuses them too: a name another map already carries, and one that is too long. The length limit is
+not the number of characters. The robot counts a plain letter as one, an umlaut as two and most
+other characters as three, and the name has to stay **under 30** of those — so fifteen umlauts are
+already too long. Afterwards the map list is read back and only that decides: the command either
+reports that the robot now carries the new name, or that it still reports the old one, or that the
+list could not be read and it is unknown. The call itself has no reply worth believing.
 
 Under **device info** the robot's **serial number** and its **region block** appear, both read-only
 and both only on a robot that answers for them: the voice package it runs, Roborock's `bom` string,

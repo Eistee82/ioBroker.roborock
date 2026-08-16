@@ -33,6 +33,7 @@ import type { StatusToggle } from "./v1ProbedCapabilities";
 import { CHANGE_SOUND_VOLUME, GET_SOUND_VOLUME, V1SoundVolumeService } from "./v1SoundVolume";
 import { APP_GET_LOCALE, GET_SERIAL_NUMBER, V1DeviceIdentityService } from "./v1DeviceIdentity";
 import { GET_MULTI_MAPS_LIST, V1MapInventoryService } from "./v1MapInventory";
+import { NAME_MULTI_MAP, V1MapRenameService } from "./v1MapRename";
 import { CLOSE_VALLEY_TIMER, GET_VALLEY_TIMER, SET_VALLEY_TIMER, V1OffPeakChargingService } from "./v1OffPeakCharging";
 import {
 	GET_SMART_WASH_PARAMS,
@@ -160,6 +161,7 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	protected soundVolumeService: V1SoundVolumeService;
 	protected deviceIdentityService: V1DeviceIdentityService;
 	protected mapInventoryService: V1MapInventoryService;
+	protected mapRenameService: V1MapRenameService;
 	protected offPeakService: V1OffPeakChargingService;
 	protected mopWashSettingsService: V1MopWashSettingsService;
 	protected carpetDeepCleanService: V1CarpetDeepCleanService;
@@ -219,6 +221,10 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 		this.soundVolumeService = new V1SoundVolumeService(this.deps, this.duid);
 		this.deviceIdentityService = new V1DeviceIdentityService(this.deps, this.duid);
 		this.mapInventoryService = new V1MapInventoryService(this.deps, this.duid);
+		// The rename reads and re-reads the very list the inventory publishes, so it is handed that
+		// service rather than given a list of its own. Two readers of `get_multi_maps_list` that do
+		// not share what they read is how a rename would be judged against a stale list.
+		this.mapRenameService = new V1MapRenameService(this.deps, this.duid, this.mapInventoryService);
 		this.offPeakService = new V1OffPeakChargingService(this.deps, this.duid);
 		this.mopWashSettingsService = new V1MopWashSettingsService(this.deps, this.duid);
 		this.carpetDeepCleanService = new V1CarpetDeepCleanService(this.deps, this.duid);
@@ -803,6 +809,12 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			// its answer travels the same path; a robot that was never offered the inventory must
 			// not get its states created as a side effect of somebody else's request.
 			await this.mapInventoryService.applyMultiMapsList(response);
+		} else if (finalMethod === NAME_MULTI_MAP) {
+			// The rename is judged by the list, not by this answer. `name_multi_map` has no
+			// documented reply, and `classifyRobotAnswer` only tests `set_*` - so whatever arrived
+			// here already counts as "accepted", which says nothing about the name. Same reasoning
+			// as when a schedule is deleted: only the freshly read list is evidence.
+			void this.mapRenameService.confirmPendingRenames();
 		}
 
 		this.noteRemoteControlResult(finalMethod);
@@ -1010,6 +1022,10 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 
 		if (this.carpetDeepCleanService.handles(method)) {
 			return this.carpetDeepCleanService.buildCommandParams(method, params);
+		}
+
+		if (this.mapRenameService.handles(method)) {
+			return this.mapRenameService.buildCommandParams(method, params);
 		}
 
 		if (method === "reset_consumable" && id) {
@@ -1924,14 +1940,35 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 	}
 
 	/**
-	 * Publishes which map is loaded and what backups the robot says it keeps.
+	 * Publishes which map is loaded, what backups the robot says it keeps, and renames a map.
 	 *
-	 * Read-only throughout - see `v1MapInventory.ts` for why `get_map_status` is not used and for
-	 * the payloads of the three destructive calls that were established but deliberately not built.
+	 * Deleting and restoring stay out - see `v1MapInventory.ts` for why `get_map_status` is not used
+	 * and for the payloads of the three destructive calls that were established but deliberately not
+	 * built.
 	 *
 	 * Whether those backups would be offered for restoring is published by the service itself, out
 	 * of the list plus one firmware bit. It used to be probed here with `get_recover_maps`, and that
 	 * was wrong: the app has two restore flows and that call belongs to the other one.
+	 *
+	 * ## Why the rename hangs off this feature and not off a probe of its own
+	 *
+	 * `Feature.MapInventory` is granted when the robot **answers `get_multi_maps_list`**
+	 * (`detectProbedCapabilities`), and that is exactly the right question for renaming: a robot
+	 * that cannot list its maps has no slot to rename and no way to show that a rename took. The
+	 * three alternatives were each considered and each is worse here:
+	 *
+	 * - **`capabilityProbe.ts` would have to call the method it is testing.** It refuses anything
+	 *   that is not a `get_*` for that reason (`capabilityProbe.ts:107`), and the reason applies
+	 *   with full force to a method that changes a stored name.
+	 * - **A feature bit** would need one that means "can rename a map", and none is known. Reading a
+	 *   bit that has not been identified is worse than reading nothing, and `new_feature_info` is
+	 *   not in the status packet at all - four checks have already mistaken its absence for a
+	 *   cleared bit.
+	 * - **`STATUS_FIELD_TOGGLES`** answers about fields the status packet carries. Map names are not
+	 *   among them.
+	 *
+	 * The list does the second half of the gating as well, at the moment of use rather than at
+	 * start-up: a rename naming a slot the robot never listed is refused before anything is sent.
 	 */
 	@BaseDeviceFeatures.DeviceFeature(Feature.MapInventory)
 	public async initMapInventory(): Promise<void> {
@@ -1941,6 +1978,8 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 			name: "Read the map list and its backups",
 			def: false
 		}, "queries");
+
+		this.mapRenameService.registerCommands((name, spec, group) => this.addCommand(name, spec, group));
 
 		// `mapInventory.restoreSupported` is published from inside this read, because the backup
 		// count is one of the two inputs it is computed from. It used to be a separate probe of

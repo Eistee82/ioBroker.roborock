@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "Après avoir combiné ou divisé des pièces, tous les réglages et programmations associés deviennent invalides.",
   "map_flag": "ID of used map",
   "map_present": "Carte présente",
+  "map_rename_hint": "Renomme l'une des cartes enregistrées du robot : {\"mapFlag\": 0, \"name\": \"Cave\"}. Le nom doit faire moins de %s octets au sens du comptage de l'application — une lettre simple compte pour un, un tréma pour deux, la plupart des autres caractères pour trois — et aucune autre carte ne doit déjà le porter ; les deux cas sont refusés avant tout envoi. L'appel n'a pas de réponse propre : la liste des cartes est donc relue ensuite, et elle seule décide si le renommage a pris.",
   "map_status": "Carte actuellement sélectionnée",
   "map_zone_write_hint": "Le robot enregistre les murs et les zones comme un seul ensemble sans identifiants : chaque modification les réécrit tous. L'adaptateur lit d'abord l'ensemble actuel sur la carte du robot et le réécrit en entier ; si la carte ne peut pas être lue, rien n'est écrit. L'ensemble actuel est listé sous mapEdit.zones, et l'index utilisé pour la suppression est la position dans sa propre liste.",
   "map_zones": "Murs et zones de la carte actuelle",

@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "Na het samenvoegen of opdelen van kamers zijn alle bijbehorende instellingen en schema's ongeldig.",
   "map_flag": "ID of used map",
   "map_present": "Kaart aanwezig",
+  "map_rename_hint": "Hernoemt een van de opgeslagen kaarten van de robot: {\"mapFlag\": 0, \"name\": \"Kelder\"}. De naam moet korter zijn dan %s bytes zoals de app ze telt — een gewone letter telt één, een umlaut twee, de meeste andere tekens drie — en geen andere kaart mag hem al dragen; beide worden geweigerd voordat er iets verstuurd wordt. De aanroep heeft geen eigen antwoord, dus de kaartenlijst wordt daarna opnieuw gelezen en alleen die bepaalt of de hernoeming is aangekomen.",
   "map_status": "Momenteel geselecteerde kaart",
   "map_zone_write_hint": "De robot bewaart muren en zones als één geheel zonder id's, dus elke wijziging schrijft ze allemaal opnieuw. De adapter leest eerst de huidige verzameling van de kaart van de robot en schrijft die volledig terug; kan de kaart niet gelezen worden, dan wordt er niets geschreven. De huidige verzameling staat onder mapEdit.zones, en de index bij het verwijderen is de positie binnen de eigen lijst.",
   "map_zones": "Muren en zones op de huidige kaart",

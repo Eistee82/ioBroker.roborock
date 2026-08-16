@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "Nach dem Kombinieren oder Aufteilen von Räumen werden alle zugehörigen Einstellungen und Zeitpläne ungültig.",
   "map_flag": "ID der genutzten Karte",
   "map_present": "Karte vorhanden",
+  "map_rename_hint": "Benennt eine der gespeicherten Karten des Roboters um: {\"mapFlag\": 0, \"name\": \"Keller\"}. Der Name muss kürzer als %s Byte sein, so wie die App zählt – ein einfacher Buchstabe zählt eins, ein Umlaut zwei, die meisten anderen Zeichen drei – und keine andere Karte darf ihn schon tragen; beides wird abgelehnt, bevor überhaupt etwas gesendet wird. Der Aufruf hat keine eigene Antwort, deshalb wird die Kartenliste danach neu gelesen, und nur sie entscheidet, ob die Umbenennung angekommen ist.",
   "map_status": "Derzeit ausgewählte Karte",
   "map_zone_write_hint": "Der Roboter speichert Wände und Zonen als einen einzigen Satz ohne IDs, jede Änderung schreibt also alle neu. Der Adapter liest den aktuellen Satz zuerst von der Karte des Roboters und schreibt ihn vollständig zurück; lässt sich die Karte nicht lesen, wird nichts geschrieben. Der aktuelle Satz steht unter mapEdit.zones, und der Index beim Entfernen ist die Position innerhalb der jeweiligen Liste.",
   "map_zones": "Wände und Zonen der aktuellen Karte",

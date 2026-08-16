@@ -103,7 +103,7 @@ describe("reading the map list", () => {
 });
 
 describe("what the inventory publishes", () => {
-	function createService(featureInfo?: unknown): { service: V1MapInventoryService; written: Map<string, unknown> } {
+	function createService(featureInfo?: unknown, answers: unknown[] = []): { service: V1MapInventoryService; written: Map<string, unknown> } {
 		const written = new Map<string, unknown>();
 		const deps = {
 			adapter: {
@@ -113,7 +113,14 @@ describe("what the inventory publishes", () => {
 				}),
 				rLog: vi.fn(),
 				errorMessage: (e) => String(e),
-				getStateAsync: vi.fn(async () => (featureInfo === undefined ? null : { val: featureInfo }))
+				getStateAsync: vi.fn(async () => (featureInfo === undefined ? null : { val: featureInfo })),
+				requestsHandler: {
+					sendRequest: vi.fn(async () => {
+						const next = answers.shift();
+						if (next instanceof Error) throw next;
+						return next;
+					})
+				}
 			},
 			ensureState: vi.fn().mockResolvedValue(undefined),
 			ensureFolder: vi.fn().mockResolvedValue(undefined)
@@ -217,6 +224,20 @@ describe("what the inventory publishes", () => {
 		expect(backupMenuOffered(2247395306799103)).toBe(true);
 	});
 
+	it("hands back the freshly read list, or nothing at all", async () => {
+		// `rereadMapList` is what a rename is judged by. On an unreadable answer
+		// `applyMultiMapsList` leaves the previous inventory standing, and returning that would let
+		// the caller read yesterday's names as today's - a rename would then be measured against
+		// the very list it was meant to change, and reported as having failed.
+		const { service } = createService(undefined, [MEASURED_LIST, "unknown_method", new Error("Timeout")]);
+
+		expect((await service.rereadMapList())?.maps.map((slot) => slot.name)).toEqual(["Erdgeschoss", "Keller"]);
+		expect(await service.rereadMapList()).toBeNull();
+		expect(await service.rereadMapList()).toBeNull();
+		// The list read first is still what the states show; only the *return value* withholds it.
+		expect(service.lastInventory()?.maps).toHaveLength(2);
+	});
+
 	it("tells a denial and a silence apart", async () => {
 		expect(backupMenuOffered(null)).toBeNull();
 		expect(backupMenuOffered(undefined)).toBeNull();
@@ -253,6 +274,11 @@ describe("who is offered the map inventory", () => {
 			requestsHandler: { sendRequest },
 			rLog: vi.fn(),
 			errorMessage: (e: unknown) => String(e),
+			// The adapter's own strings. Declared as `{}` on the real adapter, so a mock without it
+			// is a mock that differs from production - and `initMapInventory` registers a command
+			// whose description reads from it, which threw here and quietly took the whole feature
+			// with it. A missing field in a double, not a missing guard in the code.
+			translations: {},
 			translationManager: { get: (_key: string, fallback: string) => fallback },
 			http_api: {
 				getRobotModel: vi.fn().mockReturnValue("roborock.vacuum.a65"),

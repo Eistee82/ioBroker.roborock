@@ -270,8 +270,19 @@ Zu den Sicherungen gehört ein ehrlicher Vorbehalt, und der ist ein eigener Date
 und **das Testgerät sagt nein**: Es listet zwei Sicherungen und lehnt genau den Befehl ab, mit dem
 die Roborock-App ihre Wiederherstellungsliste holt. Diese Sicherungen sind also nicht nutzbar, weder
 über diesen Adapter noch über die App. Das auszusprechen ist der Unterschied zwischen „dieser
-Adapter hat keinen Knopf" und „dieser Roboter kann das nicht". Nichts hiervon löscht, stellt wieder
-her oder benennt eine Karte um; das ist zerstörerisch und gehört hinter eine Rückfrage.
+Adapter hat keinen Knopf" und „dieser Roboter kann das nicht". Nichts hiervon löscht oder stellt eine
+Karte wieder her; das ist zerstörerisch und gehört hinter eine Rückfrage.
+
+**Umbenennen gibt es dagegen**, als `commands.name_multi_map`, und es nimmt
+`{"mapFlag": 0, "name": "Keller"}` — die Kartennummer, wie sie unter `floors` und in der
+Karteninventur steht, und den neuen Namen. Zwei Dinge lehnt der Adapter ab, bevor überhaupt etwas
+gesendet wird, weil die Roborock-App sie ebenfalls ablehnt: einen Namen, den eine andere Karte schon
+trägt, und einen zu langen. Die Längengrenze ist nicht die Zeichenzahl. Der Roboter zählt einen
+einfachen Buchstaben als eins, einen Umlaut als zwei und die meisten anderen Zeichen als drei, und
+der Name muss **unter 30** davon bleiben — fünfzehn Umlaute sind also bereits zu lang. Danach wird
+die Kartenliste neu gelesen, und nur sie entscheidet: Das Kommando meldet entweder, dass der Roboter
+den neuen Namen trägt, oder dass er weiterhin den alten meldet, oder dass sich die Liste nicht lesen
+ließ und es damit unbekannt ist. Der Aufruf selbst hat keine Antwort, der man glauben könnte.
 
 Unter **Geräteinformationen** erscheinen die **Seriennummer** des Roboters und sein **Regionsblock**,
 beides rein lesend und beides nur bei einem Roboter, der darauf antwortet: das verwendete

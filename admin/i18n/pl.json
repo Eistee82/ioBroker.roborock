@@ -96,6 +96,7 @@
   "map_edit_segment_prompt": "Po połączeniu lub podzieleniu pokoi wszystkie powiązane ustawienia i harmonogramy tracą ważność.",
   "map_flag": "ID of used map",
   "map_present": "Mapa obecna",
+  "map_rename_hint": "Zmienia nazwę jednej z zapisanych map robota: {\"mapFlag\": 0, \"name\": \"Piwnica\"}. Nazwa musi być krótsza niż %s bajtów według liczenia aplikacji — zwykła litera liczy się za jeden, umlaut za dwa, większość pozostałych znaków za trzy — i żadna inna mapa nie może już jej nosić; oba przypadki są odrzucane, zanim cokolwiek zostanie wysłane. Wywołanie nie ma własnej odpowiedzi, więc lista map jest potem odczytywana ponownie i tylko ona rozstrzyga, czy zmiana nazwy się przyjęła.",
   "map_status": "Aktualnie wybrana mapa",
   "map_zone_write_hint": "Robot przechowuje ściany i strefy jako jeden zbiór bez identyfikatorów, więc każda zmiana zapisuje je wszystkie od nowa. Adapter najpierw odczytuje bieżący zbiór z mapy robota i zapisuje go z powrotem w całości; jeśli mapy nie da się odczytać, nic nie zostanie zapisane. Bieżący zbiór jest wypisany w mapEdit.zones, a indeks używany przy usuwaniu to pozycja na własnej liście.",
   "map_zones": "Ściany i strefy na bieżącej mapie",
