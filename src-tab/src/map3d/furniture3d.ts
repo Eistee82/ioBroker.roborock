@@ -29,6 +29,8 @@ import { FURNITURE_TYPES, furnitureRect } from "../engine/furniture";
 import type { FurniturePoint } from "../engine/furniture";
 import { MM_PER_CELL } from "./units";
 import type { CellPoint } from "./map3dModel";
+import { shapeFor } from "./furnitureShapes";
+import type { ShapePart } from "./furnitureShapes";
 
 /**
  * Height of each furniture type in millimetres - **chosen, not measured. Nothing in the protocol
@@ -88,8 +90,18 @@ export interface FurnitureBox {
 	angle: number;
 	/** `type` of the block entry, kept so the scene can label or filter. */
 	type: number;
+	/** `subType` of the block entry; decides which of a type's variants is drawn. */
+	subType: number;
 	/** False when the type is not in the height table; the body is a stand-in. */
 	known: boolean;
+	/**
+	 * The parts this piece is drawn from, or null for a single block.
+	 *
+	 * Null happens for a type no shape is defined for - the piece still gets a body, it just has
+	 * no detail. See `furnitureShapes.ts` for where the shapes come from and what is proven about
+	 * them.
+	 */
+	parts: readonly ShapePart[] | null;
 }
 
 /** The fields of one furniture entry this module reads. */
@@ -143,6 +155,7 @@ export function buildFurnitureBoxes(value: unknown, left: number, top: number, g
 		if (!rect) continue;
 
 		const type = finite(piece.type) ?? -1;
+		const subType = finite(piece.subType) ?? 0;
 		const known = Object.prototype.hasOwnProperty.call(FURNITURE_HEIGHTS_MM, type);
 		const heightMm = known ? FURNITURE_HEIGHTS_MM[type] : UNKNOWN_FURNITURE_HEIGHT_MM;
 
@@ -154,6 +167,10 @@ export function buildFurnitureBoxes(value: unknown, left: number, top: number, g
 			height: heightMm / MM_PER_CELL,
 			angle: rect.angle,
 			type,
+			subType,
+			// A type with no height of its own gets no shape either: the shape would claim to know
+			// what the piece is, and the height table is where that knowledge is recorded.
+			parts: known ? shapeFor(type, subType) : null,
 			known
 		});
 	}

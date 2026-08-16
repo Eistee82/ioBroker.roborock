@@ -3,6 +3,7 @@ import { buildScene } from "./scene";
 import type { ScenePalette, ThreeLike } from "./scene";
 import { WALL_HEIGHT_CELLS } from "./map3dModel";
 import type { Map3DModel } from "./map3dModel";
+import { shapeFor } from "./furnitureShapes";
 
 /**
  * What the scene builder puts where.
@@ -34,14 +35,20 @@ interface Recorded {
 	matrices: Instance[];
 	planes: Array<[number, number]>;
 	materials: Array<Record<string, unknown>>;
-	/** Every plain `Mesh`, in construction order, so position and rotation can be read back. */
-	meshes: Array<{ position: { x: number; y: number; z: number }; rotation: { x: number; y: number; z: number } }>;
+	/** Every plain `Mesh`, in construction order, so position, rotation and scale can be read back. */
+	meshes: Array<{
+		position: { x: number; y: number; z: number };
+		rotation: { x: number; y: number; z: number };
+		scale: { x: number; y: number; z: number };
+	}>;
+	/** Every `Group` - one per piece of furniture, carrying that piece's place and turn. */
+	groups: Array<{ position: { x: number; y: number; z: number }; rotation: { x: number; y: number; z: number } }>;
 	lights: Array<{ kind: string; intensity: number }>;
 	added: number;
 }
 
 function stubThree(): { three: ThreeLike; log: Recorded } {
-	const log: Recorded = { boxes: [], instanced: [], matrices: [], planes: [], materials: [], meshes: [], lights: [], added: 0 };
+	const log: Recorded = { boxes: [], instanced: [], matrices: [], planes: [], materials: [], meshes: [], groups: [], lights: [], added: 0 };
 
 	class Vec {
 		public x = 0;
@@ -141,6 +148,10 @@ function stubThree(): { three: ThreeLike; log: Recorded } {
 		},
 		Object3D: Obj,
 		Group: class extends Obj {
+			public constructor() {
+				super();
+				log.groups.push(this);
+			}
 			public add(): void {}
 		},
 		Texture: class {
@@ -273,27 +284,50 @@ describe("the walls", () => {
 });
 
 describe("the furniture", () => {
-	const SOFA = { x: 6, z: 26, width: 6, depth: 4, height: 16, angle: 0, type: 46, known: true };
-	const STRANGE = { x: 2, z: 2, width: 3, depth: 2, height: 8, angle: 90, type: 99, known: false };
+	const SOFA = { x: 6, z: 26, width: 6, depth: 4, height: 16, angle: 0, type: 46, subType: 1, known: true, parts: shapeFor(46, 1) };
+	const STRANGE = { x: 2, z: 2, width: 3, depth: 2, height: 8, angle: 90, type: 99, subType: 0, known: false, parts: null };
 
-	it("stands each piece on the floor at its own size", () => {
-		const { three, log } = stubThree();
-		buildScene(three, model({ furniture: [SOFA] }), {}, PALETTE);
-
-		// width x height x depth, and standing on the ground rather than sunk halfway into it.
-		expect(log.boxes).toContainEqual([6, 16, 4]);
-		const sofa = log.meshes[1]; // [0] is the floor plane
-		expect([sofa.position.x, sofa.position.y, sofa.position.z]).toEqual([6, 8, 26]);
-	});
-
-	it("turns it the way the map says, with the sign the two frames differ by", () => {
-		// The map's angle is clockwise in a y-down picture; three.js turns counter-clockwise about
-		// +Y. Same magnitude, opposite sign - and nothing else. A missing minus here mirrors every
-		// turned piece across its own centre, which on a sofa against a wall looks almost right.
+	it("stands a piece without a shape on the floor at its own size", () => {
+		// No shape means the plain block it always had: the full footprint, standing on the ground
+		// rather than sunk halfway into it.
 		const { three, log } = stubThree();
 		buildScene(three, model({ furniture: [STRANGE] }), {}, PALETTE);
 
-		expect(log.meshes[1].rotation.y).toBeCloseTo(-Math.PI / 2);
+		const block = log.meshes[1]; // [0] is the floor plane
+		expect([block.scale.x, block.scale.y, block.scale.z]).toEqual([3, 8, 2]);
+		expect([block.position.x, block.position.y, block.position.z]).toEqual([0, 4, 0]);
+	});
+
+	it("turns the piece as a whole, with the sign the two frames differ by", () => {
+		// The map's angle is clockwise in a y-down picture; three.js turns counter-clockwise about
+		// +Y. Same magnitude, opposite sign - and nothing else. A missing minus here mirrors every
+		// turned piece across its own centre, which on a sofa against a wall looks almost right.
+		//
+		// The turn is on the group rather than on each part: a headboard belongs at the head of the
+		// bed whichever way the bed faces, and turning the parts one by one would need their offsets
+		// turned too - which is exactly where a sign goes missing.
+		const { three, log } = stubThree();
+		buildScene(three, model({ furniture: [STRANGE] }), {}, PALETTE);
+
+		expect(log.groups).toHaveLength(1);
+		expect(log.groups[0].rotation.y).toBeCloseTo(-Math.PI / 2);
+		expect([log.groups[0].position.x, log.groups[0].position.y, log.groups[0].position.z]).toEqual([2, 0, 2]);
+	});
+
+	it("draws a known piece from several parts rather than as one block", () => {
+		// The point of the whole shape table: a sofa has a seat, a back and two arms, and from any
+		// angle that reads as a sofa where a single block reads as a block.
+		const { three, log } = stubThree();
+		buildScene(three, model({ furniture: [SOFA] }), {}, PALETTE);
+
+		const parts = log.meshes.slice(1); // [0] is the floor plane
+		expect(parts.length).toBeGreaterThan(1);
+		// Every part stays inside the piece's own footprint and above the floor.
+		for (const part of parts) {
+			expect(part.scale.x).toBeLessThanOrEqual(SOFA.width);
+			expect(part.scale.z).toBeLessThanOrEqual(SOFA.depth);
+			expect(part.position.y - part.scale.y / 2).toBeGreaterThanOrEqual(-1e-9);
+		}
 	});
 
 	it("is solid when the type is known and faint when it is not", () => {
@@ -316,12 +350,16 @@ describe("the furniture", () => {
 		expect(log.materials.some((m) => m.color === PALETTE.furniture)).toBe(false);
 	});
 
-	it("hands its geometry and material to the teardown", () => {
+	it("hands every part's geometry and the shared material to the teardown", () => {
+		// One material per piece and one geometry per part. A part whose geometry is not handed over
+		// leaks a GPU buffer on every redraw, which on a live map is every few seconds.
 		const { three } = stubThree();
 		const withOne = buildScene(three, model({ furniture: [SOFA] }), {}, PALETTE);
 		const without = buildScene(three, model({ furniture: [] }), {}, PALETTE);
 
-		expect(withOne.disposables.length).toBe(without.disposables.length + 2);
+		const partCount = shapeFor(46, 1)?.length ?? 0;
+		expect(partCount).toBeGreaterThan(0);
+		expect(withOne.disposables.length).toBe(without.disposables.length + partCount + 1);
 	});
 });
 

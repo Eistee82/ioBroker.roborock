@@ -88,7 +88,14 @@ export function Map3DView({ model, palette, livePosition, onUnavailable }: Map3D
 				built = buildScene(three, model, texture, palette);
 				builtRef.current = built;
 
-				renderer = new three.WebGLRenderer({ antialias: true, alpha: false });
+				// Transparent rather than filled: the canvas sits on the panel the tab already
+				// painted, so letting that show through is right in either theme and stays right
+				// when the admin switches one. Painting a background here meant carrying the
+				// theme's colour into WebGL, and a colour space conversion on the way made it come
+				// out near-black in the light theme - a canvas that has no background of its own
+				// cannot get that wrong.
+				renderer = new three.WebGLRenderer({ antialias: true, alpha: true });
+				renderer.setClearColor(0x000000, 0);
 				renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 				host.appendChild(renderer.domElement);
 				renderer.domElement.style.width = "100%";

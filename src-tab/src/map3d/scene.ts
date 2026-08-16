@@ -155,7 +155,11 @@ const DIRECTIONALS: ReadonlyArray<{ intensity: number; direction: [number, numbe
  */
 export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, palette: ScenePalette): BuiltScene {
 	const scene = new three.Scene();
-	scene.background = new three.Color(palette.background);
+	// No background of its own. The renderer clears to transparent and the panel behind the canvas
+	// supplies the colour, which is the tab's own and therefore already correct in both themes -
+	// see the note at the renderer in `Map3DView`. `palette.background` is kept because the
+	// callers pass a full palette and because a future offscreen render would need it.
+	scene.background = null;
 
 	const disposables: Array<{ dispose: () => void }> = [];
 	const centre = { x: model.width / 2, z: model.height / 2 };
@@ -242,7 +246,6 @@ export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, pa
 	// A separate mesh each: there are a handful of pieces, not thousands, and each needs its own
 	// size and rotation. Instancing would buy nothing here and cost the per-piece material.
 	for (const piece of model.furniture) {
-		const geometry = new three.BoxGeometry(piece.width, piece.height, piece.depth);
 		const material = new three.MeshStandardMaterial({
 			color: piece.known ? palette.furniture : palette.furnitureUnknown,
 			roughness: 0.75,
@@ -252,14 +255,40 @@ export function buildScene(three: ThreeLike, model: Map3DModel, texture: any, pa
 			transparent: !piece.known,
 			opacity: piece.known ? 1 : 0.55
 		});
-		const mesh = new three.Mesh(geometry, material);
-		mesh.position.set(piece.x, piece.height / 2, piece.z);
+		disposables.push(material);
+
+		// One material for every part of a piece, and one rotation for the whole piece: the parts
+		// are placed in the piece's own frame and turned with it, so a headboard stays at the head
+		// of the bed whichever way the bed is turned. Rotating each part on its own would need the
+		// offsets rotated too, which is where a sign gets lost.
+		const group = new three.Group();
+		group.position.set(piece.x, 0, piece.z);
 		// The map's angle turns clockwise in a y-down picture; three.js turns counter-clockwise about
 		// +Y. Picture x maps to world x and picture y to world z, so the two conventions differ by a
 		// sign and by nothing else.
-		mesh.rotation.y = (-piece.angle * Math.PI) / 180;
-		scene.add(mesh);
-		disposables.push(geometry, material);
+		group.rotation.y = (-piece.angle * Math.PI) / 180;
+
+		// No shape for this type: the plain block it always had.
+		const parts = piece.parts ?? [{ dx: 0, dz: 0, w: 1, d: 1, y0: 0, h: 1 }];
+		for (const part of parts) {
+			const w = piece.width * part.w;
+			const d = piece.depth * part.d;
+			const h = piece.height * part.h;
+			// A part with no extent would be an invisible mesh with a live buffer behind it.
+			if (!(w > 0) || !(d > 0) || !(h > 0)) continue;
+
+			const geometry = part.round
+				? // A cylinder takes one radius, so an oval footprint is scaled into shape below;
+					// its own diameter is 1 and the mesh carries the difference.
+					new three.CylinderGeometry(0.5, 0.5, 1, 24)
+				: new three.BoxGeometry(1, 1, 1);
+			const mesh = new three.Mesh(geometry, material);
+			mesh.scale.set(w, h, d);
+			mesh.position.set(piece.width * part.dx, piece.height * part.y0 + h / 2, piece.depth * part.dz);
+			group.add(mesh);
+			disposables.push(geometry);
+		}
+		scene.add(group);
 	}
 
 	// --- Zones and virtual walls ------------------------------------------------------------------
