@@ -186,6 +186,36 @@ export function extractMapNonce(mapData: unknown): number | null {
  * This is the reliable way to notice that a map is out of date. The `count` fields cannot do it -
  * measured while driving, they stay at 0 even when a channel grows, and a diff sent with a nonce
  * the robot does not know comes back with zeros for everything rather than an error.
+ *
+ * ## An all-zero `NONCEDATA` is not the hole it looks like
+ *
+ * Entries with `unixTime <= 0` are skipped below, so such a map yields an empty result and
+ * {@link findOutdatedBlock} then reports nothing outdated. Read on its own that looks like a map
+ * whose channels can grow unwatched - and it was filed as exactly that once.
+ *
+ * **It cannot happen, because the same zero disables the branch that would need the guard.** The
+ * map nonce is entry type 35 of this very block, {@link extractMapNonce} rejects a zero there for
+ * its own measured reason, and `LiveMapPoller.runCycle` only goes incremental while that nonce is
+ * non-null. A map with a zeroed `NONCEDATA` is therefore fetched **in full on every cycle**; the
+ * incremental path, where a missing channel nonce would matter, is never taken.
+ *
+ * Measured on two maps of the same device on the same day, raw bytes of the block itself:
+ *
+ * | Map | Entries | of those zero | type 35 | type 3 |
+ * | --- | --- | --- | --- | --- |
+ * | `backup-20260814-135636` | 13 | **13** | 0 | 0 |
+ * | `backup-20260814-185206` | 13 | 0 | 1786726275 | 1786721586 |
+ *
+ * So the block is zeroed **as a whole** or filled as a whole; the two nonces move together. The
+ * zeros are the device's own - `getNonceData` reads five bytes per entry from offset 12 and returns
+ * exactly what stands there, and it reads the second map's timestamps correctly from the same code.
+ *
+ * What is **not** ruled out, for want of a sample: a map carrying a usable type 35 while some other
+ * channel is zero. Neither map shows that mix. Should it ever appear, that channel alone would go
+ * unguarded, and `evaluateMapDiff` would still be watching. Forcing a full map whenever a channel
+ * lacks a timestamp is the obvious answer and the wrong one: measured, a full map is 22 564 bytes
+ * gzipped for the zeroed map above, which at the shipped `liveMapInterval: 3` would be spent every
+ * three seconds on precisely the maps that are already being fetched in full anyway.
  * @param mapData Parse result of `MapParser.parsedata`, or anything at all.
  * @returns Channel number to nonce; empty when the map carries none.
  */
