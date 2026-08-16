@@ -13,6 +13,8 @@ import { B01Variant, getB01VariantFromModel } from "./lib/b01Variant";
 import { OUTCOME_QUALITY, buildCommandComment, classifyRequestFailure, isProblemOutcome, isShutdownFailure, outcomeArgs } from "./lib/commandFeedback";
 import type { CommandOrigin, CommandOutcome, CommandOutcomeReport } from "./lib/commandFeedback";
 import { timerSwitchState } from "./lib/features/vacuum/deviceTimers";
+// The "is it not switched off" test both timer lists share; it lives beside the evidence for it.
+import { isTimerActive } from "./lib/features/vacuum/serverTimers";
 import { canDeleteSchedules, parseTimerSource } from "./lib/features/vacuum/timerDeletion";
 import { ConnectionStatusManager } from "./lib/connectionStatus";
 import { DeviceManager } from "./lib/deviceManager";
@@ -2820,7 +2822,7 @@ export class Roborock extends utils.Adapter {
 				stillListed = false;
 				break;
 			}
-			if ((listed === "on") === enabled) break;
+			if (isTimerActive(listed) === enabled) break;
 		}
 
 		if (!answered) {
@@ -2836,7 +2838,7 @@ export class Roborock extends utils.Adapter {
 			return;
 		}
 
-		const active = listed === "on";
+		const active = isTimerActive(listed);
 		await this.setState(stateId, { val: active, ack: true });
 		if (active === enabled) {
 			// Says nothing new about the value - it clears a mark an earlier attempt may have left.

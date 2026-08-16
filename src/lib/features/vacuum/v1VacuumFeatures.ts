@@ -6,7 +6,7 @@ import { StationService } from "./services/StationService";
 import { V1ConsumableService } from "./services/V1ConsumableService";
 import { V1MapService } from "./services/V1MapService";
 import { CapabilityProbe } from "../capabilityProbe";
-import { GET_SERVER_TIMER, parseServerTimerList } from "./serverTimers";
+import { GET_SERVER_TIMER, isTimerActive, parseServerTimerList } from "./serverTimers";
 import {
 	TIMER_SOURCE_DEVICE,
 	TIMER_SOURCE_SERVER,
@@ -1581,7 +1581,9 @@ export class V1VacuumFeatures extends BaseDeviceFeatures {
 					// timer structure: [id, enabled, [cron, [cmd, params], createTime]]
 					if (Array.isArray(timer) && timer.length >= 3) {
 						const id = timer[0];
-						const enabled = timer[1] === "on";
+						// Asked as "not one of the known off spellings", the same way round as the server
+						// list - a third spelling would otherwise show a running schedule as switched off.
+						const enabled = isTimerActive(timer[1]);
 						const segments = timer[2];
 						const cron = Array.isArray(segments) ? segments[0] : "";
 

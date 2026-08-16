@@ -82,6 +82,28 @@ describe("Schedule (Timer) Verification", () => {
 		await mockAdapter.expectState(`Devices.${duid}.schedules.timer_id_3.cron`, { val: "0 8 * * 1,3,5" });
 	});
 
+	it("reads a state field it does not know as on, not as off", async () => {
+		// The device list used to be read with `timer[1] === "on"`, while the app tests the very same
+		// field of the very same rows against `'disable'` (A65:582384-582389) and the test device
+		// answered `"on"`. Two spellings that disagree mean a third is possible, and with an equality
+		// test a running schedule would have been shown as switched off - the error nobody notices.
+		const timerResponse = [
+			["timer_id_1", "enable", ["0 14 * * 5", ["Start Cleaning", []], 1234567890]],
+			["timer_id_2", "disable", ["0 10 * * *", ["Start Cleaning", []], 1234567891]]
+		];
+		const originalSendRequest = depsMock.requestsHandler.sendRequest;
+		depsMock.requestsHandler.sendRequest = vi.fn().mockImplementation(async (duid, method, params) => {
+			if (method === "get_timer") return timerResponse;
+			return originalSendRequest(duid, method, params);
+		});
+
+		await vacuumFeatures.updateTimers();
+
+		await mockAdapter.expectState(`Devices.${mockRobot.duid}.schedules.timer_id_1.enabled`, { val: true });
+		// `disable` is a known off spelling - the app's own - and stays off.
+		await mockAdapter.expectState(`Devices.${mockRobot.duid}.schedules.timer_id_2.enabled`, { val: false });
+	});
+
 	it("keeps the enabled switch writable so it can be toggled", async () => {
 		await vacuumFeatures.updateTimers();
 

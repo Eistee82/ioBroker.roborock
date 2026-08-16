@@ -334,6 +334,12 @@ selbst statt nur im Log. Ein Fall bleibt bewusst still — ist der Zeitplan zwis
 Liste verschwunden, wird über ihn gar nichts behauptet, weil es keinen Zeitplan mehr gibt, über den
 sich etwas behaupten ließe.
 
+Ob ein Zeitplan als **eingeschaltet** gilt, wird für beide Listenarten gleich entschieden: nicht,
+indem gefragt wird, ob der Roboter `on` gesagt hat, sondern ob er eines der Wörter gesagt hat, die
+„aus" bedeuten. Zwei Schreibweisen sind bekannt und sie widersprechen sich — die App prüft auf
+`disable`, der vermessene Roboter antwortete `on` —, also ist eine dritte möglich, und ein laufender
+Zeitplan würde hier sonst als ausgeschaltet angezeigt. Der sichtbare Fehler ist der harmlosere.
+
 **Löschen geht dagegen.** Jeder Zeitplan hat einen Knopf `delete` und daneben ein `source`, das
 sagt, welche der beiden Arten er ist; der Adapter schickt den passenden Befehl und fragt danach die
 Liste des Roboters erneut ab. Erst wenn die Kennung darin nicht mehr auftaucht, gilt der Zeitplan

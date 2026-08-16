@@ -311,6 +311,12 @@ written onto the state itself, as a quality and a comment, instead of only into 
 deliberately quiet - if the schedule has vanished from the list in the meantime, nothing is claimed
 about it at all, because there is no longer a schedule the claim could be about.
 
+Whether a schedule counts as switched **on** is decided the same way for both kinds of list: not by
+asking whether the robot said `on`, but by asking whether it said one of the words that mean off.
+Two spellings are known and they disagree - the app tests for `disable`, the measured robot answered
+`on` - so a third is possible, and a schedule that runs would otherwise be shown here as switched
+off. The safer error is the visible one.
+
 **A schedule can be deleted, though.** Every schedule carries a `delete` button and a `source`
 saying which of the two kinds it is; the adapter sends the command that matches, and afterwards asks
 the robot for its list again. Only when the identifier is gone from that list is the schedule

@@ -183,6 +183,17 @@ describe("the switch is acknowledged from the robot's list, not from ['ok']", ()
 		expect(states.get(STATE_ID)).toMatchObject({ val: true, ack: true, q: 0 });
 	});
 
+	it("reads a state field it does not know as on, the same way the list reader does", async () => {
+		// Not `listed === "on"`: the app tests these rows against `'disable'`, the test device answered
+		// `"on"`, and a third spelling would otherwise turn a switch that worked into an alarm.
+		const { adapter, states, order } = await createAdapter({ timers: [[row(TIMER_ID, "enable")]] });
+
+		await adapter.onStateChange(STATE_ID, { val: true, ack: false });
+
+		expect(states.get(STATE_ID)).toMatchObject({ val: true, ack: true, q: 0 });
+		expect(order).toEqual(["read", "value"]);
+	});
+
 	it("unwraps the transport envelope around both answers", async () => {
 		const { adapter, states } = await createAdapter({ updTimer: { data: ["ok"] }, timers: [{ data: [row(TIMER_ID, "on")] }] });
 
