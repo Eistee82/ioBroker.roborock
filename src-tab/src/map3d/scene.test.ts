@@ -230,22 +230,48 @@ describe("the floor", () => {
 		expect(log.planes).toEqual([[4, 3]]);
 	});
 
-	it("honours the map picture's alpha instead of painting its transparent parts black", () => {
-		// This is not a nicety. The picture is a PNG whose rooms are painted and whose surroundings
-		// are fully transparent, because a flat is not a rectangle and a picture is. Without
-		// `transparent`, three.js ignores the alpha channel and draws every transparent pixel as
-		// opaque black - a black slab the size of the whole grid with the flat in the middle of it,
-		// which is exactly what this view showed until the flag was set.
+	it("cuts the picture's transparent parts away instead of painting them black - and stays opaque doing it", () => {
+		// Two mistakes are pinned here, because the view was shipped with each of them in turn.
+		//
+		// Without any alpha handling, three.js draws every transparent pixel of the map PNG as
+		// opaque black: a black slab the size of the grid with the flat in the middle.
+		//
+		// With `transparent: true` the slab goes away and something subtler takes its place - the
+		// floor joins the transparency queue, which is drawn after everything opaque and sorted
+		// back to front, and it then loses to every half-transparent wall standing on it. The floor
+		// starts vanishing behind walls.
+		//
+		// `alphaTest` without `transparent` is the combination that is right: opaque queue, and the
+		// see-through pixels discarded rather than blended.
 		const { three, log } = stubThree();
 		buildScene(three, model(), { fake: true }, PALETTE);
 
 		const floor = log.basicMaterials.find((m) => "map" in m);
 		expect(floor).toBeDefined();
-		expect(floor?.transparent).toBe(true);
+		expect(floor?.alphaTest).toBeGreaterThan(0);
+		expect(floor?.transparent).not.toBe(true);
 	});
 });
 
 describe("the walls", () => {
+	it("are see-through for everything behind them, not only for the furniture", () => {
+		// A transparent material that writes depth is transparent in colour and opaque in the depth
+		// buffer. Opaque geometry - the furniture - is drawn in an earlier pass and survives; a
+		// transparent thing behind the wall, a no-go zone or a virtual wall, is drawn later, finds
+		// the wall's depth already written, and is discarded before it is ever blended. The wall
+		// then looks see-through for some things and solid for others, which is worse than an
+		// honestly solid wall.
+		const { three, log } = stubThree();
+		buildScene(three, model(), {}, PALETTE);
+
+		const walls = log.materials.filter((m) => m.color === PALETTE.wall);
+		expect(walls.length).toBeGreaterThan(0);
+		for (const wall of walls) {
+			expect(wall.transparent).toBe(true);
+			expect(wall.depthWrite).toBe(false);
+		}
+	});
+
 	it("draws one box per merged run, body and cap, two instanced meshes in all", () => {
 		// One box per *run*, not per cell - that is the whole point of `extractWalls`. Two instanced
 		// meshes and two geometries no matter how large the flat: 3 468 separate meshes were visibly

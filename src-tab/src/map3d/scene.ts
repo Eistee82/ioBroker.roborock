@@ -115,8 +115,12 @@ export interface BuiltScene {
  * ordinary alpha blending. The alpha carries over unchanged; the colour comes from the palette
  * instead of being hard-coded white, because this view has a dark theme and the app does not.
  *
- * `depthWrite` stays at the three.js default (`true`), which is what libGDX does here too - the
- * blending attribute changes the colour maths, not the depth buffer.
+ * **`depthWrite` is off**, which is where this departs from libGDX. The app leaves it on, and can:
+ * its 3D scene has no no-go zones in it. Here a wall that writes depth hides every transparent
+ * thing behind it - a zone, a virtual wall - while still showing the opaque furniture, because
+ * opaque geometry is drawn in an earlier pass than transparent geometry. The result reads as a
+ * wall that is see-through for some things and not for others, which is worse than no transparency
+ * at all.
  */
 const WALL_OPACITY = 0.5;
 const WALL_CAP_OPACITY = 0.7;
@@ -183,22 +187,26 @@ export function buildScene(
 	// darauf"). It also means the floor shows rooms, their colours and their names without this
 	// module knowing anything about rooms.
 	const floorGeometry = new three.PlaneGeometry(model.width, model.height);
-	// `transparent` is not optional here, and leaving it off is what produced the black slab this
-	// view showed for two rounds. The map picture is a PNG with an alpha channel: the rooms are
-	// painted and **everything around them is fully transparent**, because the flat is not a
-	// rectangle and the picture is. Without this flag three.js ignores that channel, and every
-	// transparent pixel is drawn as opaque black - a black quad the size of the whole grid, with
-	// the flat sitting in the middle of it.
+	// The map picture is a PNG with an alpha channel: the rooms are painted and **everything around
+	// them is fully transparent**, because a flat is not a rectangle and a picture is. Something has
+	// to act on that channel or every transparent pixel is drawn as opaque black - a black quad the
+	// size of the whole grid with the flat in the middle of it.
 	//
-	// `alphaTest` rather than plain blending: the floor is a single flat quad with nothing under
-	// it, so there is nothing to blend with, and a tested alpha keeps it out of the transparency
-	// sort - which is what stops the walls and furniture standing on it from flickering against it
-	// as the camera turns.
+	// **`alphaTest` alone, and deliberately not `transparent`.** The two look interchangeable and
+	// are not. `transparent: true` moves a material into the transparency queue, which is drawn
+	// after everything opaque and sorted back to front - and the floor then loses to every
+	// half-transparent wall standing on it, because a wall drawn earlier has already written its
+	// depth. That is exactly what happened when this was first fixed with `transparent: true`: the
+	// black slab went away and the floor started vanishing behind walls instead.
+	//
+	// With `alphaTest` and no `transparent`, the material stays **opaque**: it is drawn in the
+	// first pass, its see-through pixels are discarded outright rather than blended, and nothing
+	// about the draw order can hide it. The threshold is high enough to cut the picture's
+	// anti-aliased edges cleanly.
 	const floorMaterial = new three.MeshBasicMaterial({
 		map: texture,
 		side: three.DoubleSide,
-		transparent: true,
-		alphaTest: 0.01
+		alphaTest: 0.5
 	});
 	const floor = new three.Mesh(floorGeometry, floorMaterial);
 	// Flat on the ground, and rotated so the picture's top edge points away from the camera rather
@@ -223,7 +231,18 @@ export function buildScene(
 		roughness: 0.9,
 		metalness: 0,
 		transparent: true,
-		opacity: WALL_OPACITY
+		opacity: WALL_OPACITY,
+		// A see-through wall must not write depth. It did, and the result was a wall you could see
+		// the furniture through but not the no-go zone behind it: the furniture is opaque and is
+		// drawn *before* the wall, while a zone is transparent and is drawn after - by which time
+		// the wall has already claimed those pixels in the depth buffer and the zone is discarded
+		// without ever being blended.
+		//
+		// This is where the view departs from the app, and knowingly. libGDX leaves depth writing on
+		// here, but the app also has no no-go zones standing in its 3D scene, so the case never
+		// arises there. What is drawn behind glass has to be visible through it, or the glass is
+		// just an opaque wall that happens to be pale.
+		depthWrite: false
 	});
 	const capGeometry = new three.BoxGeometry(1, WALL_CAP_THICKNESS, 1);
 	const capMaterial = new three.MeshStandardMaterial({
@@ -231,7 +250,8 @@ export function buildScene(
 		roughness: 0.9,
 		metalness: 0,
 		transparent: true,
-		opacity: WALL_CAP_OPACITY
+		opacity: WALL_CAP_OPACITY,
+		depthWrite: false
 	});
 	disposables.push(wallGeometry, wallMaterial, capGeometry, capMaterial);
 
